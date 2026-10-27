@@ -2,6 +2,52 @@ import { useState } from 'react'
 import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
 import { validateIntent } from '../../core/ai/intent-schema'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
+import type { ProxyError } from '../../../functions/api/muse/shared'
+
+export const PROXY_ERROR_COPY: Record<ProxyError, string> = {
+  not_allowlisted:
+    'That request is not on the approved list, so it cannot be sent. You can still search, filter, and read every figure by hand below.',
+  shape_invalid:
+    'That request was not in the expected form, so nothing was sent. You can still search, filter, and read every figure by hand below.',
+  rate_limited:
+    'Too many requests were sent in a short time, so this one has to wait. You can still search, filter, and read every figure by hand below.',
+  credits_exhausted:
+    'The shared allowance for the helper is used up for now. You can still search, filter, and read every figure by hand below, with the same figures.',
+  provider_down:
+    'The wording helper is not responding right now. You can still search, filter, and read every figure by hand below, with the same figures.',
+  bad_key:
+    'The wording helper could not sign in, so it cannot help right now. You can still search, filter, and read every figure by hand below, with the same figures.',
+  budget_exhausted:
+    'The shared spending limit for the helper has been reached, so it is off for now. You can still search, filter, and read every figure by hand below, with the same figures.',
+  breaker_open:
+    'The wording helper has been paused after repeated problems. You can still search, filter, and read every figure by hand below, with the same figures.',
+}
+
+export function manualFallbackNote(): string {
+  return 'Manual search is fully available: you can pick places and measures, set filters, and read every figure with its source — the same figures the helper would use.'
+}
+
+/** Copy for a proxy error class, or null when no error is present. */
+export function proxyErrorNote(error: ProxyError | null | undefined): string | null {
+  if (!error) return null
+  return PROXY_ERROR_COPY[error]
+}
+
+function isProxyError(value: unknown): value is ProxyError {
+  return (
+    typeof value === 'string' &&
+    Object.prototype.hasOwnProperty.call(PROXY_ERROR_COPY, value)
+  )
+}
+
+function extractProxyError(e: unknown): ProxyError | null {
+  if (typeof e === 'object' && e !== null) {
+    const rec = e as Record<string, unknown>
+    if (isProxyError(rec.code)) return rec.code
+    if (isProxyError(rec.error)) return rec.error
+  }
+  return null
+}
 
 export function Disclosure() {
   return (
@@ -25,6 +71,7 @@ export function IntentChips({
         <button
           key={g}
           type="button"
+          aria-label={`Remove place ${g}`}
           onClick={() =>
             onChange({ ...intent, geographies: intent.geographies.filter((x) => x !== g) })
           }
@@ -33,29 +80,64 @@ export function IntentChips({
         </button>
       ))}
       {intent.metricKeys.map((k) => (
-        <span key={k}>{k}</span>
+        <button
+          key={k}
+          type="button"
+          aria-label={`Remove measure ${k}`}
+          onClick={() =>
+            onChange({ ...intent, metricKeys: intent.metricKeys.filter((x) => x !== k) })
+          }
+        >
+          {k} ×
+        </button>
       ))}
+      {intent.filters.map((f) => {
+        const label = `${f.metricKey} ${f.op} ${f.value}`
+        return (
+          <button
+            key={label}
+            type="button"
+            aria-label={`Remove filter ${label}`}
+            onClick={() =>
+              onChange({
+                ...intent,
+                filters: intent.filters.filter(
+                  (x) =>
+                    !(x.metricKey === f.metricKey && x.op === f.op && x.value === f.value),
+                ),
+              })
+            }
+          >
+            {label} ×
+          </button>
+        )
+      })}
     </div>
   )
 }
 
 /**
  * Ask panel (text path). Mic is LAST and intentionally absent here:
- * no dead button is rendered until mic dependencies verify.
+ * no dead button is rendered until mic dependencies verify. BYO lives
+ * in settings/shutoff only and is intentionally absent here too.
  */
 export function AskPanel({
   provider,
   validator = hermeticStubValidator,
   onExecute,
+  proxyError,
 }: {
   provider: MuseProvider
   validator?: Validator
   onExecute?: (intent: ValidatedIntent) => void
+  proxyError?: ProxyError | null
 }) {
   const [text, setText] = useState('')
   const [intent, setIntent] = useState<ValidatedIntent | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
+
+  const errorNote = proxyErrorNote(proxyError) ?? note
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -82,8 +164,13 @@ export function AskPanel({
       if (check.intent.clarificationNeeded) {
         setNote('More detail is needed before anything runs. Check the understood request below.')
       }
-    } catch {
-      setNote('Ask is unavailable right now. Manual search still works fully.')
+    } catch (err) {
+      const known = extractProxyError(err)
+      setNote(
+        known
+          ? PROXY_ERROR_COPY[known]
+          : 'Ask is unavailable right now. Manual search still works fully.',
+      )
     } finally {
       setBusy(false)
     }
@@ -104,11 +191,12 @@ export function AskPanel({
           Ask
         </button>
       </form>
-      {note && (
+      {errorNote && (
         <p role="status" aria-live="polite">
-          {note}
+          {errorNote}
         </p>
       )}
+      {(proxyError || note) && <p>{manualFallbackNote()}</p>}
       {intent && (
         <>
           <IntentChips intent={intent} onChange={setIntent} />

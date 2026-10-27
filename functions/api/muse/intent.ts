@@ -1,56 +1,38 @@
 /**
- * POST /api/muse/intent — same-origin proxy route (House slice).
- * Shape validation, allowlist, ceilings, meter, breaker. No content stored.
- * In the workbench this handler is framework-free so hermetic tests can call
- * it directly; the Pages Function wrapper at port time is a thin adapter.
+ * POST /api/muse/intent — same-origin proxy route (House).
+ * Shape validation, closed allowlist, token ceilings, meter
+ * reservation/settlement, breaker, hard shutoff at cap. Counts only;
+ * no bodies, query text, IPs, or keys are stored (Q1).
+ * Framework-free handler so hermetic tests call it directly; the Pages
+ * Function wrapper at port time is a thin adapter. The shared key lives
+ * server-side only and is never sent to the browser.
  */
 import { validateIntent } from '../../../src/core/ai/intent-schema'
-import type { Meter } from '../../../src/core/ai/meter'
-import type { MuseProvider } from '../../../src/core/ai/provider'
+import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from './shared'
 
-export type ProxyError =
-  | 'not_allowlisted'
-  | 'shape_invalid'
-  | 'rate_limited'
-  | 'credits_exhausted'
-  | 'provider_down'
-  | 'bad_key'
-  | 'budget_exhausted'
-  | 'breaker_open'
-
-export interface ProxyDeps {
-  meter: Meter
-  provider: MuseProvider
-  allowedModels: readonly string[]
-}
+export type { ProxyError } from './shared'
+export type { ProxyDeps } from './shared'
 
 const ALLOWED_PATHS = new Set(['/api/muse/intent'])
+const MAX_QUERY_CHARS = 500
+const EST_TOKENS = 512
+const EST_COST_MICRO = 1000
 
 export async function handleIntent(
   req: { method: string; path: string; body: unknown; clientId: string },
   deps: ProxyDeps,
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  if (req.method !== 'POST' || !ALLOWED_PATHS.has(req.path)) {
-    return { status: 400, body: { error: 'not_allowlisted' satisfies ProxyError } }
-  }
-  const body = req.body as Record<string, unknown> | null
-  if (typeof body !== 'object' || body === null) {
-    return { status: 400, body: { error: 'shape_invalid' satisfies ProxyError } }
-  }
-  if (typeof body.model === 'string' && !deps.allowedModels.includes(body.model)) {
-    return { status: 400, body: { error: 'not_allowlisted' satisfies ProxyError } }
-  }
-  if (deps.meter.snapshot().budgetExhausted) {
-    return { status: 429, body: { error: 'budget_exhausted' satisfies ProxyError } }
-  }
-  if (deps.meter.breakerState() === 'open') {
-    return { status: 503, body: { error: 'breaker_open' satisfies ProxyError } }
-  }
-
+): Promise<ProxyReply> {
+  const gate = preCallGate(req, deps, ALLOWED_PATHS, req.path)
+  if (gate) return gate
+  const body = req.body as Record<string, unknown>
   const slots = (body.slots ?? {}) as Record<string, unknown>
-  const reservation = deps.meter.reserve(req.clientId, 1000, 512)
+  if (typeof body.queryText === 'string' && body.queryText.length > MAX_QUERY_CHARS) {
+    return err(400, 'shape_invalid', 'queryText exceeds ceiling')
+  }
+  const reservation = deps.meter.reserve(req.clientId, EST_COST_MICRO, EST_TOKENS)
   if (!reservation) {
-    return { status: 429, body: { error: 'budget_exhausted' satisfies ProxyError } }
+    deps.meter.recordError('budget_exhausted')
+    return err(429, 'budget_exhausted')
   }
   try {
     const result = await deps.provider.intent(
@@ -67,13 +49,16 @@ export async function handleIntent(
     const check = validateIntent(result.intent)
     if (!check.ok) {
       deps.meter.release(reservation)
+      deps.meter.recordError(check.error)
       return { status: 422, body: { error: check.error, detail: check.detail } }
     }
-    deps.meter.settle(reservation, req.clientId, 1000, 128, 64)
+    deps.meter.settle(reservation, req.clientId, EST_COST_MICRO, 128, 64)
     return { status: 200, body: { intent: check.intent } }
-  } catch {
+  } catch (e) {
     deps.meter.release(reservation)
     deps.meter.recordFailure()
-    return { status: 502, body: { error: 'provider_down' satisfies ProxyError } }
+    const mapped = mapProviderError(e)
+    deps.meter.recordError(String(mapped.body.error))
+    return mapped
   }
 }

@@ -20,6 +20,7 @@ export interface MeterSnapshot {
   tokensOut: number
   spentMicroUsd: number
   budgetExhausted: boolean
+  errors: Record<string, number>
 }
 
 type BreakerState = 'closed' | 'open' | 'half-open'
@@ -32,6 +33,7 @@ export class Meter {
   private failures = 0
   private breaker: BreakerState = 'closed'
   private breakerOpenedAt = 0
+  private readonly errors = new Map()
   private readonly perClientSpent = new Map<string, number>()
   private readonly reservations = new Map<string, number>()
 
@@ -44,6 +46,7 @@ export class Meter {
       tokensOut: this.tokensOut,
       spentMicroUsd: this.spentMicroUsd,
       budgetExhausted: this.spentMicroUsd >= this.cfg.budgetCapMicroUsd,
+      errors: Object.fromEntries(this.errors),
     }
   }
 
@@ -83,6 +86,10 @@ export class Meter {
     this.reservations.delete(id)
   }
 
+  /** Count one failure by closed error class (counts only, Q1). */
+  recordError(cls: string): void {
+    this.errors.set(cls, (this.errors.get(cls) ?? 0) + 1)
+  }
   recordFailure(now = Date.now()): void {
     this.failures += 1
     if (this.failures >= this.cfg.breakerFailureThreshold) {

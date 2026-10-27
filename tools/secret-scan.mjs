@@ -11,6 +11,8 @@ const PATTERNS = [
   { name: 'hex key 40', re: /\b[0-9a-fA-F]{40}\b/ },
 ]
 const ALLOW_FILE = /tests[\\/]ai[\\/]house\.test\.ts$/
+/** Pinned CivicScope baseline commit SHA in docs — a public git hash, not a secret. */
+const KNOWN_PUBLIC_SHAS = new Set(['3aa7e10dc59e764a8636aa273d4ff86714a3e782'])
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -28,7 +30,8 @@ for (const file of walk(ROOT)) {
   if (!/\.(ts|tsx|js|mjs|json|md)$/.test(file)) continue
   const text = readFileSync(file, 'utf8')
   for (const { name, re } of PATTERNS) {
-    if (re.test(text)) {
+    const m = text.match(re)
+    if (m && !KNOWN_PUBLIC_SHAS.has(m[0])) {
       console.log(`HIT ${name} in ${file}`)
       hits += 1
     }

@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
+import { decideAskPath } from '../../core/ai/byo'
+import { hasMetaKey } from '../../core/ai/meta-key'
+import type { IntentResult, MuseProvider, ValidatedIntent } from '../../core/ai/provider'
 import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../core/ai/proxy-errors'
@@ -74,6 +76,7 @@ export function Disclosure() {
  */
 export function AskPanel({
   provider,
+  byoProvider,
   validator = hermeticStubValidator,
   onExecute,
   proxyError,
@@ -84,6 +87,12 @@ export function AskPanel({
   onExplain,
 }: {
   provider: MuseProvider
+  /**
+   * Meta-direct provider for the BYO retry after shared shutoff. Never the
+   * metered proxy — a BYO-direct call bypasses the shared allowance
+   * entirely, so the proxy meter is untouched. Absent by default.
+   */
+  byoProvider?: MuseProvider
   validator?: Validator
   onExecute?: (intent: ValidatedIntent) => void
   proxyError?: ProxyError | null
@@ -97,39 +106,63 @@ export function AskPanel({
   const [intent, setIntent] = useState<ValidatedIntent | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [caughtError, setCaughtError] = useState<ProxyError | null>(null)
 
   const errorNote = proxyErrorNote(proxyError) ?? note
+
+  function accept(result: IntentResult) {
+    const check = validateIntent(result.intent)
+    if (!check.ok) {
+      setNote('That request cannot be run as asked. Try the manual search below.')
+      return
+    }
+    // One answer: the flag is stamped by its single owner, so the gate
+    // below and ExplainOnAsk read the same runnability.
+    const parsed = withRunnability(check.intent)
+    if (result.prose) {
+      const verdict = validator.validate(result.prose, [])
+      if (!verdict.pass) {
+        setNote('Wording was withheld for failing verification. Figures are shown without it.')
+      }
+    }
+    setIntent(parsed)
+    if (parsed.clarificationNeeded) {
+      setNote('More detail is needed before anything runs. Check the understood request below.')
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!text.trim() || busy) return
     setBusy(true)
     setNote('')
+    setCaughtError(null)
+    const request = {
+      slots: { geographyHints: [], metricHints: [] },
+      queryText: text,
+      locale: 'en' as const,
+    }
     try {
-      const result = await provider.intent(
-        { slots: { geographyHints: [], metricHints: [] }, queryText: text, locale: 'en' },
-        new AbortController().signal,
-      )
-      const check = validateIntent(result.intent)
-      if (!check.ok) {
-        setNote('That request cannot be run as asked. Try the manual search below.')
-        return
-      }
-      // One answer: the flag is stamped by its single owner, so the gate
-      // below and ExplainOnAsk read the same runnability.
-      const parsed = withRunnability(check.intent)
-      if (result.prose) {
-        const verdict = validator.validate(result.prose, [])
-        if (!verdict.pass) {
-          setNote('Wording was withheld for failing verification. Figures are shown without it.')
-        }
-      }
-      setIntent(parsed)
-      if (parsed.clarificationNeeded) {
-        setNote('More detail is needed before anything runs. Check the understood request below.')
-      }
+      accept(await provider.intent(request, new AbortController().signal))
     } catch (err) {
       const known = extractProxyError(err)
+      if (
+        known &&
+        byoProvider &&
+        decideAskPath({
+          budgetExhausted: known === 'credits_exhausted' || known === 'budget_exhausted',
+          breakerOpen: false,
+          hasByoKey: hasMetaKey(),
+        }) === 'byo'
+      ) {
+        try {
+          accept(await byoProvider.intent(request, new AbortController().signal))
+          return
+        } catch {
+          // BYO-direct also failed; fall through to the shared copy below.
+        }
+      }
+      if (known) setCaughtError(known)
       setNote(
         known
           ? PROXY_ERROR_COPY[known]
@@ -165,7 +198,7 @@ export function AskPanel({
         </p>
       )}
       {(proxyError || note) && <p>{manualFallbackNote()}</p>}
-      <ByoOffer error={proxyError} onOpenSettings={onOpenSettings} />
+      <ByoOffer error={proxyError ?? caughtError} onOpenSettings={onOpenSettings} />
       {intent && (
         <>
           <IntentEditor intent={intent} onChange={setIntent} />

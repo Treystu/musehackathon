@@ -98,6 +98,14 @@ export function canRun(intent: ValidatedIntent): boolean {
   return true
 }
 
+/**
+ * Single owner of the clarification flag: stamp `clarificationNeeded`
+ * from the one predicate, so no call site derives it its own way.
+ */
+export function withRunnability(intent: ValidatedIntent): ValidatedIntent {
+  return { ...intent, clarificationNeeded: !canRun(intent) }
+}
+
 /** Closed-world validation. Anything outside the declared shape fails. */
 export function validateIntent(raw: unknown):
   | { ok: true; intent: ValidatedIntent }

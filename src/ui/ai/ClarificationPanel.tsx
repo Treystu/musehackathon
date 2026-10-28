@@ -34,6 +34,7 @@ export function ClarificationPanel({
   const metrics = candidates.metricKeys.filter((k) => !intent.metricKeys.includes(k))
   // One answer: the button enables exactly when the merged picks would run.
   const canResolve = canResolveClarification({
+    mode: intent.mode,
     geographies: [...intent.geographies, ...geographies],
     metricKeys: [...intent.metricKeys, ...metricKeys],
   })

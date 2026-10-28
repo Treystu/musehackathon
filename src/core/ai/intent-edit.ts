@@ -2,8 +2,14 @@
  * Pure intent-edit helpers for the Ask surface. Every edit is revalidated
  * against the closed intent schema, so chips cannot widen the allowlist.
  */
-import { DISPLAYABLE_KEYS, canRun, isFilterLegal, validateIntent } from './intent-schema'
-import type { ValidatedIntent } from './provider'
+import {
+  DISPLAYABLE_KEYS,
+  canRun,
+  isFilterLegal,
+  validateIntent,
+  withRunnability,
+} from './intent-schema'
+import type { IntentMode, ValidatedIntent } from './provider'
 
 export type IntentFilter = ValidatedIntent['filters'][number]
 
@@ -47,7 +53,7 @@ export function removeGeography(intent: ValidatedIntent, place: string): IntentE
   const next = { ...intent, geographies }
   // The flag is derived from the one predicate: removal can only take a
   // runnable intent back through clarification, never clear the flag.
-  return checked({ ...next, clarificationNeeded: !canRun(next) })
+  return checked(withRunnability(next))
 }
 
 export function removeMetricKey(intent: ValidatedIntent, key: string): IntentEditResult {
@@ -55,7 +61,7 @@ export function removeMetricKey(intent: ValidatedIntent, key: string): IntentEdi
   const next = { ...intent, metricKeys }
   // Removing the last measure takes the intent back through clarification,
   // the same as removing the last place (canRun needs both).
-  return checked({ ...next, clarificationNeeded: !canRun(next) })
+  return checked(withRunnability(next))
 }
 
 export function removeFilter(intent: ValidatedIntent, filter: IntentFilter): IntentEditResult {
@@ -73,16 +79,22 @@ export function removeFilter(intent: ValidatedIntent, filter: IntentFilter): Int
 }
 
 /**
- * A clarification can resolve only when the picks carry the same
- * place/measure combination canRun needs: at least one place AND at
- * least one measure. Callers pass the clarification picks merged with the
- * existing intent so this answer agrees with canRun.
+ * Whether clarification picks complete the intent. Delegates to the one
+ * predicate, so the resolve button and the Run gate can never disagree.
+ * Callers pass the clarification picks merged with the existing intent.
  */
 export function canResolveClarification(picks: {
+  mode: IntentMode
   geographies: string[]
   metricKeys?: string[]
 }): boolean {
-  return picks.geographies.length > 0 && (picks.metricKeys ?? []).length > 0
+  return canRun({
+    mode: picks.mode,
+    geographies: picks.geographies,
+    metricKeys: picks.metricKeys ?? [],
+    filters: [],
+    clarificationNeeded: false,
+  })
 }
 
 /**
@@ -99,5 +111,5 @@ export function resolveClarification(
     return { ok: false, error: 'clarification_required' }
   }
   const next = { ...intent, geographies, metricKeys }
-  return checked({ ...next, clarificationNeeded: !canRun(next) })
+  return checked(withRunnability(next))
 }

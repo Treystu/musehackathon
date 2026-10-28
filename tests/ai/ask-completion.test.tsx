@@ -79,7 +79,7 @@ describe('intent editing', () => {
 
   it('resolves clarification only when a place is chosen', () => {
     const unclear = { ...base, geographies: [], clarificationNeeded: true }
-    expect(canResolveClarification({ geographies: [] })).toBe(false)
+    expect(canResolveClarification({ mode: 'lookup', geographies: [] })).toBe(false)
     expect(resolveClarification(unclear, { geographies: [], metricKeys: [] }).ok).toBe(false)
     const resolved = resolveClarification(unclear, {
       geographies: ['Hilo'],
@@ -145,10 +145,21 @@ describe('canRun (one predicate for executable intent)', () => {
   })
 
   it('resolves clarification only with a place AND a measure', () => {
-    expect(canResolveClarification({ geographies: ['Hilo'] })).toBe(false)
+    expect(canResolveClarification({ mode: 'lookup', geographies: ['Hilo'] })).toBe(false)
     expect(
-      canResolveClarification({ geographies: ['Hilo'], metricKeys: ['median_gross_rent'] }),
+      canResolveClarification({
+        mode: 'lookup',
+        geographies: ['Hilo'],
+        metricKeys: ['median_gross_rent'],
+      }),
     ).toBe(true)
+    expect(
+      canResolveClarification({
+        mode: 'sweep_filter',
+        geographies: ['HI'],
+        metricKeys: ['median_age'],
+      }),
+    ).toBe(false)
     const unclear = { ...base, geographies: [], metricKeys: [], clarificationNeeded: true }
     expect(
       resolveClarification(unclear, { geographies: ['Hilo'], metricKeys: [] }).ok,

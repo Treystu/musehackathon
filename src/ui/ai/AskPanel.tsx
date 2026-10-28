@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
-import { canRun, validateIntent } from '../../core/ai/intent-schema'
+import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../core/ai/proxy-errors'
 import { ByoOffer } from './ByoOffer'
@@ -115,10 +115,9 @@ export function AskPanel({
         setNote('That request cannot be run as asked. Try the manual search below.')
         return
       }
-      // One answer: the stored flag agrees with the predicate, so the gate
+      // One answer: the flag is stamped by its single owner, so the gate
       // below and ExplainOnAsk read the same runnability.
-      const runnable = check.intent
-      const parsed = { ...runnable, clarificationNeeded: !canRun(runnable) }
+      const parsed = withRunnability(check.intent)
       if (result.prose) {
         const verdict = validator.validate(result.prose, [])
         if (!verdict.pass) {

@@ -1,10 +1,12 @@
 /**
  * Hermetic eval harness (Item 5). No network, no live model, canned
- * fixtures only. Registry fixtures are generated from the audit
- * allowlist so proxy/school/health exclusions are never filter-legal
- * by construction (they are absent from FILTER_LEGAL_KEYS).
+ * fixtures only. Registry fixtures are generated from the ported
+ * registry (METRIC_KEYS / SORTABLE_METRIC_KEYS), never from the
+ * intent-schema allowlists they test, so proxy/school/health
+ * exclusions are never filter-legal by construction.
  */
-import { FILTER_LEGAL_KEYS, DISPLAYABLE_KEYS, validateIntent } from './intent-schema'
+import { METRIC_KEYS, SORTABLE_METRIC_KEYS } from '../civicscope-registry'
+import { validateIntent } from './intent-schema'
 import {
   createStubProvider,
   type IntentMode,
@@ -33,8 +35,11 @@ export interface RegistryFixture {
   expectedError?: 'proxy_metric_blocked'
 }
 
-export function registryFixtures(): RegistryFixture[] {
-  const legal: RegistryFixture[] = FILTER_LEGAL_KEYS.map((key) => ({
+export function registryFixtures(
+  keys: readonly string[] = METRIC_KEYS,
+  sortable: readonly string[] = SORTABLE_METRIC_KEYS,
+): RegistryFixture[] {
+  const legal: RegistryFixture[] = sortable.map((key) => ({
     id: `legal-${key}`,
     metricKey: key,
     kind: 'filter-legal-accept',
@@ -47,8 +52,8 @@ export function registryFixtures(): RegistryFixture[] {
     },
     expectedOk: true,
   }))
-  const legalSet = new Set<string>(FILTER_LEGAL_KEYS as readonly string[])
-  const rejected: RegistryFixture[] = DISPLAYABLE_KEYS.filter(
+  const legalSet = new Set<string>(sortable)
+  const rejected: RegistryFixture[] = keys.filter(
     (k) => !legalSet.has(k),
   ).map((key) => ({
     id: `reject-${key}`,

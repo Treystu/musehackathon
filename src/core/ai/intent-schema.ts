@@ -1,39 +1,19 @@
 /**
- * Intent allowlist, mirrored from the CivicScope audit at 3aa7e10.
+ * Intent allowlist, derived from the ported registry (single source:
+ * src/core/civicscope-registry.ts, pre-existing Civicscope surface).
  * Filter-legal keys are exactly the sortable surface; protected-class and
  * school/health keys can never appear in filters by construction.
  */
+import { METRIC_KEYS, SORTABLE_METRIC_KEYS } from '../civicscope-registry'
 import type { IntentMode, ValidatedIntent } from './provider'
 
-/** Exactly src/core/sortable-surface.ts SORTABLE_METRIC_KEYS at 3aa7e10. */
-export const FILTER_LEGAL_KEYS = [
-  'median_rent_burden_pct',
-  'median_gross_rent',
-  'median_home_value',
-  'median_household_income',
-  'households',
-] as const
+/** Exactly the ported SORTABLE_METRIC_KEYS — same reference, never a copy. */
+export const FILTER_LEGAL_KEYS = SORTABLE_METRIC_KEYS
 
 export type FilterLegalKey = (typeof FILTER_LEGAL_KEYS)[number]
 
-/** Displayable ACS keys (lookup/compare context). Mirrors METRIC_DEFS keys. */
-export const DISPLAYABLE_KEYS = [
-  'median_gross_rent',
-  'median_rent_burden_pct',
-  'median_home_value',
-  'median_household_income',
-  'households',
-  'population',
-  'renter_occupied',
-  'owner_occupied',
-  'vacant_units',
-  'no_internet_access',
-  'average_household_size',
-  'median_age',
-  'below_poverty_count',
-  'bachelors_count',
-  'commuting_workers',
-] as const
+/** Displayable ACS keys (lookup/compare context): every registry key. */
+export const DISPLAYABLE_KEYS: readonly string[] = METRIC_KEYS
 
 const MODES: readonly IntentMode[] = [
   'lookup',

@@ -26,5 +26,9 @@
 - **Isolation check passed:** the defs block is pure data (only type-level
   dependency on the copied unions); the sortable guard depends only on
   `METRIC_DEFS_BY_KEY`. No runtime import from outside the file.
-- **Status:** PORT landed; DERIVE (intent-schema consumes this; fixtures source
-  from this) is the queued next pass. No consumer imports this file yet.
+- **Status:** DERIVE landed — `src/core/ai/intent-schema.ts` re-exports
+  `SORTABLE_METRIC_KEYS` / `METRIC_KEYS` as the allowlists (same reference),
+  and `registryFixtures()` in `src/core/ai/harness.ts` builds from the
+  registry with optional source overrides (defaults = the ported sets).
+  Derivation shifted nothing: post-derive arrays are element-wise identical
+  to the pre-derive hand lists (temp probe, passed then removed).

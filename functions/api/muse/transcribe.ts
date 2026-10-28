@@ -1,7 +1,8 @@
 /**
- * POST /api/muse/transcribe — route SHELL (Item 2; mic is Item 12, LAST).
- * In the allowlist + meter from day one so mic needs no new route later.
- * No provider call, no mic UI ships with this shell (no dead button).
+ * POST /api/muse/transcribe — inert, allowlisted route shell (Item 12).
+ * Item 12 remains planned-only: the independent-run bar is AWAITING, so no
+ * microphone UI, consent, or CSP change ships. No provider call and no dead
+ * button. In the allowlist + meter from day one so mic needs no new route.
  */
 import { preCallGate, err, type ProxyDeps, type ProxyReply } from './shared'
 

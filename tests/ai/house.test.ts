@@ -41,6 +41,48 @@ describe('intent schema allowlist', () => {
     if (!r.ok) expect(r.error).toBe('not_allowlisted')
   })
 
+  it('rejects malformed filter shapes instead of casting', () => {
+    const base = {
+      mode: 'sweep_filter',
+      geographies: ['HI'],
+      metricKeys: ['median_gross_rent'],
+      filters: [],
+      clarificationNeeded: false,
+    }
+    const badFilters = [
+      { metricKey: 'median_gross_rent', op: 'DROP', value: 1000 },
+      { metricKey: 'median_gross_rent', op: 'gt', value: '1000' },
+      { metricKey: 'median_gross_rent', op: 'gt', value: Number.NaN },
+      { metricKey: 'median_gross_rent', op: 'gt', value: 1000, extra: true },
+    ]
+    for (const filter of badFilters) {
+      const r = validateIntent({ ...base, filters: [filter] })
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.error).toBe('shape_invalid')
+    }
+    const proxy = validateIntent({
+      ...base,
+      filters: [{ metricKey: 'median_age', op: 'gt', value: 40 }],
+    })
+    expect(proxy.ok).toBe(false)
+    if (!proxy.ok) expect(proxy.error).toBe('proxy_metric_blocked')
+  })
+
+  it('requires the declared arrays and a boolean clarification flag', () => {
+    expect(
+      validateIntent({ mode: 'lookup', metricKeys: [], filters: [], clarificationNeeded: false }).ok,
+    ).toBe(false)
+    expect(
+      validateIntent({ mode: 'lookup', geographies: [], filters: [], clarificationNeeded: false }).ok,
+    ).toBe(false)
+    expect(
+      validateIntent({ mode: 'lookup', geographies: [], metricKeys: [], filters: [] }).ok,
+    ).toBe(false)
+    expect(
+      validateIntent({ mode: 'lookup', geographies: [''], metricKeys: [], filters: [], clarificationNeeded: false }).ok,
+    ).toBe(false)
+  })
+
   it('filter-legal set is the audited sortable set', () => {
     expect(isFilterLegal('median_gross_rent')).toBe(true)
     expect(isFilterLegal('median_age')).toBe(false)
@@ -67,6 +109,26 @@ describe('meter', () => {
     const m = new Meter({ ...defaultMeterConfig(), perClientCapMicroUsd: 500 })
     expect(m.reserve('c1', 600, 10)).toBeNull()
     expect(m.reserve('c1', 400, 10)).not.toBeNull()
+  })
+
+  it('counts outstanding reservations against the cap and never reuses a live id', () => {
+    const m = new Meter({ ...defaultMeterConfig(), budgetCapMicroUsd: 1000 })
+    const first = m.reserve('c1', 600, 10)
+    expect(first).not.toBeNull()
+    expect(m.reserve('c1', 600, 10)).toBeNull()
+
+    m.release(first as string)
+    const second = m.reserve('c1', 600, 10)
+    expect(second).not.toBeNull()
+    expect(second).not.toBe(first)
+  })
+
+  it('counts outstanding reservations against the per-client cap', () => {
+    const m = new Meter({ ...defaultMeterConfig(), perClientCapMicroUsd: 1000 })
+    const first = m.reserve('c1', 600, 10)
+    expect(first).not.toBeNull()
+    expect(m.reserve('c1', 600, 10)).toBeNull()
+    expect(m.reserve('c2', 600, 10)).not.toBeNull()
   })
 })
 

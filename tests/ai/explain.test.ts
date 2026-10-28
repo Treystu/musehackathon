@@ -41,6 +41,45 @@ describe('explain route', () => {
     expect(d.meter.snapshot().requests).toBe(0)
   })
 
+  it('rejects unknown figure keys and extra value fields before reserving', async () => {
+    const d = deps()
+    const unknown = await handleExplain(
+      req({ figureSetId: 'f1', values: [{ key: 'fabricated_metric', value: 999 }] }),
+      d,
+    )
+    expect(unknown.status).toBe(400)
+    expect(unknown.body.error).toBe('shape_invalid')
+
+    const extra = await handleExplain(
+      req({ figureSetId: 'f1', values: [{ key: 'median_gross_rent', value: 1200, source: 'x' }] }),
+      d,
+    )
+    expect(extra.status).toBe(400)
+    expect(extra.body.error).toBe('shape_invalid')
+
+    const unknownDerived = await handleExplain(
+      req({ figureSetId: 'f1', values: [{ key: 'derived:unknown_metric', value: 1 }] }),
+      d,
+    )
+    expect(unknownDerived.status).toBe(400)
+    expect(unknownDerived.body.error).toBe('shape_invalid')
+    expect(d.meter.snapshot().requests).toBe(0)
+  })
+
+  it('accepts a code-supplied derived figure key', async () => {
+    const d = deps({
+      async explain() {
+        return { prose: 'The renter share is 42 percent.' }
+      },
+    })
+    const r = await handleExplain(
+      req({ figureSetId: 'f1', values: [{ key: 'derived:renter_pct', value: 42 }] }),
+      d,
+    )
+    expect(r.status).toBe(200)
+    expect(r.body.prose).toContain('42')
+  })
+
   it('returns validated prose and settles the meter', async () => {
     const d = deps({
       async explain() {

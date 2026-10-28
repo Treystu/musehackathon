@@ -35,7 +35,29 @@ export const DISPLAYABLE_KEYS = [
   'commuting_workers',
 ] as const
 
-const MODES: readonly string[] = ['lookup', 'compare', 'sweep_filter', 'similarity']
+const MODES: readonly IntentMode[] = [
+  'lookup',
+  'compare',
+  'sweep_filter',
+  'similarity',
+]
+const FILTER_OPS = ['gt', 'lt', 'eq_range'] as const
+const MAX_GEOGRAPHIES = 8
+
+/** Code-supplied derived figures are a closed set, not any `derived:` name. */
+const KNOWN_DERIVED_FIGURE_KEYS = ['derived:renter_pct'] as const
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isIntentMode(value: unknown): value is IntentMode {
+  return typeof value === 'string' && MODES.some((mode) => mode === value)
+}
+
+function isFilterOp(value: unknown): value is (typeof FILTER_OPS)[number] {
+  return typeof value === 'string' && FILTER_OPS.some((op) => op === value)
+}
 
 export type SchemaError =
   | 'not_allowlisted'
@@ -43,62 +65,104 @@ export type SchemaError =
   | 'proxy_metric_blocked'
 
 export function isFilterLegal(key: string): key is FilterLegalKey {
-  return (FILTER_LEGAL_KEYS as readonly string[]).includes(key)
+  return FILTER_LEGAL_KEYS.some((legal) => legal === key)
 }
 
-/** Closed-world validation. Anything outside the sets fails. */
+export function isDisplayableKey(key: string): boolean {
+  return DISPLAYABLE_KEYS.some((displayable) => displayable === key)
+}
+
+/** Known figure keys: registry keys plus the code-supplied derived set. */
+export function isKnownFigureKey(key: string): boolean {
+  return isDisplayableKey(key) || KNOWN_DERIVED_FIGURE_KEYS.some((known) => known === key)
+}
+
+/** Closed-world validation. Anything outside the declared shape fails. */
 export function validateIntent(raw: unknown):
   | { ok: true; intent: ValidatedIntent }
   | { ok: false; error: SchemaError; detail: string } {
-  if (typeof raw !== 'object' || raw === null) {
+  if (!isRecord(raw)) {
     return { ok: false, error: 'shape_invalid', detail: 'intent must be an object' }
   }
-  const r = raw as Record<string, unknown>
-  if (typeof r.mode !== 'string' || !MODES.includes(r.mode)) {
+  if (!isIntentMode(raw.mode)) {
     return { ok: false, error: 'shape_invalid', detail: 'mode outside closed enum' }
   }
-  const mode = r.mode as IntentMode
-  const geographies = Array.isArray(r.geographies) ? r.geographies : []
-  const metricKeys = Array.isArray(r.metricKeys) ? r.metricKeys : []
-  const filters = Array.isArray(r.filters) ? r.filters : []
+  if (!Array.isArray(raw.geographies)) {
+    return { ok: false, error: 'shape_invalid', detail: 'geographies must be an array' }
+  }
+  if (!Array.isArray(raw.metricKeys)) {
+    return { ok: false, error: 'shape_invalid', detail: 'metricKeys must be an array' }
+  }
+  if (!Array.isArray(raw.filters)) {
+    return { ok: false, error: 'shape_invalid', detail: 'filters must be an array' }
+  }
+  if (typeof raw.clarificationNeeded !== 'boolean') {
+    return { ok: false, error: 'shape_invalid', detail: 'clarificationNeeded must be a boolean' }
+  }
+  if (raw.geographies.length > MAX_GEOGRAPHIES) {
+    return { ok: false, error: 'shape_invalid', detail: 'too many geographies' }
+  }
 
-  for (const k of metricKeys) {
-    if (typeof k !== 'string' || !(DISPLAYABLE_KEYS as readonly string[]).includes(k)) {
+  const geographies: string[] = []
+  for (const g of raw.geographies) {
+    if (typeof g !== 'string' || g.trim() === '') {
+      return { ok: false, error: 'shape_invalid', detail: 'geography must be a non-empty string' }
+    }
+    geographies.push(g)
+  }
+
+  const metricKeys: string[] = []
+  for (const k of raw.metricKeys) {
+    if (typeof k !== 'string' || !isDisplayableKey(k)) {
       return { ok: false, error: 'not_allowlisted', detail: `metric key not in registry: ${String(k)}` }
     }
+    metricKeys.push(k)
   }
-  for (const f of filters) {
-    if (typeof f !== 'object' || f === null) {
+
+  const filters: ValidatedIntent['filters'] = []
+  for (const f of raw.filters) {
+    if (!isRecord(f)) {
       return { ok: false, error: 'shape_invalid', detail: 'filter must be an object' }
     }
-    const fk = (f as Record<string, unknown>).metricKey
-    if (typeof fk !== 'string' || !isFilterLegal(fk)) {
+    if (Object.keys(f).some((key) => key !== 'metricKey' && key !== 'op' && key !== 'value')) {
+      return { ok: false, error: 'shape_invalid', detail: 'filter has unknown fields' }
+    }
+    if (typeof f.metricKey !== 'string' || !isFilterLegal(f.metricKey)) {
       return {
         ok: false,
         error: 'proxy_metric_blocked',
-        detail: `filter metric not filter-legal: ${String(fk)}`,
+        detail: `filter metric not filter-legal: ${String(f.metricKey)}`,
       }
     }
+    if (!isFilterOp(f.op)) {
+      return { ok: false, error: 'shape_invalid', detail: 'filter op outside closed enum' }
+    }
+    if (typeof f.value !== 'number' || !Number.isFinite(f.value)) {
+      return { ok: false, error: 'shape_invalid', detail: 'filter value must be a finite number' }
+    }
+    filters.push({ metricKey: f.metricKey, op: f.op, value: f.value })
   }
-  if (mode === 'sweep_filter' || mode === 'similarity') {
+
+  if (raw.mode === 'sweep_filter' || raw.mode === 'similarity') {
     for (const k of metricKeys) {
       if (!isFilterLegal(k)) {
         return {
           ok: false,
           error: 'proxy_metric_blocked',
-          detail: `${mode} cannot use non-filter-legal metric: ${k}`,
+          detail: `${raw.mode} cannot use non-filter-legal metric: ${k}`,
         }
       }
     }
   }
+
   return {
     ok: true,
     intent: {
-      mode,
-      geographies: geographies.filter((g): g is string => typeof g === 'string').slice(0, 8),
-      metricKeys: metricKeys.filter((k): k is string => typeof k === 'string'),
-      filters: filters as ValidatedIntent['filters'],
-      clarificationNeeded: Boolean(r.clarificationNeeded),
+      mode: raw.mode,
+      geographies,
+      metricKeys,
+      filters,
+      clarificationNeeded: raw.clarificationNeeded,
     },
   }
 }

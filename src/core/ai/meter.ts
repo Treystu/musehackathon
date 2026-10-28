@@ -35,7 +35,11 @@ export class Meter {
   private breakerOpenedAt = 0
   private readonly errors = new Map()
   private readonly perClientSpent = new Map<string, number>()
-  private readonly reservations = new Map<string, number>()
+  private readonly reservations = new Map<
+    string,
+    { clientId: string; estMicroUsd: number }
+  >()
+  private nextReservationId = 0
 
   constructor(private readonly cfg: MeterConfig) {}
 
@@ -60,14 +64,31 @@ export class Meter {
   /** Reserve budget before a provider call. Returns reservation id or null. */
   reserve(clientId: string, estMicroUsd: number, estTokens: number): string | null {
     if (this.breakerState() === 'open') return null
+    if (!Number.isFinite(estMicroUsd) || estMicroUsd <= 0) return null
+    if (!Number.isFinite(estTokens) || estTokens <= 0) return null
     if (estTokens > this.cfg.perRequestTokenCeiling) return null
-    if (this.spentMicroUsd + estMicroUsd > this.cfg.budgetCapMicroUsd) return null
+
+    const outstanding = [...this.reservations.values()].reduce(
+      (sum, r) => sum + r.estMicroUsd,
+      0,
+    )
+    if (this.spentMicroUsd + outstanding + estMicroUsd > this.cfg.budgetCapMicroUsd) {
+      return null
+    }
+
     if (this.cfg.perClientCapMicroUsd !== undefined) {
       const used = this.perClientSpent.get(clientId) ?? 0
-      if (used + estMicroUsd > this.cfg.perClientCapMicroUsd) return null
+      const clientOutstanding = [...this.reservations.values()]
+        .filter((r) => r.clientId === clientId)
+        .reduce((sum, r) => sum + r.estMicroUsd, 0)
+      if (used + clientOutstanding + estMicroUsd > this.cfg.perClientCapMicroUsd) {
+        return null
+      }
     }
-    const id = `r${this.requests + this.reservations.size + 1}`
-    this.reservations.set(id, estMicroUsd)
+
+    // Monotonic ids never reuse a live reservation's id, even after release.
+    const id = `r${++this.nextReservationId}`
+    this.reservations.set(id, { clientId, estMicroUsd })
     return id
   }
 

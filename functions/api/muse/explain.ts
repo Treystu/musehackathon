@@ -6,6 +6,7 @@
  * the failed prose. Counts only; no bodies are stored (Q1).
  */
 import type { ExplainRequest } from '../../../src/core/ai/provider'
+import { isKnownFigureKey } from '../../../src/core/ai/intent-schema'
 import { realValidator, type FigureForValidation } from '../../../src/core/ai/validator'
 import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from './shared'
 
@@ -18,25 +19,31 @@ const ACTUAL_COST_MICRO = 800
 const ACTUAL_TOKENS_IN = 128
 const ACTUAL_TOKENS_OUT = 128
 
+const VALUE_FIELDS = new Set(['key', 'value', 'marginOfError'])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function parseValues(raw: unknown): ExplainRequest['values'] | null {
   if (!Array.isArray(raw)) return null
   const values: ExplainRequest['values'] = []
   for (const item of raw) {
-    if (typeof item !== 'object' || item === null) return null
-    const r = item as Record<string, unknown>
-    if (typeof r.key !== 'string' || r.key.length === 0) return null
-    if (typeof r.value !== 'number' && r.value !== null) return null
-    if (typeof r.value === 'number' && !Number.isFinite(r.value)) return null
+    if (!isRecord(item)) return null
+    if (Object.keys(item).some((key) => !VALUE_FIELDS.has(key))) return null
+    if (typeof item.key !== 'string' || !isKnownFigureKey(item.key)) return null
+    if (typeof item.value !== 'number' && item.value !== null) return null
+    if (typeof item.value === 'number' && !Number.isFinite(item.value)) return null
     if (
-      r.marginOfError !== undefined &&
-      (typeof r.marginOfError !== 'number' || !Number.isFinite(r.marginOfError))
+      item.marginOfError !== undefined &&
+      (typeof item.marginOfError !== 'number' || !Number.isFinite(item.marginOfError))
     ) {
       return null
     }
     values.push({
-      key: r.key,
-      value: r.value as number | null,
-      marginOfError: r.marginOfError as number | undefined,
+      key: item.key,
+      value: item.value,
+      marginOfError: item.marginOfError,
     })
   }
   return values

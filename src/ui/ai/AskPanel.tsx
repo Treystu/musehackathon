@@ -3,6 +3,11 @@ import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
 import { validateIntent } from '../../core/ai/intent-schema'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../../functions/api/muse/shared'
+import { ByoOffer } from './ByoOffer'
+import { ClarificationPanel, type ClarificationCandidates } from './ClarificationPanel'
+import { IntentEditor } from './IntentEditor'
+
+export { IntentChips } from './IntentChips'
 
 export const PROXY_ERROR_COPY: Record<ProxyError, string> = {
   not_allowlisted:
@@ -57,65 +62,6 @@ export function Disclosure() {
   )
 }
 
-export function IntentChips({
-  intent,
-  onChange,
-}: {
-  intent: ValidatedIntent
-  onChange: (next: ValidatedIntent) => void
-}) {
-  return (
-    <div aria-label="What was understood">
-      <span>{intent.mode}</span>
-      {intent.geographies.map((g) => (
-        <button
-          key={g}
-          type="button"
-          aria-label={`Remove place ${g}`}
-          onClick={() =>
-            onChange({ ...intent, geographies: intent.geographies.filter((x) => x !== g) })
-          }
-        >
-          {g} ×
-        </button>
-      ))}
-      {intent.metricKeys.map((k) => (
-        <button
-          key={k}
-          type="button"
-          aria-label={`Remove measure ${k}`}
-          onClick={() =>
-            onChange({ ...intent, metricKeys: intent.metricKeys.filter((x) => x !== k) })
-          }
-        >
-          {k} ×
-        </button>
-      ))}
-      {intent.filters.map((f) => {
-        const label = `${f.metricKey} ${f.op} ${f.value}`
-        return (
-          <button
-            key={label}
-            type="button"
-            aria-label={`Remove filter ${label}`}
-            onClick={() =>
-              onChange({
-                ...intent,
-                filters: intent.filters.filter(
-                  (x) =>
-                    !(x.metricKey === f.metricKey && x.op === f.op && x.value === f.value),
-                ),
-              })
-            }
-          >
-            {label} ×
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 /**
  * Ask panel (text path). Mic is LAST and intentionally absent here:
  * no dead button is rendered until mic dependencies verify. BYO lives
@@ -126,11 +72,15 @@ export function AskPanel({
   validator = hermeticStubValidator,
   onExecute,
   proxyError,
+  clarificationCandidates,
+  onOpenSettings,
 }: {
   provider: MuseProvider
   validator?: Validator
   onExecute?: (intent: ValidatedIntent) => void
   proxyError?: ProxyError | null
+  clarificationCandidates?: ClarificationCandidates
+  onOpenSettings?: () => void
 }) {
   const [text, setText] = useState('')
   const [intent, setIntent] = useState<ValidatedIntent | null>(null)
@@ -197,10 +147,19 @@ export function AskPanel({
         </p>
       )}
       {(proxyError || note) && <p>{manualFallbackNote()}</p>}
+      <ByoOffer error={proxyError} onOpenSettings={onOpenSettings} />
       {intent && (
         <>
-          <IntentChips intent={intent} onChange={setIntent} />
-          {!intent.clarificationNeeded && (
+          <IntentEditor intent={intent} onChange={setIntent} />
+          {intent.clarificationNeeded ? (
+            <ClarificationPanel
+              intent={intent}
+              candidates={
+                clarificationCandidates ?? { geographies: [], metricKeys: [] }
+              }
+              onResolve={setIntent}
+            />
+          ) : (
             <button type="button" onClick={() => onExecute?.(intent)}>
               Run this request
             </button>

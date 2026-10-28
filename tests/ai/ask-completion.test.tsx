@@ -1,0 +1,129 @@
+import { describe, expect, it } from 'vitest'
+import { renderToStaticMarkup } from 'react-dom/server'
+import {
+  addFilter,
+  addGeography,
+  addMetricKey,
+  canResolveClarification,
+  removeFilter,
+  resolveClarification,
+} from '../../src/core/ai/intent-edit'
+import { createStubProvider, type ValidatedIntent } from '../../src/core/ai/provider'
+import { AskPanel } from '../../src/ui/ai/AskPanel'
+import { ByoOffer } from '../../src/ui/ai/ByoOffer'
+import { ByoSettings } from '../../src/ui/ai/ByoSettings'
+import { ClarificationPanel } from '../../src/ui/ai/ClarificationPanel'
+import { IntentEditor } from '../../src/ui/ai/IntentEditor'
+
+const base: ValidatedIntent = {
+  mode: 'lookup',
+  geographies: ['Hilo'],
+  metricKeys: ['median_gross_rent'],
+  filters: [],
+  clarificationNeeded: false,
+}
+
+describe('intent editing', () => {
+  it('adds a place without mutating the input intent', () => {
+    const result = addGeography(base, '  Honolulu  ')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.intent.geographies).toEqual(['Hilo', 'Honolulu'])
+      expect(base.geographies).toEqual(['Hilo'])
+    }
+  })
+
+  it('rejects blank places, unknown measures, and proxy filters', () => {
+    expect(addGeography(base, '   ').ok).toBe(false)
+    expect(addMetricKey(base, 'not_a_real_metric').ok).toBe(false)
+    const proxy = addFilter(base, { metricKey: 'median_age', op: 'gt', value: 40 })
+    expect(proxy.ok).toBe(false)
+    if (!proxy.ok) expect(proxy.error).toBe('proxy_metric_blocked')
+  })
+
+  it('adds a filter-legal filter and removes it by value', () => {
+    const added = addFilter(base, {
+      metricKey: 'median_gross_rent',
+      op: 'lt',
+      value: 2000,
+    })
+    expect(added.ok).toBe(true)
+    if (!added.ok) return
+    expect(added.intent.filters).toHaveLength(1)
+    const filter = added.intent.filters[0]
+    expect(filter).toBeDefined()
+    const removed = removeFilter(added.intent, filter as NonNullable<typeof filter>)
+    expect(removed.ok).toBe(true)
+    if (removed.ok) expect(removed.intent.filters).toHaveLength(0)
+  })
+
+  it('resolves clarification only when a place is chosen', () => {
+    const unclear = { ...base, geographies: [], clarificationNeeded: true }
+    expect(canResolveClarification({ geographies: [] })).toBe(false)
+    expect(resolveClarification(unclear, { geographies: [], metricKeys: [] }).ok).toBe(false)
+    const resolved = resolveClarification(unclear, {
+      geographies: ['Hilo'],
+      metricKeys: ['median_gross_rent'],
+    })
+    expect(resolved.ok).toBe(true)
+    if (resolved.ok) {
+      expect(resolved.intent.clarificationNeeded).toBe(false)
+      expect(resolved.intent.geographies).toEqual(['Hilo'])
+      expect(resolved.intent.metricKeys).toContain('median_gross_rent')
+    }
+  })
+})
+
+describe('Ask surface completion', () => {
+  it('keeps disclosure on the Ask surface and renders no mic control', () => {
+    const html = renderToStaticMarkup(<AskPanel provider={createStubProvider()} />)
+    expect(html).toContain('This is a reading of the shown figures')
+    expect(html.toLowerCase()).not.toContain('microphone')
+    expect(html).not.toContain('>Mic<')
+  })
+
+  it('renders add-place, add-measure, and add-filter controls', () => {
+    const html = renderToStaticMarkup(<IntentEditor intent={base} onChange={() => {}} />)
+    expect(html).toContain('Add a place')
+    expect(html).toContain('Add a measure')
+    expect(html).toContain('Add a filter')
+    expect(html).toContain('greater than')
+  })
+
+  it('renders clarification candidates before execution', () => {
+    const html = renderToStaticMarkup(
+      <ClarificationPanel
+        intent={{ ...base, geographies: [], clarificationNeeded: true }}
+        candidates={{ geographies: ['Hilo'], metricKeys: ['median_gross_rent'] }}
+        onResolve={() => {}}
+      />,
+    )
+    expect(html).toContain('Hilo')
+    expect(html).toContain('Use these choices')
+    expect(html).toContain('disabled')
+  })
+
+  it('offers BYO only on shutoff/error, not the happy path', () => {
+    const offer = renderToStaticMarkup(
+      <ByoOffer error="budget_exhausted" onOpenSettings={() => {}} />,
+    )
+    expect(offer.toLowerCase()).toContain('personal')
+    expect(offer).toContain('Open key settings')
+    expect(
+      renderToStaticMarkup(
+        <ByoOffer error="provider_down" onOpenSettings={() => {}} />,
+      ),
+    ).toBe('')
+  })
+
+  it('keeps key entry in settings, off the Ask surface', () => {
+    const ask = renderToStaticMarkup(
+      <AskPanel provider={createStubProvider()} onOpenSettings={() => {}} />,
+    )
+    expect(ask).not.toContain('type="password"')
+    expect(ask).not.toContain('Meta key')
+    const settings = renderToStaticMarkup(<ByoSettings />)
+    expect(settings).toContain('type="password"')
+    expect(settings).toContain('Personal key')
+  })
+})

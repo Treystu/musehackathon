@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROXY_ERRORS } from '../../functions/api/muse/shared'
+import { PROXY_ERRORS } from '../../src/core/ai/proxy-errors'
 import { PROXY_ERROR_COPY, manualFallbackNote, proxyErrorNote } from '../../src/ui/ai/AskPanel'
 import { assertProseHasMoe, formatFigure, type FigureInput } from '../../src/ui/ai/FigureCard'
 import { explainState } from '../../src/ui/ai/ExplainBox'

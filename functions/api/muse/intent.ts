@@ -10,7 +10,6 @@
 import { validateIntent } from '../../../src/core/ai/intent-schema'
 import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from './shared'
 
-export type { ProxyError } from './shared'
 export type { ProxyDeps } from './shared'
 
 const ALLOWED_PATHS = new Set(['/api/muse/intent'])

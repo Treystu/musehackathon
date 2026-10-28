@@ -4,7 +4,7 @@
  * settings only — never as a hero element on the Ask surface itself.
  * BYO spend is the visitor's own, never the shared $150.
  */
-import type { ProxyError } from '../../../functions/api/muse/shared'
+import type { ProxyError } from './proxy-errors'
 
 export type AskPath = 'shared' | 'byo' | 'unavailable'
 

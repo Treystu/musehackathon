@@ -7,21 +7,7 @@
  */
 import type { Meter } from '../../../src/core/ai/meter'
 import type { MuseProvider } from '../../../src/core/ai/provider'
-
-export type ProxyError =
-  | 'not_allowlisted'
-  | 'shape_invalid'
-  | 'rate_limited'
-  | 'credits_exhausted'
-  | 'provider_down'
-  | 'bad_key'
-  | 'budget_exhausted'
-  | 'breaker_open'
-
-export const PROXY_ERRORS: readonly ProxyError[] = [
-  'not_allowlisted', 'shape_invalid', 'rate_limited', 'credits_exhausted',
-  'provider_down', 'bad_key', 'budget_exhausted', 'breaker_open',
-]
+import type { ProxyError } from '../../../src/core/ai/proxy-errors'
 
 export interface ProxyDeps {
   meter: Meter

@@ -1,4 +1,4 @@
-import type { ProxyError } from '../../../functions/api/muse/shared'
+import type { ProxyError } from '../../core/ai/proxy-errors'
 import { shouldOfferByo } from '../../core/ai/byo'
 
 /**

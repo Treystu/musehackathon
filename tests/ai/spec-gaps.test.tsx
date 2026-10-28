@@ -7,6 +7,7 @@ import {
   type IntentRequest,
   type ValidatedIntent,
 } from '../../src/core/ai/provider'
+import { realValidator } from '../../src/core/ai/validator'
 import { AskPanel, RAW_TEXT_DISCLOSURE } from '../../src/ui/ai/AskPanel'
 import { ExplainOnAsk } from '../../src/ui/ai/ExplainOnAsk'
 import type { FigureInput } from '../../src/ui/ai/FigureCard'
@@ -217,6 +218,35 @@ describe('spec-gap surfaces', () => {
       (button) => button.textContent === 'Run this request',
     )
     expect(run).toBeDefined()
+  })
+
+  it('a 15 percent figure renders value and wording, not a withholding note', () => {
+    const burden: FigureInput = {
+      key: 'median_rent_burden_pct',
+      value: 15,
+      marginOfError: 2,
+      source: 'ACS 5-year estimates',
+      publisher: 'U.S. Census Bureau',
+      dataset: 'ACS',
+      table: 'S2503',
+      vintage: '2023',
+    }
+    const prose = 'The rent burden is 15 percent.'
+    const verdict = realValidator.validate(prose, [
+      { key: 'median_rent_burden_pct', value: 15, marginOfError: 2 },
+    ])
+    expect(verdict.pass).toBe(true)
+    render(
+      <ExplainOnAsk
+        intent={base}
+        figures={[burden]}
+        explanation={{ prose, withheld: !verdict.pass }}
+      />,
+    )
+    const text = container.textContent ?? ''
+    expect(text).toContain('15')
+    expect(text).toContain('± 2')
+    expect(text).not.toContain('withheld')
   })
 
   it('clicking Explain then withholding shows figures, provenance, and the note', () => {

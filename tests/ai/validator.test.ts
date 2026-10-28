@@ -165,3 +165,56 @@ describe('C04 tenant proxy leak and suppression', () => {
     expect(failure(v.validate('This is mostly renters, a tenant area.', []))).toBe('banned_construction')
   })
 })
+
+describe('C09 small-count suppression is counts-only', () => {
+  it('PASS: a below-20 percentage is not suppressed for smallness', () => {
+    expect(
+      v.validate('The rent burden is 15 percent.', [
+        { key: 'median_rent_burden_pct', value: 15 },
+      ]).pass,
+    ).toBe(true)
+    expect(
+      v.validate('The rent burden is 20 percent.', [
+        { key: 'median_rent_burden_pct', value: 20 },
+      ]).pass,
+    ).toBe(true)
+  })
+  it('PASS: small medians, averages, and dollars are not suppressed', () => {
+    expect(v.validate('The median age is 12.', [{ key: 'median_age', value: 12 }]).pass).toBe(true)
+    expect(
+      v.validate('The average household size is 2.5.', [{ key: 'average_household_size', value: 2.5 }]).pass,
+    ).toBe(true)
+    expect(
+      v.validate('The median gross rent is 15.', [{ key: 'median_gross_rent', value: 15 }]).pass,
+    ).toBe(true)
+  })
+  it('REJECT: a genuine below-20 count is still suppressed', () => {
+    expect(
+      failure(v.validate('There are 3 households.', [{ key: 'households', value: 3 }])),
+    ).toBe('invented_numeral')
+  })
+  it('intentGate accepts a below-20 percentage filter, rejects a below-20 count', () => {
+    expect(
+      intentGate(
+        {
+          mode: 'sweep_filter',
+          metricKeys: ['median_rent_burden_pct'],
+          filters: [{ metricKey: 'median_rent_burden_pct', op: 'gt', value: 15 }],
+        },
+        [{ key: 'median_rent_burden_pct', value: 15 }],
+      ).pass,
+    ).toBe(true)
+    expect(
+      failure(
+        intentGate(
+          {
+            mode: 'sweep_filter',
+            metricKeys: ['households'],
+            filters: [{ metricKey: 'households', op: 'gt', value: 3 }],
+          },
+          [{ key: 'households', value: 3 }],
+        ),
+      ),
+    ).toBe('intent_gate')
+  })
+})

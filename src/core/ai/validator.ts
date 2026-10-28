@@ -43,12 +43,29 @@ export interface Validator {
 export const DISCLOSURE_TEXT =
   "Figures are CivicScope's (source and vintage shown with each figure). Wording is Muse Spark's. This is a reading of the shown figures, not an additional source."
 
-/** Counts below this are suppressed and treated as absent. */
+/** Small counts below this are suppressed and treated as absent. Counts only. */
 export const SMALL_COUNT_SUPPRESSION_THRESHOLD = 20
+
+/**
+ * Count-figure recognition for small-count suppression. The workbench
+ * carries no METRIC_DEFS unit/type metadata, so non-count figures are
+ * recognized by the key-naming conventions this codebase already relies
+ * on: percentages (`pct`/`percent`, cf. isPercentKey), medians
+ * (`median_` — dollars, years, or a burden percentage, never a count),
+ * and averages (`average_`). Every other key is treated as a count —
+ * including unknown keys, which fail closed and keep small-count
+ * suppression. Verified against all 15 audit-documented METRIC_DEFS
+ * keys; METRIC_DEFS unit/type fields remain the ground truth at port
+ * time and are deliberately not re-invented here.
+ */
+function isCountKey(key: string): boolean {
+  return !/(pct|percent|median_|average_)/i.test(key)
+}
 
 export function isSuppressedFigure(figure: FigureForValidation): boolean {
   if (figure.suppressed) return true
   if (figure.value === null || !Number.isFinite(figure.value)) return true
+  if (!isCountKey(figure.key)) return false
   return Math.abs(figure.value) < SMALL_COUNT_SUPPRESSION_THRESHOLD
 }
 

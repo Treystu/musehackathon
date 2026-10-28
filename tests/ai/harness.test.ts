@@ -15,6 +15,7 @@ import {
   runFuzz,
   runGolden,
   summarize,
+  type GoldenCase,
 } from '../../src/core/ai/harness'
 
 function depsWith(provider = createStubProvider()) {
@@ -150,6 +151,40 @@ describe('golden corpus', () => {
       new AbortController().signal,
     )
     expect(oldTripleExact(result.intent, target)).toBe(true)
+  })
+
+  it('order-insensitivity: same multi-filter set in different order still scores exact', async () => {
+    const twoFilterCase: GoldenCase = {
+      id: 'golden-sweep-two-filters-reordered',
+      querySlots: {
+        modeHint: 'sweep_filter',
+        geographyHints: ['HI'],
+        metricHints: ['median_gross_rent', 'median_household_income'],
+      },
+      expectedMode: 'sweep_filter',
+      safety: false,
+      expectedGeographies: ['HI'],
+      expectedMetricKeys: ['median_gross_rent', 'median_household_income'],
+      expectedFilters: [
+        { metricKey: 'median_household_income', op: 'lt', value: 90000 },
+        { metricKey: 'median_gross_rent', op: 'gt', value: 1000 },
+      ],
+      expectedClarificationNeeded: false,
+      cannedIntent: {
+        mode: 'sweep_filter',
+        geographies: ['HI'],
+        metricKeys: ['median_gross_rent', 'median_household_income'],
+        filters: [
+          { metricKey: 'median_gross_rent', op: 'gt', value: 1000 },
+          { metricKey: 'median_household_income', op: 'lt', value: 90000 },
+        ],
+        clarificationNeeded: false,
+      },
+    }
+    const golden = await runGolden(createGoldenProvider([twoFilterCase]), [twoFilterCase])
+    expect(golden).toHaveLength(1)
+    expect(golden[0]?.valid).toBe(true)
+    expect(golden[0]?.exact).toBe(true)
   })
 })
 

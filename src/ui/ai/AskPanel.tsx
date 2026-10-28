@@ -6,6 +6,7 @@ import type { ProxyError } from '../../../functions/api/muse/shared'
 import { ByoOffer } from './ByoOffer'
 import { ClarificationPanel, type ClarificationCandidates } from './ClarificationPanel'
 import { IntentEditor } from './IntentEditor'
+import { ExplainOnAsk, type ExplanationState } from './ExplainOnAsk'
 
 export { IntentChips } from './IntentChips'
 
@@ -74,6 +75,8 @@ export function AskPanel({
   proxyError,
   clarificationCandidates,
   onOpenSettings,
+  explanation,
+  onExplain,
 }: {
   provider: MuseProvider
   validator?: Validator
@@ -81,6 +84,8 @@ export function AskPanel({
   proxyError?: ProxyError | null
   clarificationCandidates?: ClarificationCandidates
   onOpenSettings?: () => void
+  explanation?: ExplanationState
+  onExplain?: (intent: ValidatedIntent) => void
 }) {
   const [text, setText] = useState('')
   const [intent, setIntent] = useState<ValidatedIntent | null>(null)
@@ -160,9 +165,16 @@ export function AskPanel({
               onResolve={setIntent}
             />
           ) : (
-            <button type="button" onClick={() => onExecute?.(intent)}>
-              Run this request
-            </button>
+            <>
+              <button type="button" onClick={() => onExecute?.(intent)}>
+                Run this request
+              </button>
+              <ExplainOnAsk
+                intent={intent}
+                explanation={explanation}
+                onExplain={onExplain}
+              />
+            </>
           )}
         </>
       )}

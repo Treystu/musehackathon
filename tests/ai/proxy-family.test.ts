@@ -16,15 +16,15 @@ function deps() {
 }
 
 describe('proxy route family shells', () => {
-  it('explain shell validates shape, then reports provider_down (no live call)', async () => {
+  it('explain validates shape and returns validated stub prose', async () => {
     const d = deps()
     const bad = await handleExplain({ method: 'POST', path: '/api/muse/explain', body: {}, clientId: 'c1' }, d)
     expect(bad.status).toBe(400)
     expect(bad.body.error).toBe('shape_invalid')
     const ok = await handleExplain(
       { method: 'POST', path: '/api/muse/explain', body: { figureSetId: 'f1', values: [] }, clientId: 'c1' }, d)
-    expect(ok.status).toBe(503)
-    expect(ok.body.error).toBe('provider_down')
+    expect(ok.status).toBe(200)
+    expect(ok.body.prose).toBe('')
   })
 
   it('briefing shell validates figureSetId', async () => {

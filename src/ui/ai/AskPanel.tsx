@@ -210,7 +210,7 @@ export function AskPanel({
             />
           ) : (
             <>
-              <button type="button" onClick={() => onExecute?.(intent)}>
+              <button type="button" disabled={!onExecute} onClick={() => onExecute?.(intent)}>
                 Run this request
               </button>
               <ExplainOnAsk

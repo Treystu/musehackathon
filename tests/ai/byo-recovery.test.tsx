@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defaultMeterConfig, Meter } from '../../src/core/ai/meter'
 import { clearMetaKey, hasMetaKey, setMetaKey } from '../../src/core/ai/meta-key'
 import {
@@ -168,5 +168,81 @@ describe('BYO recovery on credits_exhausted', () => {
     expect(container.querySelector('aside[aria-label="Optional personal key"]')).toBeNull()
     expect(container.textContent).not.toContain('Open key settings')
     expect(setMetaKey('x')).toBe(false)
+  })
+
+  it('clicking Open key settings fires the settings handoff', async () => {
+    const onOpenSettings = vi.fn()
+    const provider = createStubProvider({
+      async intent() {
+        throw creditsError()
+      },
+    })
+    render(<AskPanel provider={provider} onOpenSettings={onOpenSettings} />)
+    const { input, form } = askControls()
+    typeInto(input, 'rent in Hilo')
+    await submitForm(form)
+
+    const button = container.querySelector(
+      'aside[aria-label="Optional personal key"] button',
+    ) as HTMLButtonElement
+    expect(button).not.toBeNull()
+    act(() => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(onOpenSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('budget_exhausted retries BYO-direct like credits_exhausted', async () => {
+    expect(setMetaKey('stub-personal-key-0123456789abcdef')).toBe(true)
+    const sharedCalls: IntentRequest[] = []
+    const byoCalls: IntentRequest[] = []
+    const provider = createStubProvider({
+      async intent(req) {
+        sharedCalls.push(req)
+        throw Object.assign(new Error('cap reached'), { code: 'budget_exhausted' })
+      },
+    })
+    const byoProvider = createStubProvider({
+      async intent(req) {
+        byoCalls.push(req)
+        return { intent: runnable }
+      },
+    })
+    render(<AskPanel provider={provider} byoProvider={byoProvider} />)
+    const { input, form } = askControls()
+    typeInto(input, 'rent in Hilo')
+    await submitForm(form)
+
+    expect(sharedCalls).toHaveLength(1)
+    expect(byoCalls).toHaveLength(1)
+    expect(container.textContent).toContain('Run this request')
+    expect(container.querySelector('aside[aria-label="Optional personal key"]')).toBeNull()
+  })
+
+  it('shared and BYO both failing falls through to the shared copy', async () => {
+    expect(setMetaKey('stub-personal-key-0123456789abcdef')).toBe(true)
+    const byoCalls: IntentRequest[] = []
+    const provider = createStubProvider({
+      async intent() {
+        throw creditsError()
+      },
+    })
+    const byoProvider = createStubProvider({
+      async intent(req) {
+        byoCalls.push(req)
+        throw Object.assign(new Error('down'), { code: 'provider_down' })
+      },
+    })
+    render(<AskPanel provider={provider} byoProvider={byoProvider} />)
+    const { input, form } = askControls()
+    typeInto(input, 'rent in Hilo')
+    await submitForm(form)
+
+    expect(byoCalls).toHaveLength(1)
+    expect(container.textContent).toContain('shared allowance')
+    expect(
+      container.querySelector('aside[aria-label="Optional personal key"]'),
+    ).not.toBeNull()
+    expect(container.textContent).not.toContain('Run this request')
   })
 })

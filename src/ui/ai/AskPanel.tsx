@@ -7,8 +7,12 @@ import { ByoOffer } from './ByoOffer'
 import { ClarificationPanel, type ClarificationCandidates } from './ClarificationPanel'
 import { IntentEditor } from './IntentEditor'
 import { ExplainOnAsk, type ExplanationState } from './ExplainOnAsk'
+import type { FigureInput } from './FigureCard'
 
 export { IntentChips } from './IntentChips'
+
+export const RAW_TEXT_DISCLOSURE =
+  'Free-text Ask sends the words you type to the wording helper; this path cannot be answered from structured choices alone. The figures still come from CivicScope.'
 
 export const PROXY_ERROR_COPY: Record<ProxyError, string> = {
   not_allowlisted:
@@ -75,6 +79,7 @@ export function AskPanel({
   proxyError,
   clarificationCandidates,
   onOpenSettings,
+  figures,
   explanation,
   onExplain,
 }: {
@@ -84,6 +89,7 @@ export function AskPanel({
   proxyError?: ProxyError | null
   clarificationCandidates?: ClarificationCandidates
   onOpenSettings?: () => void
+  figures?: readonly FigureInput[]
   explanation?: ExplanationState
   onExplain?: (intent: ValidatedIntent) => void
 }) {
@@ -136,8 +142,12 @@ export function AskPanel({
       <h2 id="ask-heading">Ask CivicScope</h2>
       <form onSubmit={submit}>
         <label htmlFor="ask-input">Ask in plain language</label>
+        <p id="ask-raw-text-note" role="note" className="house-raw-text-disclosure">
+          {RAW_TEXT_DISCLOSURE}
+        </p>
         <input
           id="ask-input"
+          aria-describedby="ask-raw-text-note"
           value={text}
           onChange={(e) => setText(e.target.value)}
           autoComplete="off"
@@ -171,6 +181,7 @@ export function AskPanel({
               </button>
               <ExplainOnAsk
                 intent={intent}
+                figures={figures}
                 explanation={explanation}
                 onExplain={onExplain}
               />

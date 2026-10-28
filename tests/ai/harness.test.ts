@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DISPLAYABLE_KEYS, FILTER_LEGAL_KEYS, validateIntent } from '../../src/core/ai/intent-schema'
 import { Meter, defaultMeterConfig } from '../../src/core/ai/meter'
-import { createStubProvider } from '../../src/core/ai/provider'
+import { createStubProvider, type MuseProvider } from '../../src/core/ai/provider'
 import { hermeticStubValidator } from '../../src/core/ai/validator'
 import { decideAskPath, shouldOfferByo } from '../../src/core/ai/byo'
 import { handleIntent } from '../../functions/api/muse/intent'
@@ -110,17 +110,7 @@ describe('golden corpus', () => {
     expect(golden.filter((g) => g.id !== target.id).every((g) => g.exact)).toBe(true)
 
     // The old triple scored this exact: same mode, place, and measure.
-    const result = await provider.intent(
-      {
-        slots: {
-          modeHint: target.querySlots.modeHint,
-          geographyHints: [...target.querySlots.geographyHints],
-          metricHints: [...target.querySlots.metricHints],
-        },
-        locale: 'en',
-      },
-      new AbortController().signal,
-    )
+    const result = await intentForCase(provider, target)
     expect(oldTripleExact(result.intent, target)).toBe(true)
   })
 
@@ -139,17 +129,7 @@ describe('golden corpus', () => {
     expect(golden.filter((g) => g.id !== target.id).every((g) => g.exact)).toBe(true)
 
     // The old triple scored this exact: same mode, place, and measure.
-    const result = await provider.intent(
-      {
-        slots: {
-          modeHint: target.querySlots.modeHint,
-          geographyHints: [...target.querySlots.geographyHints],
-          metricHints: [...target.querySlots.metricHints],
-        },
-        locale: 'en',
-      },
-      new AbortController().signal,
-    )
+    const result = await intentForCase(provider, target)
     expect(oldTripleExact(result.intent, target)).toBe(true)
   })
 
@@ -187,6 +167,20 @@ describe('golden corpus', () => {
     expect(golden[0]?.exact).toBe(true)
   })
 })
+
+async function intentForCase(provider: MuseProvider, target: GoldenCase) {
+  return provider.intent(
+    {
+      slots: {
+        modeHint: target.querySlots.modeHint,
+        geographyHints: [...target.querySlots.geographyHints],
+        metricHints: [...target.querySlots.metricHints],
+      },
+      locale: 'en',
+    },
+    new AbortController().signal,
+  )
+}
 
 async function assertErrorRow(id: string): Promise<void> {
   switch (id) {

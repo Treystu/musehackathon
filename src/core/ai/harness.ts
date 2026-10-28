@@ -12,6 +12,7 @@ import {
   type ValidatedIntent,
 } from './provider'
 import { hermeticStubValidator, type Validator } from './validator'
+import type { IntentFilter } from './intent-edit'
 
 // ---------------------------------------------------------------------------
 // (1) Registry-generated fixtures
@@ -236,8 +237,6 @@ export interface GoldenResult {
 function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i])
 }
-
-type IntentFilter = ValidatedIntent['filters'][number]
 
 function canonicalFilter(f: IntentFilter): string {
   return `${f.metricKey}|${f.op}|${f.value}`

@@ -6,6 +6,7 @@ import {
   addMetricKey,
   canResolveClarification,
   removeFilter,
+  removeGeography,
   resolveClarification,
 } from '../../src/core/ai/intent-edit'
 import { createStubProvider, type ValidatedIntent } from '../../src/core/ai/provider'
@@ -55,6 +56,23 @@ describe('intent editing', () => {
     const removed = removeFilter(added.intent, filter as NonNullable<typeof filter>)
     expect(removed.ok).toBe(true)
     if (removed.ok) expect(removed.intent.filters).toHaveLength(0)
+  })
+
+  it('removing the last geography returns a clarification-required intent', () => {
+    const twoPlaces = { ...base, geographies: ['Hilo', 'Honolulu'] }
+    const onePlace = removeGeography(twoPlaces, 'Hilo')
+    expect(onePlace.ok).toBe(true)
+    if (onePlace.ok) {
+      expect(onePlace.intent.geographies).toEqual(['Honolulu'])
+      expect(onePlace.intent.clarificationNeeded).toBe(false)
+    }
+
+    const noPlaces = removeGeography({ ...base, geographies: ['Hilo'] }, 'Hilo')
+    expect(noPlaces.ok).toBe(true)
+    if (noPlaces.ok) {
+      expect(noPlaces.intent.geographies).toEqual([])
+      expect(noPlaces.intent.clarificationNeeded).toBe(true)
+    }
   })
 
   it('resolves clarification only when a place is chosen', () => {

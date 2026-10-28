@@ -99,6 +99,45 @@ describe('spec-gap surfaces', () => {
     expect(container.textContent).toContain(RAW_TEXT_DISCLOSURE)
   })
 
+  it('removing every place chip returns Ask to clarification and hides Run', async () => {
+    const provider = createStubProvider({
+      async intent() {
+        return {
+          intent: {
+            ...base,
+            geographies: ['Hilo', 'Honolulu'],
+            clarificationNeeded: false,
+          },
+        }
+      },
+    })
+
+    render(<AskPanel provider={provider} />)
+    typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'rent')
+    await submit(container.querySelector('form') as HTMLFormElement)
+
+    const removeHilo = container.querySelector(
+      'button[aria-label="Remove place Hilo"]',
+    ) as HTMLButtonElement
+    expect(removeHilo).not.toBeNull()
+    act(() => removeHilo.click())
+
+    const removeHonolulu = container.querySelector(
+      'button[aria-label="Remove place Honolulu"]',
+    ) as HTMLButtonElement
+    expect(removeHonolulu).not.toBeNull()
+    act(() => removeHonolulu.click())
+
+    expect(container.querySelector('[aria-label="Clarify the request"]')).not.toBeNull()
+    expect(container.textContent).toContain(
+      'Choose the place and measure before anything runs.',
+    )
+    const run = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Run this request',
+    )
+    expect(run).toBeUndefined()
+  })
+
   it('clicking Explain then withholding shows figures, provenance, and the note', () => {
     const onExplain = vi.fn()
     render(

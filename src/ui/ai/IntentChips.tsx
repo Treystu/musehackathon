@@ -1,12 +1,32 @@
 import type { ValidatedIntent } from '../../core/ai/provider'
+import {
+  removeFilter,
+  removeGeography,
+  removeMetricKey,
+  type IntentEditResult,
+} from '../../core/ai/intent-edit'
+
+function applyRemoval(
+  result: IntentEditResult,
+  onChange: (next: ValidatedIntent) => void,
+  onError?: (error: string) => void,
+): void {
+  if (result.ok) {
+    onChange(result.intent)
+    return
+  }
+  onError?.(result.error)
+}
 
 /** Visible, correctable representation of the validated intent. */
 export function IntentChips({
   intent,
   onChange,
+  onError,
 }: {
   intent: ValidatedIntent
   onChange: (next: ValidatedIntent) => void
+  onError?: (error: string) => void
 }) {
   return (
     <div aria-label="What was understood">
@@ -16,9 +36,7 @@ export function IntentChips({
           key={`geo-${g}`}
           type="button"
           aria-label={`Remove place ${g}`}
-          onClick={() =>
-            onChange({ ...intent, geographies: intent.geographies.filter((x) => x !== g) })
-          }
+          onClick={() => applyRemoval(removeGeography(intent, g), onChange, onError)}
         >
           {g} ×
         </button>
@@ -28,9 +46,7 @@ export function IntentChips({
           key={`metric-${k}`}
           type="button"
           aria-label={`Remove measure ${k}`}
-          onClick={() =>
-            onChange({ ...intent, metricKeys: intent.metricKeys.filter((x) => x !== k) })
-          }
+          onClick={() => applyRemoval(removeMetricKey(intent, k), onChange, onError)}
         >
           {k} ×
         </button>
@@ -42,15 +58,7 @@ export function IntentChips({
             key={`filter-${index}-${label}`}
             type="button"
             aria-label={`Remove filter ${label}`}
-            onClick={() =>
-              onChange({
-                ...intent,
-                filters: intent.filters.filter(
-                  (x) =>
-                    !(x.metricKey === f.metricKey && x.op === f.op && x.value === f.value),
-                ),
-              })
-            }
+            onClick={() => applyRemoval(removeFilter(intent, f), onChange, onError)}
           >
             {label} ×
           </button>

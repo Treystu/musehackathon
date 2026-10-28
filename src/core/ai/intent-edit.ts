@@ -43,9 +43,13 @@ export function addFilter(intent: ValidatedIntent, filter: IntentFilter): Intent
 }
 
 export function removeGeography(intent: ValidatedIntent, place: string): IntentEditResult {
+  const geographies = intent.geographies.filter((g) => g !== place)
   return checked({
     ...intent,
-    geographies: intent.geographies.filter((g) => g !== place),
+    geographies,
+    // No place left means the request must go back through clarification
+    // before it can run.
+    clarificationNeeded: geographies.length === 0 ? true : intent.clarificationNeeded,
   })
 }
 

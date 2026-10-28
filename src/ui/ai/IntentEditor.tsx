@@ -77,7 +77,11 @@ export function IntentEditor({
 
   return (
     <section aria-label="Edit the understood request">
-      <IntentChips intent={intent} onChange={onChange} />
+      <IntentChips
+        intent={intent}
+        onChange={onChange}
+        onError={(code) => setError(errorCopy(code))}
+      />
 
       <form onSubmit={onAddPlace}>
         <label htmlFor="intent-place">Add a place</label>

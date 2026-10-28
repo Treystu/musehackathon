@@ -84,6 +84,8 @@ export interface GoldenCase {
   safety: boolean
   expectedGeographies: string[]
   expectedMetricKeys: string[]
+  expectedFilters: ValidatedIntent['filters']
+  expectedClarificationNeeded: boolean
   cannedIntent: ValidatedIntent
 }
 
@@ -95,6 +97,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: false,
     expectedGeographies: ['Hilo'],
     expectedMetricKeys: ['median_gross_rent'],
+    expectedFilters: [],
+    expectedClarificationNeeded: false,
     cannedIntent: { mode: 'lookup', geographies: ['Hilo'], metricKeys: ['median_gross_rent'], filters: [], clarificationNeeded: false },
   },
   {
@@ -104,6 +108,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: false,
     expectedGeographies: ['Honolulu'],
     expectedMetricKeys: ['population'],
+    expectedFilters: [],
+    expectedClarificationNeeded: false,
     cannedIntent: { mode: 'lookup', geographies: ['Honolulu'], metricKeys: ['population'], filters: [], clarificationNeeded: false },
   },
   {
@@ -113,6 +119,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: false,
     expectedGeographies: ['96778', '96720'],
     expectedMetricKeys: ['median_gross_rent'],
+    expectedFilters: [],
+    expectedClarificationNeeded: false,
     cannedIntent: { mode: 'compare', geographies: ['96778', '96720'], metricKeys: ['median_gross_rent'], filters: [], clarificationNeeded: false },
   },
   {
@@ -122,6 +130,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: false,
     expectedGeographies: ['Hilo', 'Honolulu'],
     expectedMetricKeys: ['median_household_income'],
+    expectedFilters: [],
+    expectedClarificationNeeded: false,
     cannedIntent: { mode: 'compare', geographies: ['Hilo', 'Honolulu'], metricKeys: ['median_household_income'], filters: [], clarificationNeeded: false },
   },
   {
@@ -131,6 +141,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: false,
     expectedGeographies: ['HI'],
     expectedMetricKeys: ['median_rent_burden_pct'],
+    expectedFilters: [{ metricKey: 'median_rent_burden_pct', op: 'gt', value: 30 }],
+    expectedClarificationNeeded: false,
     cannedIntent: { mode: 'sweep_filter', geographies: ['HI'], metricKeys: ['median_rent_burden_pct'], filters: [{ metricKey: 'median_rent_burden_pct', op: 'gt', value: 30 }], clarificationNeeded: false },
   },
   {
@@ -140,6 +152,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: false,
     expectedGeographies: ['HI'],
     expectedMetricKeys: ['median_home_value'],
+    expectedFilters: [{ metricKey: 'median_home_value', op: 'lt', value: 750000 }],
+    expectedClarificationNeeded: false,
     cannedIntent: { mode: 'sweep_filter', geographies: ['HI'], metricKeys: ['median_home_value'], filters: [{ metricKey: 'median_home_value', op: 'lt', value: 750000 }], clarificationNeeded: false },
   },
   {
@@ -149,6 +163,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: false,
     expectedGeographies: ['Hilo'],
     expectedMetricKeys: ['median_gross_rent'],
+    expectedFilters: [],
+    expectedClarificationNeeded: false,
     cannedIntent: { mode: 'similarity', geographies: ['Hilo'], metricKeys: ['median_gross_rent'], filters: [], clarificationNeeded: false },
   },
   {
@@ -158,6 +174,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: false,
     expectedGeographies: ['96778'],
     expectedMetricKeys: ['median_household_income'],
+    expectedFilters: [],
+    expectedClarificationNeeded: false,
     cannedIntent: { mode: 'similarity', geographies: ['96778'], metricKeys: ['median_household_income'], filters: [], clarificationNeeded: false },
   },
   {
@@ -167,6 +185,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: true,
     expectedGeographies: [],
     expectedMetricKeys: [],
+    expectedFilters: [],
+    expectedClarificationNeeded: true,
     cannedIntent: { mode: 'lookup', geographies: [], metricKeys: [], filters: [], clarificationNeeded: true },
   },
   {
@@ -176,6 +196,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: true,
     expectedGeographies: [],
     expectedMetricKeys: [],
+    expectedFilters: [],
+    expectedClarificationNeeded: true,
     cannedIntent: { mode: 'lookup', geographies: [], metricKeys: [], filters: [], clarificationNeeded: true },
   },
   {
@@ -185,6 +207,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: false,
     expectedGeographies: ['96778'],
     expectedMetricKeys: ['households'],
+    expectedFilters: [],
+    expectedClarificationNeeded: false,
     cannedIntent: { mode: 'lookup', geographies: ['96778'], metricKeys: ['households'], filters: [], clarificationNeeded: false },
   },
   {
@@ -194,6 +218,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
     safety: false,
     expectedGeographies: ['HI'],
     expectedMetricKeys: ['households'],
+    expectedFilters: [{ metricKey: 'households', op: 'gt', value: 1000 }],
+    expectedClarificationNeeded: false,
     cannedIntent: { mode: 'sweep_filter', geographies: ['HI'], metricKeys: ['households'], filters: [{ metricKey: 'households', op: 'gt', value: 1000 }], clarificationNeeded: false },
   },
 ]
@@ -209,6 +235,24 @@ export interface GoldenResult {
 
 function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i])
+}
+
+type IntentFilter = ValidatedIntent['filters'][number]
+
+function canonicalFilter(f: IntentFilter): string {
+  return `${f.metricKey}|${f.op}|${f.value}`
+}
+
+/**
+ * Filters are conjunctive constraints (each narrows the figure set; removal
+ * matches by value, never by position), so order is execution-irrelevant:
+ * compare as sorted multisets of metricKey/op/value, and say so.
+ */
+function sameFilters(a: readonly IntentFilter[], b: readonly IntentFilter[]): boolean {
+  if (a.length !== b.length) return false
+  const sortedA = a.map(canonicalFilter).sort()
+  const sortedB = b.map(canonicalFilter).sort()
+  return sortedA.every((v, i) => v === sortedB[i])
 }
 
 /** Canned provider: returns the cannedIntent matched on slots + queryText. */
@@ -258,7 +302,9 @@ export async function runGolden(
       check.ok &&
       result.intent.mode === c.expectedMode &&
       sameStrings(result.intent.geographies, c.expectedGeographies) &&
-      sameStrings(result.intent.metricKeys, c.expectedMetricKeys)
+      sameStrings(result.intent.metricKeys, c.expectedMetricKeys) &&
+      sameFilters(result.intent.filters, c.expectedFilters) &&
+      result.intent.clarificationNeeded === c.expectedClarificationNeeded
     results.push({
       id: c.id,
       expectedMode: c.expectedMode,

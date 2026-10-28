@@ -53,6 +53,20 @@ describe('registry-generated fixtures', () => {
   })
 })
 
+/** Replica of the pre-pass runGolden comparison (mode + geographies + metricKeys only). */
+function oldTripleExact(
+  intent: { mode: string; geographies: string[]; metricKeys: string[] },
+  c: { expectedMode: string; expectedGeographies: string[]; expectedMetricKeys: string[] },
+): boolean {
+  return (
+    intent.mode === c.expectedMode &&
+    intent.geographies.length === c.expectedGeographies.length &&
+    intent.geographies.every((v, i) => v === c.expectedGeographies[i]) &&
+    intent.metricKeys.length === c.expectedMetricKeys.length &&
+    intent.metricKeys.every((v, i) => v === c.expectedMetricKeys[i])
+  )
+}
+
 describe('golden corpus', () => {
   it('has at least 10 cases covering all modes plus injection cases', () => {
     expect(GOLDEN_CASES.length).toBeGreaterThanOrEqual(10)
@@ -78,6 +92,64 @@ describe('golden corpus', () => {
     expect(summary.exactIntentPct).toBe(100)
     expect(summary.safetyPct).toBe(100)
     expect(summary.rows).toBe(20)
+  })
+
+  it('mutation probe: filters-only drift is not exact under the full comparison', async () => {
+    const target = GOLDEN_CASES.find((c) => c.id === 'golden-sweep-rent-burden')
+    expect(target).toBeDefined()
+    if (!target) return
+    const mutated = GOLDEN_CASES.map((c) =>
+      c.id === target.id ? { ...c, cannedIntent: { ...c.cannedIntent, filters: [] } } : c,
+    )
+    const provider = createGoldenProvider(mutated)
+    const golden = await runGolden(provider, GOLDEN_CASES)
+    const swept = golden.find((g) => g.id === target.id)
+    expect(swept?.valid).toBe(true)
+    expect(swept?.exact).toBe(false)
+    expect(golden.filter((g) => g.id !== target.id).every((g) => g.exact)).toBe(true)
+
+    // The old triple scored this exact: same mode, place, and measure.
+    const result = await provider.intent(
+      {
+        slots: {
+          modeHint: target.querySlots.modeHint,
+          geographyHints: [...target.querySlots.geographyHints],
+          metricHints: [...target.querySlots.metricHints],
+        },
+        locale: 'en',
+      },
+      new AbortController().signal,
+    )
+    expect(oldTripleExact(result.intent, target)).toBe(true)
+  })
+
+  it('mutation probe: clarification-only drift is not exact under the full comparison', async () => {
+    const target = GOLDEN_CASES.find((c) => c.id === 'golden-lookup-hilo-rent')
+    expect(target).toBeDefined()
+    if (!target) return
+    const mutated = GOLDEN_CASES.map((c) =>
+      c.id === target.id ? { ...c, cannedIntent: { ...c.cannedIntent, clarificationNeeded: true } } : c,
+    )
+    const provider = createGoldenProvider(mutated)
+    const golden = await runGolden(provider, GOLDEN_CASES)
+    const lookup = golden.find((g) => g.id === target.id)
+    expect(lookup?.valid).toBe(true)
+    expect(lookup?.exact).toBe(false)
+    expect(golden.filter((g) => g.id !== target.id).every((g) => g.exact)).toBe(true)
+
+    // The old triple scored this exact: same mode, place, and measure.
+    const result = await provider.intent(
+      {
+        slots: {
+          modeHint: target.querySlots.modeHint,
+          geographyHints: [...target.querySlots.geographyHints],
+          metricHints: [...target.querySlots.metricHints],
+        },
+        locale: 'en',
+      },
+      new AbortController().signal,
+    )
+    expect(oldTripleExact(result.intent, target)).toBe(true)
   })
 })
 

@@ -1,5 +1,3 @@
-import type { ReactNode } from 'react'
-
 export interface FigureInput {
   key: string
   value: number | null
@@ -69,7 +67,7 @@ export function assertProseHasMoe(
   return true
 }
 
-export function FigureCard({ figure }: { figure: FigureInput; children?: ReactNode }) {
+export function FigureCard({ figure }: { figure: FigureInput }) {
   const formatted = formatFigure(figure)
   return (
     <figure aria-label={figure.key}>

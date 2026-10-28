@@ -11,8 +11,6 @@ import { IntentEditor } from './IntentEditor'
 import { ExplainOnAsk, type ExplanationState } from './ExplainOnAsk'
 import type { FigureInput } from './FigureCard'
 
-export { IntentChips } from './IntentChips'
-
 export const RAW_TEXT_DISCLOSURE =
   'Free-text Ask sends the words you type to the wording helper; this path cannot be answered from structured choices alone. The figures still come from CivicScope.'
 
@@ -71,8 +69,8 @@ export function Disclosure() {
 
 /**
  * Ask panel (text path). Mic is LAST and intentionally absent here:
- * no dead button is rendered until mic dependencies verify. BYO lives
- * in settings/shutoff only and is intentionally absent here too.
+ * no dead button is rendered until mic dependencies verify. BYO recovery
+ * is wired here via ByoOffer (settings/shutoff entry) + byoProvider retry.
  */
 export function AskPanel({
   provider,

@@ -10,6 +10,7 @@ import type { IntentMode, ValidatedIntent } from './provider'
 /** Exactly the ported SORTABLE_METRIC_KEYS — same reference, never a copy. */
 export const FILTER_LEGAL_KEYS = SORTABLE_METRIC_KEYS
 
+// FilterLegalKey == SortableMetricKey by assignment (FILTER_LEGAL_KEYS is SORTABLE_METRIC_KEYS, same reference).
 export type FilterLegalKey = (typeof FILTER_LEGAL_KEYS)[number]
 
 /** Displayable ACS keys (lookup/compare context): every registry key. */

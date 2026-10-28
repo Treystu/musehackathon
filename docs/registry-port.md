@@ -32,3 +32,4 @@
   registry with optional source overrides (defaults = the ported sets).
   Derivation shifted nothing: post-derive arrays are element-wise identical
   to the pre-derive hand lists (temp probe, passed then removed).
+- **Triage note:** filter-legal == sortable because the sortable surface is the audited fair-housing gate; `figure-filters.ts`'s 4-filter subset was deliberately not modeled (fewer fixed filters, same allowlist).

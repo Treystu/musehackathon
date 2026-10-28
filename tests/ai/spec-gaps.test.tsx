@@ -138,6 +138,69 @@ describe('spec-gap surfaces', () => {
     expect(run).toBeUndefined()
   })
 
+  it('removing the only measure returns Ask to clarification and hides Run', async () => {
+    const provider = createStubProvider({
+      async intent() {
+        return { intent: { ...base, clarificationNeeded: false } }
+      },
+    })
+
+    render(<AskPanel provider={provider} />)
+    typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'rent in Hilo')
+    await submit(container.querySelector('form') as HTMLFormElement)
+
+    expect(container.querySelector('[aria-label="Clarify the request"]')).toBeNull()
+    const runBefore = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Run this request',
+    )
+    expect(runBefore).toBeDefined()
+
+    const removeMeasure = container.querySelector(
+      'button[aria-label="Remove measure median_gross_rent"]',
+    ) as HTMLButtonElement
+    expect(removeMeasure).not.toBeNull()
+    act(() => removeMeasure.click())
+
+    expect(container.querySelector('[aria-label="Clarify the request"]')).not.toBeNull()
+    expect(container.textContent).toContain(
+      'Choose the place and measure before anything runs.',
+    )
+    const runAfter = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Run this request',
+    )
+    expect(runAfter).toBeUndefined()
+  })
+
+  it('removing one of two measures keeps Run and shows no clarification', async () => {
+    const provider = createStubProvider({
+      async intent() {
+        return {
+          intent: {
+            ...base,
+            metricKeys: ['median_gross_rent', 'median_household_income'],
+            clarificationNeeded: false,
+          },
+        }
+      },
+    })
+
+    render(<AskPanel provider={provider} />)
+    typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'rent and income in Hilo')
+    await submit(container.querySelector('form') as HTMLFormElement)
+
+    const removeMeasure = container.querySelector(
+      'button[aria-label="Remove measure median_gross_rent"]',
+    ) as HTMLButtonElement
+    expect(removeMeasure).not.toBeNull()
+    act(() => removeMeasure.click())
+
+    expect(container.querySelector('[aria-label="Clarify the request"]')).toBeNull()
+    const run = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Run this request',
+    )
+    expect(run).toBeDefined()
+  })
+
   it('clicking Explain then withholding shows figures, provenance, and the note', () => {
     const onExplain = vi.fn()
     render(

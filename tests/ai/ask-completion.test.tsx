@@ -7,8 +7,10 @@ import {
   canResolveClarification,
   removeFilter,
   removeGeography,
+  removeMetricKey,
   resolveClarification,
 } from '../../src/core/ai/intent-edit'
+import { canRun, validateIntent } from '../../src/core/ai/intent-schema'
 import { createStubProvider, type ValidatedIntent } from '../../src/core/ai/provider'
 import { AskPanel } from '../../src/ui/ai/AskPanel'
 import { ByoOffer } from '../../src/ui/ai/ByoOffer'
@@ -89,6 +91,87 @@ describe('intent editing', () => {
       expect(resolved.intent.geographies).toEqual(['Hilo'])
       expect(resolved.intent.metricKeys).toContain('median_gross_rent')
     }
+  })
+})
+
+describe('canRun (one predicate for executable intent)', () => {
+  it('is false for a lookup with no measure and for one with no place', () => {
+    expect(canRun({ ...base, metricKeys: [] })).toBe(false)
+    expect(canRun({ ...base, geographies: [] })).toBe(false)
+  })
+
+  it('is true for a valid place/measure pair', () => {
+    expect(canRun(base)).toBe(true)
+  })
+
+  it('needs filter-legal measures in sweep_filter/similarity via the one allowlist', () => {
+    expect(
+      canRun({
+        mode: 'sweep_filter',
+        geographies: ['HI'],
+        metricKeys: ['median_gross_rent'],
+        filters: [],
+        clarificationNeeded: false,
+      }),
+    ).toBe(true)
+    expect(
+      canRun({
+        mode: 'sweep_filter',
+        geographies: ['HI'],
+        metricKeys: ['median_age'],
+        filters: [],
+        clarificationNeeded: false,
+      }),
+    ).toBe(false)
+  })
+
+  it('removing the last measure returns a clarification-required intent', () => {
+    const removed = removeMetricKey(base, 'median_gross_rent')
+    expect(removed.ok).toBe(true)
+    if (removed.ok) {
+      expect(removed.intent.metricKeys).toEqual([])
+      expect(removed.intent.clarificationNeeded).toBe(true)
+    }
+  })
+
+  it('removing one of two measures keeps the intent runnable', () => {
+    const two = { ...base, metricKeys: ['median_gross_rent', 'median_household_income'] }
+    const removed = removeMetricKey(two, 'median_gross_rent')
+    expect(removed.ok).toBe(true)
+    if (removed.ok) {
+      expect(removed.intent.metricKeys).toEqual(['median_household_income'])
+      expect(removed.intent.clarificationNeeded).toBe(false)
+    }
+  })
+
+  it('resolves clarification only with a place AND a measure', () => {
+    expect(canResolveClarification({ geographies: ['Hilo'] })).toBe(false)
+    expect(
+      canResolveClarification({ geographies: ['Hilo'], metricKeys: ['median_gross_rent'] }),
+    ).toBe(true)
+    const unclear = { ...base, geographies: [], metricKeys: [], clarificationNeeded: true }
+    expect(
+      resolveClarification(unclear, { geographies: ['Hilo'], metricKeys: [] }).ok,
+    ).toBe(false)
+  })
+
+  it('validateIntent rejects a runnable-claimed intent with no measure', () => {
+    const empty = validateIntent({
+      mode: 'lookup',
+      geographies: ['Hilo'],
+      metricKeys: [],
+      filters: [],
+      clarificationNeeded: false,
+    })
+    expect(empty.ok).toBe(false)
+    const clarifying = validateIntent({
+      mode: 'lookup',
+      geographies: [],
+      metricKeys: [],
+      filters: [],
+      clarificationNeeded: true,
+    })
+    expect(clarifying.ok).toBe(true)
   })
 })
 

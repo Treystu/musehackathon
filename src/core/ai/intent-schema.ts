@@ -77,6 +77,27 @@ export function isKnownFigureKey(key: string): boolean {
   return isDisplayableKey(key) || KNOWN_DERIVED_FIGURE_KEYS.some((known) => known === key)
 }
 
+/**
+ * One predicate for executable intent. An intent can run when it carries
+ * the place/measure combination its mode's execution path consumes: plan
+ * §2.5 runs nothing until the geography/metric ambiguity is resolved, and
+ * every hermetic golden executable pairs >=1 place with >=1 measure.
+ * Legality reuses the helpers above as the single source (displayable
+ * everywhere; filter-legal additionally for sweep_filter/similarity, the
+ * same list the schema and the intent gate enforce — never a second
+ * list). Open questions, deliberately not enforced here: a two-place
+ * minimum for compare, and a filter-presence minimum for sweep_filter.
+ */
+export function canRun(intent: ValidatedIntent): boolean {
+  if (intent.geographies.length === 0) return false
+  if (intent.metricKeys.length === 0) return false
+  if (!intent.metricKeys.every(isDisplayableKey)) return false
+  if (intent.mode === 'sweep_filter' || intent.mode === 'similarity') {
+    return intent.metricKeys.every(isFilterLegal)
+  }
+  return true
+}
+
 /** Closed-world validation. Anything outside the declared shape fails. */
 export function validateIntent(raw: unknown):
   | { ok: true; intent: ValidatedIntent }
@@ -117,6 +138,14 @@ export function validateIntent(raw: unknown):
       return { ok: false, error: 'not_allowlisted', detail: `metric key not in registry: ${String(k)}` }
     }
     metricKeys.push(k)
+  }
+
+  // A measure is needed in every mode (plan §2.5: nothing executes until
+  // the geography/metric ambiguity is resolved). An intent that claims to
+  // need no clarification must carry >=1 measure; clarifying intents may
+  // still be empty while the user picks (e.g. the injection fallbacks).
+  if (raw.clarificationNeeded === false && metricKeys.length === 0) {
+    return { ok: false, error: 'shape_invalid', detail: 'at least one measure is required to run' }
   }
 
   const filters: ValidatedIntent['filters'] = []

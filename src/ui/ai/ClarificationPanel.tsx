@@ -11,7 +11,7 @@ export interface ClarificationCandidates {
 }
 
 const ERROR_COPY: Record<string, string> = {
-  clarification_required: 'Choose at least one place before continuing.',
+  clarification_required: 'Choose at least one place and one measure before continuing.',
   not_allowlisted: 'That measure is not on the approved list.',
   shape_invalid: 'That choice is not valid.',
 }
@@ -32,8 +32,11 @@ export function ClarificationPanel({
 
   const places = candidates.geographies.filter((g) => !intent.geographies.includes(g))
   const metrics = candidates.metricKeys.filter((k) => !intent.metricKeys.includes(k))
-  const canResolve =
-    canResolveClarification({ geographies }) || intent.geographies.length > 0
+  // One answer: the button enables exactly when the merged picks would run.
+  const canResolve = canResolveClarification({
+    geographies: [...intent.geographies, ...geographies],
+    metricKeys: [...intent.metricKeys, ...metricKeys],
+  })
 
   function togglePlace(value: string) {
     setGeographies((current) =>

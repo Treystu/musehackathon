@@ -79,7 +79,10 @@ export function IntentEditor({
     <section aria-label="Edit the understood request">
       <IntentChips
         intent={intent}
-        onChange={onChange}
+        onChange={(next) => {
+          onChange(next)
+          setError('')
+        }}
         onError={(code) => setError(errorCopy(code))}
       />
 

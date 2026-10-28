@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { Meter, defaultMeterConfig } from '../../src/core/ai/meter'
 import { createStubProvider } from '../../src/core/ai/provider'
 import { handleExplain } from '../../functions/api/muse/explain'
-import { handleBriefing } from '../../functions/api/muse/briefing'
 import { handleTranscribe } from '../../functions/api/muse/transcribe'
 import { handleIntent } from '../../functions/api/muse/intent'
 import { decideAskPath, shouldOfferByo } from '../../src/core/ai/byo'
@@ -25,12 +24,6 @@ describe('proxy route family shells', () => {
       { method: 'POST', path: '/api/muse/explain', body: { figureSetId: 'f1', values: [] }, clientId: 'c1' }, d)
     expect(ok.status).toBe(200)
     expect(ok.body.prose).toBe('')
-  })
-
-  it('briefing shell validates figureSetId', async () => {
-    const d = deps()
-    const r = await handleBriefing({ method: 'POST', path: '/api/muse/briefing', body: {}, clientId: 'c1' }, d)
-    expect(r.body.error).toBe('shape_invalid')
   })
 
   it('transcribe shell is allowlisted + metered, rejects oversize audio', async () => {

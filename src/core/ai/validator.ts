@@ -15,7 +15,7 @@
  * percentage is allowed only when code computed it elsewhere and
  * passed it in as a figure (conventionally key `derived:<name>`).
  */
-import { DISPLAYABLE_KEYS, FILTER_LEGAL_KEYS } from './intent-schema'
+import { isDisplayableKey, isFilterLegal as isFilterLegalKey } from './intent-schema'
 
 export interface FigureForValidation {
   key: string
@@ -79,13 +79,6 @@ function usableFigures(figures: FigureForValidation[]): FigureForValidation[] {
 
 const PROXY_OR_SENSITIVE_KEY =
   /(race|racial|ethnic|relig|gender|sex|famil|marital|veteran|national|minority|hispanic|latino|black|white|asian|disab|school|health|asthma|medical|crime|demograph)/i
-
-function isFilterLegalKey(key: string): boolean {
-  return (FILTER_LEGAL_KEYS as readonly string[]).includes(key)
-}
-function isDisplayableKey(key: string): boolean {
-  return (DISPLAYABLE_KEYS as readonly string[]).includes(key)
-}
 
 function keysFromValue(value: unknown, out: string[]): void {
   if (typeof value === 'string') {

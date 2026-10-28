@@ -28,7 +28,8 @@ export function addGeography(intent: ValidatedIntent, raw: string): IntentEditRe
   const place = raw.trim()
   if (!place) return { ok: false, error: 'empty_geography' }
   if (intent.geographies.includes(place)) return { ok: true, intent }
-  return checked({ ...intent, geographies: [...intent.geographies, place].slice(0, 8) })
+  const next = { ...intent, geographies: [...intent.geographies, place].slice(0, 8) }
+  return checked(withRunnability(next))
 }
 
 export function addMetricKey(intent: ValidatedIntent, key: string): IntentEditResult {
@@ -36,7 +37,8 @@ export function addMetricKey(intent: ValidatedIntent, key: string): IntentEditRe
     return { ok: false, error: 'not_allowlisted' }
   }
   if (intent.metricKeys.includes(key)) return { ok: true, intent }
-  return checked({ ...intent, metricKeys: [...intent.metricKeys, key] })
+  const next = { ...intent, metricKeys: [...intent.metricKeys, key] }
+  return checked(withRunnability(next))
 }
 
 export function addFilter(intent: ValidatedIntent, filter: IntentFilter): IntentEditResult {
@@ -99,7 +101,7 @@ export function canResolveClarification(picks: {
 
 /**
  * Merge clarification picks into the intent and clear the clarification
- * flag. The merged intent is revalidated; a missing place stays unresolved.
+ * flag. Unresolvable picks stay unresolved; the rest are revalidated.
  */
 export function resolveClarification(
   intent: ValidatedIntent,
@@ -111,5 +113,10 @@ export function resolveClarification(
     return { ok: false, error: 'clarification_required' }
   }
   const next = { ...intent, geographies, metricKeys }
+  // The resolvable boolean is owned by the one predicate; this keeps only
+  // the error mapping.
+  if (!canResolveClarification({ mode: intent.mode, geographies, metricKeys })) {
+    return { ok: false, error: 'clarification_required' }
+  }
   return checked(withRunnability(next))
 }

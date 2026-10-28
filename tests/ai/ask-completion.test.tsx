@@ -166,6 +166,23 @@ describe('canRun (one predicate for executable intent)', () => {
     ).toBe(false)
   })
 
+  it('adding the missing half to a clarifying intent clears the flag', () => {
+    const noPlace = { ...base, geographies: [], clarificationNeeded: true }
+    const placed = addGeography(noPlace, 'Hilo')
+    expect(placed.ok).toBe(true)
+    if (placed.ok) {
+      expect(placed.intent.geographies).toEqual(['Hilo'])
+      expect(placed.intent.clarificationNeeded).toBe(false)
+    }
+    const noMeasure = { ...base, metricKeys: [], clarificationNeeded: true }
+    const measured = addMetricKey(noMeasure, 'median_gross_rent')
+    expect(measured.ok).toBe(true)
+    if (measured.ok) {
+      expect(measured.intent.metricKeys).toEqual(['median_gross_rent'])
+      expect(measured.intent.clarificationNeeded).toBe(false)
+    }
+  })
+
   it('validateIntent rejects a runnable-claimed intent with no measure', () => {
     const empty = validateIntent({
       mode: 'lookup',

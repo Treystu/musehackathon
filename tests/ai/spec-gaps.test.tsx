@@ -201,6 +201,24 @@ describe('spec-gap surfaces', () => {
     expect(run).toBeDefined()
   })
 
+  it('provider flag-true with full data still offers Run after submit', async () => {
+    const provider = createStubProvider({
+      async intent() {
+        return { intent: { ...base, clarificationNeeded: true } }
+      },
+    })
+
+    render(<AskPanel provider={provider} />)
+    typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'rent in Hilo')
+    await submit(container.querySelector('form') as HTMLFormElement)
+
+    expect(container.querySelector('[aria-label="Clarify the request"]')).toBeNull()
+    const run = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Run this request',
+    )
+    expect(run).toBeDefined()
+  })
+
   it('clicking Explain then withholding shows figures, provenance, and the note', () => {
     const onExplain = vi.fn()
     render(

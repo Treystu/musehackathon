@@ -27,7 +27,8 @@ function checked(intent: ValidatedIntent): IntentEditResult {
 export function addGeography(intent: ValidatedIntent, raw: string): IntentEditResult {
   const place = raw.trim()
   if (!place) return { ok: false, error: 'empty_geography' }
-  if (intent.geographies.includes(place)) return { ok: true, intent }
+  // No-op adds still restamp: a duplicate chip must never hand back a stale flag.
+  if (intent.geographies.includes(place)) return { ok: true, intent: withRunnability(intent) }
   const next = { ...intent, geographies: [...intent.geographies, place].slice(0, 8) }
   return checked(withRunnability(next))
 }
@@ -36,7 +37,8 @@ export function addMetricKey(intent: ValidatedIntent, key: string): IntentEditRe
   if (!(DISPLAYABLE_KEYS as readonly string[]).includes(key)) {
     return { ok: false, error: 'not_allowlisted' }
   }
-  if (intent.metricKeys.includes(key)) return { ok: true, intent }
+  // No-op adds still restamp: a duplicate chip must never hand back a stale flag.
+  if (intent.metricKeys.includes(key)) return { ok: true, intent: withRunnability(intent) }
   const next = { ...intent, metricKeys: [...intent.metricKeys, key] }
   return checked(withRunnability(next))
 }

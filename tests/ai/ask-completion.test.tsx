@@ -183,6 +183,16 @@ describe('canRun (one predicate for executable intent)', () => {
     }
   })
 
+  it('re-adding an existing chip heals a stale clarification flag', () => {
+    const stale = { ...base, clarificationNeeded: true }
+    const place = addGeography(stale, 'Hilo')
+    expect(place.ok).toBe(true)
+    if (place.ok) expect(place.intent.clarificationNeeded).toBe(false)
+    const measure = addMetricKey(stale, 'median_gross_rent')
+    expect(measure.ok).toBe(true)
+    if (measure.ok) expect(measure.intent.clarificationNeeded).toBe(false)
+  })
+
   it('validateIntent rejects a runnable-claimed intent with no measure', () => {
     const empty = validateIntent({
       mode: 'lookup',

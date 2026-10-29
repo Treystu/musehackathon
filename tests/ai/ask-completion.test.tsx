@@ -110,7 +110,7 @@ describe('canRun (one predicate for executable intent)', () => {
         mode: 'sweep_filter',
         geographies: ['HI'],
         metricKeys: ['median_gross_rent'],
-        filters: [],
+        filters: [{ metricKey: 'median_gross_rent', op: 'gt', value: 0 }],
         clarificationNeeded: false,
       }),
     ).toBe(true)

@@ -66,16 +66,19 @@ export function isKnownFigureKey(key: string): boolean {
  * Legality reuses the helpers above as the single source (displayable
  * everywhere; filter-legal additionally for sweep_filter/similarity, the
  * same list the schema and the intent gate enforce — never a second
- * list). Open questions, deliberately not enforced here: a two-place
- * minimum for compare, and a filter-presence minimum for sweep_filter.
+ * list). Mode minimums: compare needs >=2 places (one place compares
+ * against nothing); sweep_filter needs >=1 filter (zero filters returns
+ * the full set).
  */
 export function canRun(intent: ValidatedIntent): boolean {
   if (intent.geographies.length === 0) return false
   if (intent.metricKeys.length === 0) return false
   if (!intent.metricKeys.every(isDisplayableKey)) return false
+  if (intent.mode === 'compare' && intent.geographies.length < 2) return false
   if (intent.mode === 'sweep_filter' || intent.mode === 'similarity') {
-    return intent.metricKeys.every(isFilterLegal)
+    if (!intent.metricKeys.every(isFilterLegal)) return false
   }
+  if (intent.mode === 'sweep_filter' && intent.filters.length === 0) return false
   return true
 }
 

@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { canRun, withRunnability } from '../../src/core/ai/intent-schema'
 import type { ValidatedIntent } from '../../src/core/ai/provider'
 import { createGoldenProvider, runGolden } from '../../src/core/ai/harness'
-import { removeFilter, removeGeography } from '../../src/core/ai/intent-edit'
+import {
+  canResolveClarification,
+  removeFilter,
+  removeGeography,
+  resolveClarification,
+} from '../../src/core/ai/intent-edit'
 
 const compareTwo: ValidatedIntent = {
   mode: 'compare',
@@ -74,11 +79,51 @@ describe('canRun mode minimums (single owner)', () => {
     expect(unfiltered.ok).toBe(true)
     if (unfiltered.ok) {
       expect(unfiltered.intent.filters).toHaveLength(0)
-      // Predicate-level: below-minimum is not runnable. (removeFilter
-      // bypasses withRunnability stamping today, so the flag itself is
-      // asserted via withRunnability above, not via this removal path.)
       expect(canRun(unfiltered.intent)).toBe(false)
+      expect(unfiltered.intent.clarificationNeeded).toBe(true)
     }
+  })
+
+  it('sweep clarification resolves with a real filter, not without', () => {
+    const sweepFilter = { metricKey: 'median_gross_rent', op: 'gt', value: 1000 } as const
+    expect(
+      canResolveClarification({
+        mode: 'sweep_filter',
+        geographies: ['HI'],
+        metricKeys: ['median_gross_rent'],
+        filters: [{ ...sweepFilter }],
+      }),
+    ).toBe(true)
+    expect(
+      canResolveClarification({
+        mode: 'sweep_filter',
+        geographies: ['HI'],
+        metricKeys: ['median_gross_rent'],
+        filters: [],
+      }),
+    ).toBe(false)
+    // resolveClarification threads the intent's own filters: a clarifying
+    // sweep that already carries a filter resolves once place+measure land.
+    const unclearSweep: ValidatedIntent = {
+      mode: 'sweep_filter',
+      geographies: [],
+      metricKeys: ['median_gross_rent'],
+      filters: [{ ...sweepFilter }],
+      clarificationNeeded: true,
+    }
+    const resolved = resolveClarification(unclearSweep, {
+      geographies: ['HI'],
+      metricKeys: [],
+    })
+    expect(resolved.ok).toBe(true)
+    if (resolved.ok) {
+      expect(resolved.intent.clarificationNeeded).toBe(false)
+      expect(resolved.intent.filters).toHaveLength(1)
+    }
+    const unclearNoFilter: ValidatedIntent = { ...unclearSweep, filters: [] }
+    expect(
+      resolveClarification(unclearNoFilter, { geographies: ['HI'], metricKeys: [] }).ok,
+    ).toBe(false)
   })
 
   it('golden corpus still exact after minimums', async () => {

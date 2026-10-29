@@ -69,17 +69,18 @@ export function removeMetricKey(intent: ValidatedIntent, key: string): IntentEdi
 }
 
 export function removeFilter(intent: ValidatedIntent, filter: IntentFilter): IntentEditResult {
-  return checked({
-    ...intent,
-    filters: intent.filters.filter(
-      (f) =>
-        !(
-          f.metricKey === filter.metricKey &&
-          f.op === filter.op &&
-          f.value === filter.value
-        ),
-    ),
-  })
+  const filters = intent.filters.filter(
+    (f) =>
+      !(
+        f.metricKey === filter.metricKey &&
+        f.op === filter.op &&
+        f.value === filter.value
+      ),
+  )
+  const next = { ...intent, filters }
+  // Same contract as the other removals: restamp via the single owner so
+  // dropping the last filter takes a sweep back through clarification.
+  return checked(withRunnability(next))
 }
 
 /**
@@ -91,12 +92,13 @@ export function canResolveClarification(picks: {
   mode: IntentMode
   geographies: string[]
   metricKeys?: string[]
+  filters?: ValidatedIntent['filters']
 }): boolean {
   return canRun({
     mode: picks.mode,
     geographies: picks.geographies,
     metricKeys: picks.metricKeys ?? [],
-    filters: [],
+    filters: picks.filters ?? [],
     clarificationNeeded: false,
   })
 }
@@ -117,7 +119,7 @@ export function resolveClarification(
   const next = { ...intent, geographies, metricKeys }
   // The resolvable boolean is owned by the one predicate; this keeps only
   // the error mapping.
-  if (!canResolveClarification({ mode: intent.mode, geographies, metricKeys })) {
+  if (!canResolveClarification({ mode: intent.mode, geographies, metricKeys, filters: next.filters })) {
     return { ok: false, error: 'clarification_required' }
   }
   return checked(withRunnability(next))

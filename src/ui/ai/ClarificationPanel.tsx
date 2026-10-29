@@ -37,6 +37,7 @@ export function ClarificationPanel({
     mode: intent.mode,
     geographies: [...intent.geographies, ...geographies],
     metricKeys: [...intent.metricKeys, ...metricKeys],
+    filters: intent.filters,
   })
 
   function togglePlace(value: string) {

@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { canRun, withRunnability } from '../../src/core/ai/intent-schema'
 import type { ValidatedIntent } from '../../src/core/ai/provider'
 import { createGoldenProvider, runGolden } from '../../src/core/ai/harness'
 import {
+  addFilter,
   canResolveClarification,
   removeFilter,
   removeGeography,
   resolveClarification,
 } from '../../src/core/ai/intent-edit'
+import { ClarificationPanel } from '../../src/ui/ai/ClarificationPanel'
 
 const compareTwo: ValidatedIntent = {
   mode: 'compare',
@@ -124,6 +127,55 @@ describe('canRun mode minimums (single owner)', () => {
     expect(
       resolveClarification(unclearNoFilter, { geographies: ['HI'], metricKeys: [] }).ok,
     ).toBe(false)
+  })
+
+  it('filter add/remove round-trips through clarification', () => {
+    const resolving = { metricKey: 'median_gross_rent', op: 'gt', value: 1000 } as const
+    const unclearNoFilter: ValidatedIntent = {
+      mode: 'sweep_filter',
+      geographies: ['HI'],
+      metricKeys: ['median_gross_rent'],
+      filters: [],
+      clarificationNeeded: true,
+    }
+    const added = addFilter(unclearNoFilter, { ...resolving })
+    expect(added.ok).toBe(true)
+    if (added.ok) {
+      expect(added.intent.filters).toHaveLength(1)
+      expect(canRun(added.intent)).toBe(true)
+      expect(added.intent.clarificationNeeded).toBe(false)
+      const removed = removeFilter(added.intent, { ...resolving })
+      expect(removed.ok).toBe(true)
+      if (removed.ok) {
+        expect(removed.intent.filters).toHaveLength(0)
+        expect(removed.intent.clarificationNeeded).toBe(true)
+      }
+    }
+  })
+
+  it('panel enables resolve exactly when the merged picks would run', () => {
+    const runnableSweep: ValidatedIntent = {
+      ...sweepOne,
+      geographies: ['HI'],
+      clarificationNeeded: true,
+    }
+    const enabled = renderToStaticMarkup(
+      <ClarificationPanel
+        intent={runnableSweep}
+        candidates={{ geographies: [], metricKeys: [] }}
+        onResolve={() => {}}
+      />,
+    )
+    expect(enabled).toContain('Use these choices')
+    expect(enabled).not.toContain('disabled')
+    const blocked = renderToStaticMarkup(
+      <ClarificationPanel
+        intent={{ ...runnableSweep, filters: [] }}
+        candidates={{ geographies: [], metricKeys: [] }}
+        onResolve={() => {}}
+      />,
+    )
+    expect(blocked).toContain('disabled')
   })
 
   it('golden corpus still exact after minimums', async () => {

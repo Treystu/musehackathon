@@ -49,7 +49,10 @@ export function addFilter(intent: ValidatedIntent, filter: IntentFilter): Intent
     return { ok: false, error: 'shape_invalid' }
   }
   if (!Number.isFinite(filter.value)) return { ok: false, error: 'shape_invalid' }
-  return checked({ ...intent, filters: [...intent.filters, filter] })
+  const next = { ...intent, filters: [...intent.filters, filter] }
+  // Same contract as the other edits: restamp via the single owner so adding
+  // the resolving filter clears a sweep out of clarification.
+  return checked(withRunnability(next))
 }
 
 export function removeGeography(intent: ValidatedIntent, place: string): IntentEditResult {

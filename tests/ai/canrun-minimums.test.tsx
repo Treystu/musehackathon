@@ -1,3 +1,6 @@
+// @vitest-environment jsdom
+import { act, type ReactNode } from 'react'
+import { createRoot } from 'react-dom/client'
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { canRun, withRunnability } from '../../src/core/ai/intent-schema'
@@ -176,6 +179,60 @@ describe('canRun mode minimums (single owner)', () => {
       />,
     )
     expect(blocked).toContain('disabled')
+  })
+
+  it('panel click: empty picks disabled -> toggle place enables -> click resolves with filter', () => {
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      const unclear: ValidatedIntent = {
+        mode: 'sweep_filter',
+        geographies: [],
+        metricKeys: ['median_gross_rent'],
+        filters: [{ metricKey: 'median_gross_rent', op: 'gt', value: 1000 }],
+        clarificationNeeded: true,
+      }
+      let resolved: ValidatedIntent | null = null
+      const render = (node: ReactNode) => {
+        act(() => root.render(node))
+      }
+      render(
+        <ClarificationPanel
+          intent={unclear}
+          candidates={{ geographies: ['HI'], metricKeys: [] }}
+          onResolve={(next) => {
+            resolved = next
+          }}
+        />,
+      )
+      const findResolve = () =>
+        Array.from(container.querySelectorAll('button')).find(
+          (b) => b.textContent === 'Use these choices',
+        ) as HTMLButtonElement
+      // Empty picks: place missing, so the button starts disabled.
+      expect(findResolve().disabled).toBe(true)
+      // Toggle the place chip: merged picks now run, so the button enables.
+      const placeChip = Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'HI',
+      ) as HTMLButtonElement
+      act(() => {
+        placeChip.click()
+      })
+      expect(findResolve().disabled).toBe(false)
+      // Click resolve: onResolve fires once with the intent filter intact.
+      act(() => {
+        findResolve().click()
+      })
+      expect(resolved).not.toBeNull()
+      expect(resolved!.geographies).toEqual(['HI'])
+      expect(resolved!.filters).toHaveLength(1)
+      expect(resolved!.clarificationNeeded).toBe(false)
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
   })
 
   it('golden corpus still exact after minimums', async () => {

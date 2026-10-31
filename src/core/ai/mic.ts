@@ -56,6 +56,33 @@ function resolveStorage(storage?: MicStorage): MicStorage | null {
   return storage ?? browserStorage()
 }
 
+/**
+ * Read consent with one authoritative source: an explicitly supplied
+ * storage decides alone; otherwise browser storage decides when it
+ * holds an entry; the in-memory copy is only the fallback for
+ * environments with no storage at all. (Consulting memory after an
+ * empty real storage would leak consent across sessions.)
+ */
+function readConsent(storage?: MicStorage): boolean {
+  if (storage) {
+    try {
+      return storage.getItem(MIC_CONSENT_STORAGE_KEY) === 'granted'
+    } catch {
+      return memoryConsent
+    }
+  }
+  const store = browserStorage()
+  if (store) {
+    try {
+      const value = store.getItem(MIC_CONSENT_STORAGE_KEY)
+      if (value !== null) return value === 'granted'
+    } catch {
+      // Blocked storage: fall through to the in-memory copy.
+    }
+  }
+  return memoryConsent
+}
+
 function emitConsentChanged(granted: boolean): void {
   try {
     const g = globalThis as {
@@ -80,16 +107,7 @@ function emitConsentChanged(granted: boolean): void {
 
 /** True only when consent was explicitly granted and not revoked. */
 export function hasMicConsent(storage?: MicStorage): boolean {
-  const store = resolveStorage(storage)
-  if (store) {
-    try {
-      if (store.getItem(MIC_CONSENT_STORAGE_KEY) === 'granted') return true
-      if (store.getItem(MIC_CONSENT_STORAGE_KEY) !== null) return false
-    } catch {
-      // Blocked storage: fall through to the in-memory copy.
-    }
-  }
-  return memoryConsent
+  return readConsent(storage)
 }
 
 /** Record first-use consent. The microphone must not activate before this. */

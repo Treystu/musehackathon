@@ -23,7 +23,7 @@ import { MicInput, type MicRecorder } from './MicInput'
 import type { FigureInput } from './FigureCard'
 
 export const SPOKEN_NUMBER_MISMATCH_NOTE =
-  'A number in what was heard does not match the understood request. Check the numbers in the request below before running anything.'
+  'A number in what was heard does not match the understood request, so nothing was run. The words are in the box above: check the numbers, then choose Ask.'
 
 export const LOW_CONFIDENCE_TRANSCRIPT_NOTE =
   'That speech was not clear enough to trust, especially its numbers. The words are in the box above: check and edit them, then choose Ask. Nothing has run.'
@@ -144,16 +144,17 @@ export function AskPanel({
     }
     // One answer: the flag is stamped by its single owner, so the gate
     // below and ExplainOnAsk read the same runnability.
-    let parsed = withRunnability(check.intent)
+    const parsed = withRunnability(check.intent)
     // Spoken-number validation (mic path): every numeral heard must
     // match a number in the understood request. A mismatch fails
-    // closed into clarification — nothing runs on a substituted number.
-    let spokenMismatch = false
+    // closed, the same way failed prose is withheld: the understood
+    // request is not offered for execution, the words stay in the
+    // editable text box, and nothing runs on a substituted number.
     if (spokenTranscript !== undefined) {
       const verdict = checkSpokenNumbers(spokenTranscript, parsed, validator)
       if (!verdict.pass) {
-        spokenMismatch = true
-        parsed = { ...parsed, clarificationNeeded: true }
+        setNote(SPOKEN_NUMBER_MISMATCH_NOTE)
+        return
       }
     }
     if (result.prose) {
@@ -163,9 +164,7 @@ export function AskPanel({
       }
     }
     setIntent(parsed)
-    if (spokenMismatch) {
-      setNote(SPOKEN_NUMBER_MISMATCH_NOTE)
-    } else if (parsed.clarificationNeeded) {
+    if (parsed.clarificationNeeded) {
       setNote('More detail is needed before anything runs. Check the understood request below.')
     }
   }

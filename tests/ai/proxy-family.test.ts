@@ -26,15 +26,16 @@ describe('proxy route family shells', () => {
     expect(ok.body.prose).toBe('')
   })
 
-  it('transcribe shell is allowlisted + metered, rejects oversize audio', async () => {
+  it('transcribe route is allowlisted + metered, rejects oversize audio', async () => {
     const d = deps()
     const big = await handleTranscribe(
-      { method: 'POST', path: '/api/muse/transcribe', body: { mimeType: 'audio/webm', audioBytes: 99_000_000 }, clientId: 'c1' }, d)
+      { method: 'POST', path: '/api/muse/transcribe', body: { mimeType: 'audio/webm', audioBase64: 'A'.repeat(13_981_016) }, clientId: 'c1' }, d)
     expect(big.body.error).toBe('shape_invalid')
     const ok = await handleTranscribe(
-      { method: 'POST', path: '/api/muse/transcribe', body: { mimeType: 'audio/webm', audioBytes: 1024 }, clientId: 'c1' }, d)
-    expect(ok.status).toBe(503)
-    expect(d.meter.snapshot().errors.provider_down).toBeGreaterThan(0)
+      { method: 'POST', path: '/api/muse/transcribe', body: { mimeType: 'audio/webm', audioBase64: Buffer.from(new Uint8Array(1024)).toString('base64') }, clientId: 'c1' }, d)
+    expect(ok.status).toBe(200)
+    expect(ok.body.transcript).toBe('')
+    expect(d.meter.snapshot().requests).toBe(1)
   })
 
   it('all shells reject non-allowlisted paths/models', async () => {

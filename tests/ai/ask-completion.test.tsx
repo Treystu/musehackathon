@@ -214,11 +214,15 @@ describe('canRun (one predicate for executable intent)', () => {
 })
 
 describe('Ask surface completion', () => {
-  it('keeps disclosure on the Ask surface and renders no mic control', () => {
+  it('keeps disclosure on the Ask surface; mic renders its no-recorder state, never a dead control', () => {
     const html = renderToStaticMarkup(<AskPanel provider={createStubProvider()} />)
     expect(html).toContain('This is a reading of the shown figures')
-    expect(html.toLowerCase()).not.toContain('microphone')
-    expect(html).not.toContain('>Mic<')
+    // Item 12 shipped: with no recorder available in this environment
+    // the mic surface states that plainly (with its audio disclosure)
+    // instead of rendering a control that cannot work.
+    expect(html).toContain('Voice input is not available in this browser')
+    expect(html).toContain('audio is not stored')
+    expect(html).not.toContain('Speak a question')
   })
 
   it('renders add-place, add-measure, and add-filter controls', () => {

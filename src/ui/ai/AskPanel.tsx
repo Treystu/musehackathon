@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { decideAskPath } from '../../core/ai/byo'
-import { hasMetaKey } from '../../core/ai/meta-key'
+import type { CensusKeyFetcher } from '../../core/ai/census-key'
+import { hasMetaKey, type MetaKeyFetcher } from '../../core/ai/meta-key'
 import type { IntentResult, MuseProvider, ValidatedIntent } from '../../core/ai/provider'
 import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../core/ai/proxy-errors'
+import { AgentHandoff } from './AgentHandoff'
 import { ByoOffer } from './ByoOffer'
 import { ClarificationPanel, type ClarificationCandidates } from './ClarificationPanel'
 import { IntentEditor } from './IntentEditor'
@@ -83,6 +85,8 @@ export function AskPanel({
   figures,
   explanation,
   onExplain,
+  censusFetcher,
+  metaFetcher,
 }: {
   provider: MuseProvider
   /**
@@ -99,6 +103,9 @@ export function AskPanel({
   figures?: readonly FigureInput[]
   explanation?: ExplanationState
   onExplain?: (intent: ValidatedIntent) => void
+  /** Probes for the setup surfaces' key validation; absent = shape-only. */
+  censusFetcher?: CensusKeyFetcher
+  metaFetcher?: MetaKeyFetcher
 }) {
   const [text, setText] = useState('')
   const [intent, setIntent] = useState<ValidatedIntent | null>(null)
@@ -197,6 +204,7 @@ export function AskPanel({
       )}
       {(proxyError || note) && <p>{manualFallbackNote()}</p>}
       <ByoOffer error={proxyError ?? caughtError} onOpenSettings={onOpenSettings} />
+      <AgentHandoff censusFetcher={censusFetcher} metaFetcher={metaFetcher} />
       {intent && (
         <>
           <IntentEditor intent={intent} onChange={setIntent} />

@@ -5,7 +5,7 @@
 import { PRIVACY_SUMMARY } from './privacy'
 import { DISCLOSURE_TEXT } from './validator'
 
-export type OnboardingStepId = 'what' | 'privacy' | 'ready'
+export type OnboardingStepId = 'what' | 'privacy' | 'keys' | 'ready'
 
 export interface OnboardingStep {
   id: OnboardingStepId
@@ -36,6 +36,19 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
       'I understand the aggregate counter and the browser-only personal key.',
   },
   {
+    id: 'keys',
+    title: 'Your keys',
+    body:
+      'Two optional keys live only in this browser. A free Census API key ' +
+      'lets the app call the Census Bureau directly; a personal Meta key ' +
+      'lets the helper run on your own allowance. Neither is required — ' +
+      'manual search and the shared helper path work without them. This ' +
+      'step is also the manual path an agent hands you back to when a ' +
+      'screen stops matching its workflow. The app checks each key itself ' +
+      'and confirms it here; a key is never confirmed by anyone saying so.',
+    requiresAck: false,
+  },
+  {
     id: 'ready',
     title: 'You are ready',
     body:
@@ -55,6 +68,36 @@ export interface OnboardingState {
 
 export function initialOnboardingState(): OnboardingState {
   return { stepIndex: 0, acknowledged: {}, completed: false }
+}
+
+/** Start the manual path at a named step (used by agent handoffs). */
+export function initialOnboardingStateAt(id: OnboardingStepId): OnboardingState {
+  const index = ONBOARDING_STEPS.findIndex((step) => step.id === id)
+  return { stepIndex: index >= 0 ? index : 0, acknowledged: {}, completed: false }
+}
+
+/**
+ * Map an agent-workflow abort's manualEquivalent (see
+ * docs/agent-onboarding/workflow.v1.json) to the wizard step the user
+ * continues at. Key handling of every kind lands on the keys step;
+ * anything unrecognised lands on the first step rather than stranding
+ * the user mid-flow.
+ */
+export function wizardStepForManualEquivalent(manualEquivalent: string): OnboardingStepId {
+  switch (manualEquivalent) {
+    case 'manual:done':
+      return 'ready'
+    case 'manual:census-signup':
+    case 'manual:census-retrieve-key':
+    case 'manual:census-paste-key':
+    case 'manual:meta-sign-in':
+    case 'manual:meta-create-key':
+    case 'manual:meta-paste-key':
+      return 'keys'
+    case 'manual:intro':
+    default:
+      return 'what'
+  }
 }
 
 export function currentStep(state: OnboardingState): OnboardingStep | undefined {

@@ -35,15 +35,39 @@ export const CENSUS_ATTRIBUTION =
  * Extracting the token first makes the app tolerant of the realistic
  * cases while still rejecting a genuinely malformed paste.
  */
-const KEY_PATTERN = /\b[0-9a-fA-F]{40}\b/
+/**
+ * A candidate is a maximal run of exactly 40 hex characters: delimited
+ * on both sides by a non-hex character or the edge of the input. Word
+ * boundaries (\b) are the wrong delimiter for this: the key sits on its
+ * own line in the email, and a single-line paste field strips the
+ * newlines (HTML value sanitization), gluing the token directly to the
+ * neighbouring words ("...key is: <token>Thank you..."). Across that
+ * seam \b sees word characters on both sides and finds no boundary,
+ * while the hex run is still exactly the key. Two further rules keep
+ * extraction honest: a run longer than 40 holds no delimited token
+ * (any 40-char window inside one would be a guess), and two different
+ * candidates in one paste are ambiguous — extraction fails rather
+ * than picking one.
+ */
+function extractKeyToken(trimmed: string): string | null {
+  const runs = trimmed.match(/[0-9a-fA-F]+/g)
+  if (!runs) return null
+  let candidate: string | null = null
+  for (const run of runs) {
+    if (run.length !== 40) continue
+    if (candidate !== null && candidate !== run) return null
+    candidate = run
+  }
+  return candidate
+}
 
 export type CensusKeyShape = 'ok' | 'not-found'
 
 export function normalizeCensusKey(raw: string): { key: string; shape: CensusKeyShape } {
   if (typeof raw !== 'string') return { key: '', shape: 'not-found' }
   const trimmed = raw.trim()
-  const match = KEY_PATTERN.exec(trimmed)
-  if (match) return { key: match[0], shape: 'ok' }
+  const token = extractKeyToken(trimmed)
+  if (token) return { key: token, shape: 'ok' }
 
   // No 40-char token anywhere. If the input is plausibly a key that was
   // truncated or mistyped, compact it so callers can report its length

@@ -23,7 +23,27 @@ export interface MeterSnapshot {
   errors: Record<string, number>
 }
 
-type BreakerState = 'closed' | 'open' | 'half-open'
+export type BreakerState = 'closed' | 'open' | 'half-open'
+
+/**
+ * Full internal state of a Meter (counts only, Q1), exported/imported by
+ * the persistence adapter (meter-persistence.ts). Mirrors the private
+ * fields field-for-field; reservations carry no expiry here — the TTL
+ * lives in the persisted record owned by the adapter.
+ */
+export interface MeterState {
+  requests: number
+  tokensIn: number
+  tokensOut: number
+  spentMicroUsd: number
+  failures: number
+  breaker: BreakerState
+  breakerOpenedAt: number
+  errors: Record<string, number>
+  perClientSpent: Record<string, number>
+  reservations: Record<string, { clientId: string; estMicroUsd: number }>
+  nextReservationId: number
+}
 
 export class Meter {
   private requests = 0
@@ -105,6 +125,47 @@ export class Meter {
 
   release(id: string): void {
     this.reservations.delete(id)
+  }
+
+  /** Export the full state (deep copy) for a persistence adapter. */
+  exportState(): MeterState {
+    return {
+      requests: this.requests,
+      tokensIn: this.tokensIn,
+      tokensOut: this.tokensOut,
+      spentMicroUsd: this.spentMicroUsd,
+      failures: this.failures,
+      breaker: this.breaker,
+      breakerOpenedAt: this.breakerOpenedAt,
+      errors: Object.fromEntries(this.errors),
+      perClientSpent: Object.fromEntries(this.perClientSpent),
+      reservations: Object.fromEntries(
+        [...this.reservations].map(([id, r]) => [id, { ...r }]),
+      ),
+      nextReservationId: this.nextReservationId,
+    }
+  }
+
+  /** Replace the full state with a previously exported one (deep copy). */
+  importState(state: MeterState): void {
+    this.requests = state.requests
+    this.tokensIn = state.tokensIn
+    this.tokensOut = state.tokensOut
+    this.spentMicroUsd = state.spentMicroUsd
+    this.failures = state.failures
+    this.breaker = state.breaker
+    this.breakerOpenedAt = state.breakerOpenedAt
+    this.errors.clear()
+    for (const [k, v] of Object.entries(state.errors)) this.errors.set(k, v)
+    this.perClientSpent.clear()
+    for (const [k, v] of Object.entries(state.perClientSpent)) {
+      this.perClientSpent.set(k, v)
+    }
+    this.reservations.clear()
+    for (const [k, v] of Object.entries(state.reservations)) {
+      this.reservations.set(k, { ...v })
+    }
+    this.nextReservationId = state.nextReservationId
   }
 
   /** Count one failure by closed error class (counts only, Q1). */

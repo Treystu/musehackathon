@@ -1,0 +1,7 @@
+# House (Ask) workbench headers. The Permissions-Policy below carries
+# the Item 12 mic decision: microphone=(self) ships in the same change
+# as the mic implementation, never earlier; camera stays closed. The
+# full CSP for the product surface is owned by the pad security test
+# at port time (see docs/civicscope-audit.md) and is not duplicated here.
+/*
+  Permissions-Policy: microphone=(self), camera=()

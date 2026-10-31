@@ -1,0 +1,17 @@
+# Port-time deployment config for the House workbench (Pages).
+# Only the meter Durable Object is declared here; the rest of the
+# Pages project config is owned by the port target. The worker entry
+# re-exports MeterDurableObject from functions/api/muse/meter-do.ts
+# so the binding below can attach. One named instance
+# ('judging-window-v1') is the single Q1 aggregate counter store.
+
+name = "musehackathon-house"
+
+[durable_objects]
+bindings = [
+  { name = "METER", class_name = "MeterDurableObject" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["MeterDurableObject"]

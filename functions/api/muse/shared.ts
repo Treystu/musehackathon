@@ -1,11 +1,17 @@
 /**
  * Shared proxy machinery for /api/muse/* (House).
  * Closed error taxonomy — raw provider bodies are never forwarded.
- * The workbench counter store is a contract + hermetic test double
- * (src/core/ai/meter.ts Meter class); the real Durable Object binding
- * is a port-time adapter. No live Durable Object exists in this tree.
+ * The counter store's logic core is src/core/ai/meter.ts (Meter class);
+ * its persistence adapter is src/core/ai/meter-persistence.ts
+ * (PersistentMeter over one durable record) with the Durable Object
+ * binding in functions/api/muse/meter-do.ts (wrangler binding METER).
+ * ProxyDeps.meter remains the synchronous Meter contract the
+ * framework-free handlers call; at port time the handlers await the
+ * DO-backed client (same op surface) and meter failures route through
+ * mapMeterError — fail-closed, never an unmetered call.
  */
 import type { Meter } from '../../../src/core/ai/meter'
+import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
 import type { MuseProvider } from '../../../src/core/ai/provider'
 import type { ProxyError } from '../../../src/core/ai/proxy-errors'
 
@@ -37,6 +43,17 @@ export function preCallGate(
   if (deps.meter.snapshot().budgetExhausted) return err(429, 'budget_exhausted')
   if (deps.meter.breakerState() === 'open') return err(503, 'breaker_open')
   return null
+}
+
+/**
+ * Map a meter persistence failure onto the closed taxonomy. A meter
+ * that cannot be read or written fails closed as 503 breaker_open:
+ * the AI surface degrades exactly as it does on an open breaker, and
+ * no unmetered provider call is made. Anything else is provider_down.
+ */
+export function mapMeterError(e: unknown): ProxyReply {
+  if (e instanceof MeterUnavailableError) return err(503, 'breaker_open')
+  return err(502, 'provider_down')
 }
 
 /** Map a thrown provider failure onto the closed taxonomy. */

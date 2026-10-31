@@ -7,14 +7,36 @@ import {
   canFinish,
   currentStep,
   finishOnboarding,
-  initialOnboardingState,
+  initialOnboardingStateAt,
   nextStep,
   previousStep,
+  type OnboardingStepId,
 } from '../../core/ai/onboarding'
+import type { CensusKeyFetcher } from '../../core/ai/census-key'
+import type { MetaKeyFetcher } from '../../core/ai/meta-key'
+import { ByoSettings } from './ByoSettings'
+import { CensusKeySettings } from './CensusKeySettings'
+import { KeySetupStatus } from './KeyConfirmation'
 
-/** Canned setup wizard. No model prose and no independent-run pass claim. */
-export function OnboardingWizard({ onFinish }: { onFinish?: () => void }) {
-  const [state, setState] = useState(initialOnboardingState())
+/**
+ * Canned setup wizard — also the manual path the agent workflow hands
+ * off to, so it can open at a named step. No model prose and no
+ * independent-run pass claim. The keys step renders the app's own key
+ * settings; confirmation there comes from the re-validation loop, not
+ * from the settings forms.
+ */
+export function OnboardingWizard({
+  onFinish,
+  initialStepId,
+  censusFetcher,
+  metaFetcher,
+}: {
+  onFinish?: () => void
+  initialStepId?: OnboardingStepId
+  censusFetcher?: CensusKeyFetcher
+  metaFetcher?: MetaKeyFetcher
+}) {
+  const [state, setState] = useState(() => initialOnboardingStateAt(initialStepId ?? 'what'))
   const step = currentStep(state)
   if (!step) return null
 
@@ -46,6 +68,14 @@ export function OnboardingWizard({ onFinish }: { onFinish?: () => void }) {
           />
           {step.ackLabel}
         </label>
+      ) : null}
+
+      {step.id === 'keys' ? (
+        <>
+          <CensusKeySettings fetcher={censusFetcher} />
+          <ByoSettings fetcher={metaFetcher} />
+          <KeySetupStatus censusFetcher={censusFetcher} metaFetcher={metaFetcher} />
+        </>
       ) : null}
 
       <div>

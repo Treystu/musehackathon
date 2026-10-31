@@ -37,7 +37,13 @@ export interface ExplainRequest {
 }
 export interface ExplainResult { prose: string }
 
-export interface BriefingRequest { figureSetId: string }
+export interface BriefingRequest {
+  figureSetId: string
+  /** The figure set to brief. Server-side composition re-verifies every
+   * figure against its source data before this request is built
+   * (src/core/ai/briefing.ts), so values here are verified, non-null. */
+  values: { key: string; value: number; marginOfError?: number; vintage?: string }[]
+}
 export interface BriefingResult { prose: string }
 
 export interface TranscribeRequest {

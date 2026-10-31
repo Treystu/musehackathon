@@ -74,14 +74,26 @@ CivicScope's privacy text carries this sentence verbatim:
 
 > The app includes a built-in project Census key so housing data loads on your first visit; a Census key you add yourself stays only in your browser and is used instead of the project key.
 
+## Scope — hackathon deployment only (owner rule, 2026-10-31)
+
+The shared key value is set ONLY in the environment of the Muse
+hackathon deployment (this repo's deployment — the judges' surface).
+It is never set in the CivicScope public production environment:
+general visitors to the public site get the keyless/BYO design, and
+the shared key is not spent on, or shipped to, that audience.
+Federation into CivicScope is code and contract only (the module,
+the resolver, the tests, this document) — not the value. A CivicScope
+deployment may carry the value only while it is designated the
+judging surface, by the owner's explicit act.
+
 ## Rotation
 
 Rotation is a deployment act, never a code change:
 
 1. Request a replacement application key from the Census Bureau's key
    signup page, under the project account.
-2. Set `CENSUS_APP_KEY` to the new value in the Pages environment
-   (production and preview).
+2. Set `CENSUS_APP_KEY` to the new value in the hackathon
+   deployment's Pages environment only (see Scope above).
 3. Redeploy and run the deploy checklist below, including the cold
    profile check.
 4. Retire the old key with the Census Bureau once the new value is
@@ -91,8 +103,9 @@ Rotation is a deployment act, never a code change:
 
 ## Deploy checklist
 
-- [ ] `CENSUS_APP_KEY` is set in the Pages environment for the target
-      deployment (production and preview, as applicable).
+- [ ] `CENSUS_APP_KEY` is set in the Pages environment of the
+      hackathon deployment only, and confirmed ABSENT from the
+      CivicScope public production environment.
 - [ ] Cold browser profile (no stored personal key, storage cleared):
       ACS housing figures load on first visit with no setup step.
 - [ ] With a personal Census key stored: resolution uses the personal
@@ -114,6 +127,7 @@ Rotation is a deployment act, never a code change:
 3. Add the privacy sentence above to the privacy text, verbatim.
 4. Mirror the shared-app-key tests and keep them hermetic — fake
    placeholder values only, assembled from short segments.
-5. Set `CENSUS_APP_KEY` on the CivicScope Pages project (the same
-   value as the workbench deployment, if both are deployed) and run
-   the deploy checklist.
+5. Do NOT set `CENSUS_APP_KEY` on the CivicScope Pages project. The
+   public production environment stays keyless by owner rule (see
+   Scope above); the mirrored code simply resolves to "none" there.
+   Run the deploy checklist on the hackathon deployment.

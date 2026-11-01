@@ -47,41 +47,65 @@ export function AgentHandoff({
     (manualEquivalent ? wizardStepForManualEquivalent(manualEquivalent) : undefined)
 
   return (
-    <section aria-labelledby="agent-handoff-heading">
-      <h2 id="agent-handoff-heading">Set up with your agent</h2>
-      <p>
-        An AI agent can set this up with you, following the versioned
-        workflow in the project repository (version {WORKFLOW_VERSION}). The
-        agent never receives your key: the app confirms success itself, here,
-        when its re-validation event fires ({CENSUS_KEY_EVENT} for the Census
-        key, {META_KEY_EVENT} for a personal key) and its re-check passes. If
-        a screen does not match the workflow, the agent stops before any key
-        entry and hands you back to the manual steps below.
-      </p>
+    <section aria-labelledby="agent-handoff-heading" className="mt-4 border-t border-slate-200">
+      {/* Collapsed by default (owner direction, 2026-11-01): the setup
+          machinery is reference material, and expanded it pushed the
+          data below the fold and read as the product's main content.
+          The text is unchanged and stays in the DOM - a screen reader
+          or a find-in-page reaches it exactly as before, and a handoff
+          that names a manual step opens it expanded, because that
+          reader has already asked for the manual path. */}
+      <details open={startStep !== undefined}>
+        <summary className="disclosure-summary">
+          <h2 id="agent-handoff-heading" className="text-sm font-semibold text-slate-900">
+            Set up with your agent
+          </h2>
+          <span className="text-xs font-normal text-slate-600">
+            Optional — only if you want your own keys
+          </span>
+        </summary>
+        <p className="mt-1 max-w-[68ch] text-sm leading-relaxed text-slate-700">
+          An AI agent can set this up with you, following the versioned
+          workflow in the project repository (version {WORKFLOW_VERSION}). The
+          agent never receives your key: the app confirms success itself, here,
+          when its re-validation event fires (
+          <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.8125rem] text-slate-800">
+            {CENSUS_KEY_EVENT}
+          </code>{' '}
+          for the Census key,{' '}
+          <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.8125rem] text-slate-800">
+            {META_KEY_EVENT}
+          </code>{' '}
+          for a personal key) and its re-check passes. If a screen does not
+          match the workflow, the agent stops before any key entry and hands
+          you back to the manual steps below.
+        </p>
 
-      <KeySetupStatus censusFetcher={censusFetcher} metaFetcher={metaFetcher} />
+        <KeySetupStatus censusFetcher={censusFetcher} metaFetcher={metaFetcher} />
 
-      <div>
-        <button
-          type="button"
-          aria-expanded={manualOpen}
-          onClick={() => setManualOpen((open) => !open)}
-        >
-          {manualOpen ? 'Hide the manual setup steps' : 'Continue manually instead'}
-        </button>
-      </div>
-      {manualOpen ? (
-        <OnboardingWizard
-          initialStepId={startStep}
-          censusFetcher={censusFetcher}
-          metaFetcher={metaFetcher}
-        />
-      ) : null}
+        <div className="mt-3">
+          <button
+            type="button"
+            aria-expanded={manualOpen}
+            onClick={() => setManualOpen((open) => !open)}
+            className="btn-secondary"
+          >
+            {manualOpen ? 'Hide the manual setup steps' : 'Continue manually instead'}
+          </button>
+        </div>
+        {manualOpen ? (
+          <OnboardingWizard
+            initialStepId={startStep}
+            censusFetcher={censusFetcher}
+            metaFetcher={metaFetcher}
+          />
+        ) : null}
 
-      <p role="note">
-        Independent-run check: {INDEPENDENT_RUN_STATUS}. These setup steps do
-        not claim the independent-run bar has passed.
-      </p>
+        <p role="note" className="mt-3 text-xs text-slate-600">
+          Independent-run check: {INDEPENDENT_RUN_STATUS}. These setup steps do
+          not claim the independent-run bar has passed.
+        </p>
+      </details>
     </section>
   )
 }

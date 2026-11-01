@@ -27,16 +27,20 @@ export function ExplainBox({
 }) {
   const state = explainState(prose, withheld)
   return (
-    <section aria-label={title}>
-      <h3>{title}</h3>
+    <section aria-label={title} className="mt-3">
+      <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
       {state === 'withheld' && (
-        <p role="status">
+        <p role="status" className="mt-1 text-sm text-slate-700">
           Explanation withheld. The figures are shown without wording.
         </p>
       )}
-      {state === 'empty' && <p role="status">No explanation yet.</p>}
-      {state === 'ready' && <p>{prose}</p>}
-      <p role="note" className="house-disclosure">
+      {state === 'empty' && (
+        <p role="status" className="mt-1 text-sm text-slate-700">
+          No explanation yet.
+        </p>
+      )}
+      {state === 'ready' && <p className="mt-1 text-sm leading-relaxed text-slate-700">{prose}</p>}
+      <p role="note" className="house-disclosure mt-2">
         {DISCLOSURE_TEXT}
       </p>
     </section>

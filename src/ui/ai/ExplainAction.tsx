@@ -128,7 +128,11 @@ export function ExplainAction({
       >
         {busy ? 'Explaining…' : `Explain ${title}`}
       </button>
-      {message && <p role="status">{message}</p>}
+      {message && (
+        <p role="status" className="mt-2 text-sm text-slate-700">
+          {message}
+        </p>
+      )}
       {explanation && (
         <ExplainBox
           title={`${title} explanation`}

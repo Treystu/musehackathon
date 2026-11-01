@@ -76,7 +76,7 @@ export function IntentEditor({
   }
 
   return (
-    <section aria-label="Edit the understood request">
+    <section aria-label="Edit the understood request" className="mt-4 space-y-3">
       <IntentChips
         intent={intent}
         onChange={(next) => {
@@ -86,71 +86,92 @@ export function IntentEditor({
         onError={(code) => setError(errorCopy(code))}
       />
 
-      <form onSubmit={onAddPlace}>
-        <label htmlFor="intent-place">Add a place</label>
-        <input
-          id="intent-place"
-          value={place}
-          onChange={(e) => setPlace(e.target.value)}
-          autoComplete="off"
-        />
-        <button type="submit">Add place</button>
+      <form onSubmit={onAddPlace} className="flex flex-wrap items-end gap-2">
+        <label htmlFor="intent-place" className="min-w-0 flex-1 text-sm font-medium text-slate-900">
+          Add a place
+          <input
+            id="intent-place"
+            value={place}
+            onChange={(e) => setPlace(e.target.value)}
+            autoComplete="off"
+            className="field mt-1 w-full"
+          />
+        </label>
+        <button type="submit" className="btn-secondary shrink-0">
+          Add place
+        </button>
       </form>
 
-      <form onSubmit={onAddMetric}>
-        <label htmlFor="intent-metric">Add a measure</label>
-        <select
-          id="intent-metric"
-          value={metric}
-          onChange={(e) => setMetric(e.target.value)}
-        >
-          {DISPLAYABLE_KEYS.map((key) => (
-            <option key={key} value={key}>
-              {key}
-            </option>
-          ))}
-        </select>
-        <button type="submit">Add measure</button>
-      </form>
-
-      <form onSubmit={onAddFilter}>
-        <fieldset>
-          <legend>Add a filter</legend>
-          <label htmlFor="filter-metric">Measure</label>
+      <form onSubmit={onAddMetric} className="flex flex-wrap items-end gap-2">
+        <label htmlFor="intent-metric" className="min-w-0 flex-1 text-sm font-medium text-slate-900">
+          Add a measure
           <select
-            id="filter-metric"
-            value={filterMetric}
-            onChange={(e) => setFilterMetric(e.target.value)}
+            id="intent-metric"
+            value={metric}
+            onChange={(e) => setMetric(e.target.value)}
+            className="select-field mt-1 w-full"
           >
-            {FILTER_LEGAL_KEYS.map((key) => (
+            {DISPLAYABLE_KEYS.map((key) => (
               <option key={key} value={key}>
                 {key}
               </option>
             ))}
           </select>
-          <label htmlFor="filter-op">Comparison</label>
-          <select
-            id="filter-op"
-            value={filterOp}
-            onChange={(e) => setFilterOp(e.target.value as IntentFilter['op'])}
-          >
-            <option value="gt">greater than</option>
-            <option value="lt">less than</option>
-            <option value="eq_range">equal to</option>
-          </select>
-          <label htmlFor="filter-value">Value</label>
-          <input
-            id="filter-value"
-            type="number"
-            value={filterValue}
-            onChange={(e) => setFilterValue(e.target.value)}
-          />
-          <button type="submit">Add filter</button>
+        </label>
+        <button type="submit" className="btn-secondary shrink-0">
+          Add measure
+        </button>
+      </form>
+
+      <form onSubmit={onAddFilter}>
+        <fieldset className="flex flex-wrap items-end gap-2">
+          <legend className="text-sm font-medium text-slate-900">Add a filter</legend>
+          <label htmlFor="filter-metric" className="text-sm font-medium text-slate-900">
+            Measure
+            <select
+              id="filter-metric"
+              value={filterMetric}
+              onChange={(e) => setFilterMetric(e.target.value)}
+              className="select-field mt-1 block"
+            >
+              {FILTER_LEGAL_KEYS.map((key) => (
+                <option key={key} value={key}>
+                  {key}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label htmlFor="filter-op" className="text-sm font-medium text-slate-900">
+            Comparison
+            <select
+              id="filter-op"
+              value={filterOp}
+              onChange={(e) => setFilterOp(e.target.value as IntentFilter['op'])}
+              className="select-field mt-1 block"
+            >
+              <option value="gt">greater than</option>
+              <option value="lt">less than</option>
+              <option value="eq_range">equal to</option>
+            </select>
+          </label>
+          <label htmlFor="filter-value" className="text-sm font-medium text-slate-900">
+            Value
+            <input
+              id="filter-value"
+              type="number"
+              value={filterValue}
+              onChange={(e) => setFilterValue(e.target.value)}
+              className="field mt-1 block w-32 flex-none"
+            />
+          </label>
+          <button type="submit" className="btn-secondary shrink-0">
+            Add filter
+          </button>
         </fieldset>
       </form>
 
       {error ? (
-        <p role="status" aria-live="polite">
+        <p role="status" aria-live="polite" className="text-sm text-slate-700">
           {error}
         </p>
       ) : null}

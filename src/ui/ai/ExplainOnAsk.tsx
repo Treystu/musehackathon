@@ -26,7 +26,7 @@ export function ExplainOnAsk({
   )
   if (!onExplain && !explanation && !(provider && intentFigures.length > 0)) return null
   return (
-    <section aria-label="Explain these figures">
+    <section aria-label="Explain these figures" className="mt-3">
       {provider && intentFigures.length > 0 ? (
         <ExplainAction
           title="these figures"
@@ -35,7 +35,7 @@ export function ExplainOnAsk({
           provider={provider}
         />
       ) : onExplain ? (
-        <button type="button" onClick={() => onExplain(intent)}>
+        <button type="button" onClick={() => onExplain(intent)} className="btn-secondary">
           Explain these figures
         </button>
       ) : null}

@@ -100,7 +100,7 @@ function extractProxyError(e: unknown): ProxyError | null {
 
 export function Disclosure() {
   return (
-    <p role="note" className="house-disclosure">
+    <p role="note" className="house-disclosure mt-4">
       {DISCLOSURE_TEXT}
     </p>
   )
@@ -284,7 +284,9 @@ export function AskPanel({
 
   return (
     <section aria-labelledby="ask-heading">
-      <h2 id="ask-heading">Ask CivicScope</h2>
+      <h2 id="ask-heading" className="section-title">
+        Ask CivicScope
+      </h2>
       {/* The welcome leads, per the owner's direction (2026-11-01): the
           AI greets and offers starting points instead of presenting a
           blank form. The wording invites the factors a person actually
@@ -314,40 +316,43 @@ export function AskPanel({
           </button>
         ))}
       </div>
-      <form onSubmit={submit}>
-        <label htmlFor="ask-input">Ask in plain language</label>
-        <p id="ask-raw-text-note" role="note" className="house-raw-text-disclosure">
+      <form onSubmit={submit} className="mt-4">
+        <label htmlFor="ask-input" className="text-sm font-medium text-slate-900">
+          Ask in plain language
+        </label>
+        <p id="ask-raw-text-note" role="note" className="house-raw-text-disclosure mt-1">
           {RAW_TEXT_DISCLOSURE}
         </p>
-        <input
-          id="ask-input"
-          aria-describedby="ask-raw-text-note"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          autoComplete="off"
-        />
-        <button
-          type="submit"
-          disabled={busy}
-          className="min-h-[44px] rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
-        >
-          Ask
-        </button>
+        <div className="mt-2 flex gap-2">
+          <input
+            id="ask-input"
+            aria-describedby="ask-raw-text-note"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            autoComplete="off"
+            className="field"
+          />
+          <button type="submit" disabled={busy} className="btn-primary shrink-0">
+            Ask
+          </button>
+        </div>
       </form>
-      <MicInput
-        transcribe={(audio, mimeType) =>
-          provider.transcribe({ audio, mimeType }, new AbortController().signal)
-        }
-        onTranscript={handleTranscript}
-        recorder={micRecorder}
-        storage={micStorage}
-      />
+      <div className="mt-3">
+        <MicInput
+          transcribe={(audio, mimeType) =>
+            provider.transcribe({ audio, mimeType }, new AbortController().signal)
+          }
+          onTranscript={handleTranscript}
+          recorder={micRecorder}
+          storage={micStorage}
+        />
+      </div>
       {errorNote && (
-        <p role="status" aria-live="polite">
+        <p role="status" aria-live="polite" className="mt-3 text-sm text-slate-700">
           {errorNote}
         </p>
       )}
-      {(proxyError || note) && <p>{manualFallbackNote()}</p>}
+      {(proxyError || note) && <p className="mt-2 text-sm text-slate-600">{manualFallbackNote()}</p>}
       <ByoOffer error={proxyError ?? caughtError} onOpenSettings={onOpenSettings} />
       <AgentHandoff censusFetcher={censusFetcher} metaFetcher={metaFetcher} />
       {intent && (
@@ -370,10 +375,15 @@ export function AskPanel({
                   const said = onExecute?.(intent)
                   setExecutionNote(typeof said === 'string' ? said : 'Running this request.')
                 }}
+                className="btn-primary mt-3"
               >
                 Run this request
               </button>
-              {executionNote && <p role="status">{executionNote}</p>}
+              {executionNote && (
+                <p role="status" className="mt-2 text-sm text-slate-700">
+                  {executionNote}
+                </p>
+              )}
               <ExplainOnAsk
                 intent={intent}
                 figures={figures}

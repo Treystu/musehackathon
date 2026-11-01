@@ -517,10 +517,10 @@ export default function App() {
         <button
           type="button"
           onClick={() => setShowKeyPrompt(true)}
-          className="mt-4 w-full rounded-lg border border-amber-300 bg-amber-50 p-4 text-left text-sm hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-900"
+          className="panel panel-padded mt-4 w-full text-left text-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
         >
-          <span className="font-semibold text-amber-950">Load every ZIP code in the country — free.</span>
-          <span className="mt-1 block text-amber-900">
+          <span className="font-semibold text-slate-900">Load every ZIP code in the country — free.</span>
+          <span className="mt-1 block text-slate-700">
             The Census Bureau requires a free API key so they can track usage. It takes about a minute, and your
             key is stored only in this browser. We never see it and keep no record of your searches.
           </span>
@@ -579,6 +579,12 @@ export default function App() {
           <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70">
             <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-3 sm:px-6">
               <div className="flex min-w-0 items-center gap-3">
+                {/* The pin mark from the favicon, at header scale: the
+                    wordmark alone read as plain text in the screenshot
+                    audit (2026-11-01) - the app had a mark everywhere
+                    except the page itself. Decorative: the h1 names the
+                    product for assistive tech. */}
+                <img src="/favicon.svg" alt="" className="h-10 w-10 shrink-0" />
                 <div className="min-w-0">
                   <h1 className="text-[1.375rem] font-semibold tracking-tight text-slate-900">CivicScope</h1>
                   <p className="text-[0.8125rem] leading-snug text-slate-600">

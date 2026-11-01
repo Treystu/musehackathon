@@ -24,11 +24,15 @@ export function BriefingPanel({
   return (
     <section aria-label="Briefing pack">
       {onBrief ? (
-        <button type="button" onClick={() => onBrief()}>
+        <button type="button" onClick={() => onBrief()} className="btn-secondary">
           Brief this view
         </button>
       ) : null}
-      {briefing?.error ? <p role="status">{briefing.error}</p> : null}
+      {briefing?.error ? (
+        <p role="status" className="mt-2 text-sm text-slate-700">
+          {briefing.error}
+        </p>
+      ) : null}
       {briefing && !briefing.error ? (
         <ExplainBox
           title="Briefing pack"

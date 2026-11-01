@@ -116,7 +116,7 @@ export function KeySetupStatus(fetchers: KeyCheckFetchers) {
     return () => window.removeEventListener(CENSUS_KEY_EVENT, onKey)
   }, [])
   return (
-    <ul aria-label="Key setup status">
+    <ul aria-label="Key setup status" className="mt-3 space-y-1 text-sm text-slate-700">
       <li>
         Census API key:{' '}
         {checks.census === 'absent' && sharedActive

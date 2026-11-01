@@ -74,36 +74,46 @@ export function CensusKeySettings({
 
   return (
     <section aria-label="Census key settings">
-      <h3>Census API key</h3>
-      <p>
+      <h3 className="text-sm font-semibold text-slate-900">Census API key</h3>
+      <p className="mt-1 max-w-[68ch] text-sm leading-relaxed text-slate-700">
         A free key from the Census Bureau lets the app call the Census API
         directly. It stays in this browser. No key yet?{' '}
-        <a href={CENSUS_SIGNUP_URL} target="_blank" rel="noreferrer">
+        <a
+          href={CENSUS_SIGNUP_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-900"
+        >
           Request a Census API key
         </a>{' '}
         — it arrives by email; paste the whole message text if you like,
         the app picks the key out of it.
       </p>
-      <form onSubmit={save}>
-        <label htmlFor="census-key">Census key</label>
-        <input
-          id="census-key"
-          type="password"
-          autoComplete="off"
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-        />
-        <button type="submit" disabled={busy}>
+      <form onSubmit={save} className="mt-2 flex flex-wrap items-end gap-2">
+        <label htmlFor="census-key" className="min-w-0 flex-1 text-sm font-medium text-slate-900">
+          Census key
+          <input
+            id="census-key"
+            type="password"
+            autoComplete="off"
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            className="field mt-1 w-full"
+          />
+        </label>
+        <button type="submit" disabled={busy} className="btn-primary shrink-0">
           Save key
         </button>
-        <button type="button" onClick={clear}>
+        <button type="button" onClick={clear} className="btn-secondary shrink-0">
           Clear key
         </button>
       </form>
-      <p role="status" aria-live="polite">
+      <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">
         {CENSUS_STATUS_COPY[status]}
       </p>
-      <p role="note">{CENSUS_ATTRIBUTION}</p>
+      <p role="note" className="house-disclosure mt-2">
+        {CENSUS_ATTRIBUTION}
+      </p>
     </section>
   )
 }

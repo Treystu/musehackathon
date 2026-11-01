@@ -143,7 +143,7 @@ export function MicInput({
         <p id="ask-audio-note" role="note" className="house-audio-disclosure">
           {AUDIO_TRANSIT_DISCLOSURE}
         </p>
-        <p>{MIC_UNAVAILABLE_NOTE}</p>
+        <p className="mt-2 text-sm text-slate-700">{MIC_UNAVAILABLE_NOTE}</p>
       </section>
     )
   }
@@ -195,48 +195,57 @@ export function MicInput({
       <p id="ask-audio-note" role="note" className="house-audio-disclosure">
         {AUDIO_TRANSIT_DISCLOSURE}
       </p>
-      {phase === 'recording' ? (
-        <button type="button" onClick={() => void finish()}>
-          Stop recording
-        </button>
-      ) : (
-        <button
-          type="button"
-          aria-describedby="ask-audio-note"
-          disabled={phase === 'working'}
-          onClick={() => void begin()}
-        >
-          Speak a question
-        </button>
-      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {phase === 'recording' ? (
+          <button type="button" onClick={() => void finish()} className="btn-primary">
+            Stop recording
+          </button>
+        ) : (
+          <button
+            type="button"
+            aria-describedby="ask-audio-note"
+            disabled={phase === 'working'}
+            onClick={() => void begin()}
+            className="btn-secondary"
+          >
+            Speak a question
+          </button>
+        )}
+        {consented && phase === 'idle' && !asking && (
+          <button type="button" onClick={forget} className="btn-quiet">
+            Forget voice consent
+          </button>
+        )}
+      </div>
       {phase === 'recording' && (
-        <p role="status" aria-live="polite">
+        <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">
           Listening. Speak now, then choose Stop recording.
         </p>
       )}
       {phase === 'working' && (
-        <p role="status" aria-live="polite">
+        <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">
           Turning speech into text…
         </p>
       )}
       {asking && (
-        <div role="group" aria-label="Microphone consent">
-          <p>{MIC_CONSENT_COPY}</p>
-          <button type="button" onClick={allow}>
-            Allow microphone
-          </button>
-          <button type="button" onClick={() => setAsking(false)}>
-            Not now
-          </button>
+        <div
+          role="group"
+          aria-label="Microphone consent"
+          className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3"
+        >
+          <p className="text-sm text-slate-700">{MIC_CONSENT_COPY}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" onClick={allow} className="btn-primary">
+              Allow microphone
+            </button>
+            <button type="button" onClick={() => setAsking(false)} className="btn-secondary">
+              Not now
+            </button>
+          </div>
         </div>
       )}
-      {consented && phase === 'idle' && !asking && (
-        <button type="button" onClick={forget}>
-          Forget voice consent
-        </button>
-      )}
       {note && (
-        <p role="status" aria-live="polite">
+        <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">
           {note}
         </p>
       )}

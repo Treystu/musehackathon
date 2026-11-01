@@ -63,45 +63,61 @@ export function ClarificationPanel({
   }
 
   return (
-    <section aria-label="Clarify the request">
-      <p>Choose the place and measure before anything runs.</p>
+    <section aria-label="Clarify the request" className="mt-4">
+      <p className="text-sm text-slate-700">Choose the place and measure before anything runs.</p>
       {places.length > 0 ? (
-        <div>
-          <span>Places</span>
-          {places.map((place) => (
-            <button
-              key={place}
-              type="button"
-              aria-pressed={geographies.includes(place)}
-              onClick={() => togglePlace(place)}
-            >
-              {place}
-            </button>
-          ))}
+        <div className="mt-2">
+          <span className="text-sm font-medium text-slate-900">Places</span>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {places.map((place) => (
+              <button
+                key={place}
+                type="button"
+                aria-pressed={geographies.includes(place)}
+                onClick={() => togglePlace(place)}
+                className={
+                  geographies.includes(place)
+                    ? 'min-h-[44px] rounded-full border border-slate-900 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900'
+                    : 'min-h-[44px] rounded-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900'
+                }
+              >
+                {place}
+              </button>
+            ))}
+          </div>
         </div>
       ) : (
-        <p>No candidate places were supplied. Add a place above, then use the current choices.</p>
+        <p className="mt-2 text-sm text-slate-700">
+          No candidate places were supplied. Add a place above, then use the current choices.
+        </p>
       )}
       {metrics.length > 0 ? (
-        <div>
-          <span>Measures</span>
-          {metrics.map((metric) => (
-            <button
-              key={metric}
-              type="button"
-              aria-pressed={metricKeys.includes(metric)}
-              onClick={() => toggleMetric(metric)}
-            >
-              {metric}
-            </button>
-          ))}
+        <div className="mt-2">
+          <span className="text-sm font-medium text-slate-900">Measures</span>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {metrics.map((metric) => (
+              <button
+                key={metric}
+                type="button"
+                aria-pressed={metricKeys.includes(metric)}
+                onClick={() => toggleMetric(metric)}
+                className={
+                  metricKeys.includes(metric)
+                    ? 'min-h-[44px] rounded-full border border-slate-900 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900'
+                    : 'min-h-[44px] rounded-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900'
+                }
+              >
+                {metric}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
-      <button type="button" disabled={!canResolve} onClick={resolve}>
+      <button type="button" disabled={!canResolve} onClick={resolve} className="btn-primary mt-3">
         Use these choices
       </button>
       {error ? (
-        <p role="status" aria-live="polite">
+        <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">
           {error}
         </p>
       ) : null}

@@ -73,16 +73,16 @@ export function assertProseHasMoe(
 export function FigureCard({ figure }: { figure: FigureInput }) {
   const formatted = formatFigure(figure)
   return (
-    <figure aria-label={figure.key}>
-      <figcaption>{figure.key}</figcaption>
-      <p>
-        <strong>{formatted.headline}</strong>
+    <figure aria-label={figure.key} className="mt-2">
+      <figcaption className="figure-label">{figure.key}</figcaption>
+      <p className="mt-0.5">
+        <strong className="figure-value">{formatted.headline}</strong>
       </p>
-      <p>{formatted.provenance}</p>
+      <p className="text-sm text-slate-600">{formatted.provenance}</p>
       {figure.derivation ? (
-        <details>
-          <summary>How this figure was derived</summary>
-          <p>{figure.derivation}</p>
+        <details className="mt-1">
+          <summary className="disclosure-summary">How this figure was derived</summary>
+          <p className="text-sm text-slate-700">{figure.derivation}</p>
         </details>
       ) : null}
     </figure>

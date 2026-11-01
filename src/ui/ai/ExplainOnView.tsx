@@ -54,7 +54,7 @@ export function ExplainOnView({
     <section
       aria-label={`Explain this ${EXPLAIN_VIEW_LABELS[viewClass].toLowerCase()} view`}
     >
-      <button type="button" disabled={busy} onClick={run}>
+      <button type="button" disabled={busy} onClick={run} className="btn-secondary">
         Explain these figures
       </button>
       {explanation ? (

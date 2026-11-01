@@ -115,47 +115,36 @@ export function KeyPrompt({
   }
 
   return (
-    <section
-      className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm"
-      aria-labelledby="key-prompt-heading"
-    >
-      <h2 id="key-prompt-heading" className="font-semibold text-amber-950">
+    <section className="panel panel-padded text-sm" aria-labelledby="key-prompt-heading">
+      <h2 id="key-prompt-heading" className="font-semibold text-slate-900">
         Unlock the full housing and demographic dataset
       </h2>
-      <p className="mt-1 text-amber-900">
+      <p className="mt-1 text-slate-700">
         The Census Bureau requires every app to hold a free API key so they can track usage. It takes about a
         minute, and <strong>your key is stored only in this browser</strong> — it is never sent to us, and we
         keep no log of what you search for.
       </p>
 
       {getCensusKeySource() === 'shared' && (
-        <p className="mt-2 text-amber-900" role="status">
+        <p className="mt-2 text-slate-700" role="status">
           This site is currently running on the project&rsquo;s shared application key, so the full dataset is
           already available. Adding your own key is optional: it replaces the shared key for your visits and is
           stored only in this browser.
         </p>
       )}
 
-      <ol className="mt-3 list-decimal space-y-1 pl-5 text-amber-900">
+      <ol className="mt-3 list-decimal space-y-1 pl-5 text-slate-700">
         <li>Open the free Census key form in a new tab.</li>
         <li>Fill in three fields. You can leave the organisation as &ldquo;Individual&rdquo;.</li>
         <li>The key arrives by email. Paste it below.</li>
       </ol>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={openSignup}
-          className="rounded-md bg-amber-900 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-900 focus-visible:ring-offset-2"
-        >
+        <button type="button" onClick={openSignup} className="btn-primary">
           Get my free key
         </button>
         {onDismiss && !compact && (
-          <button
-            type="button"
-            onClick={onDismiss}
-            className="rounded-md px-3 py-2 text-sm text-amber-900 underline hover:text-amber-700"
-          >
+          <button type="button" onClick={onDismiss} className="btn-quiet px-2 py-2">
             Not now
           </button>
         )}
@@ -168,7 +157,7 @@ export function KeyPrompt({
           void submit()
         }}
       >
-        <label htmlFor="census-key" className="block font-medium text-amber-950">
+        <label htmlFor="census-key" className="block font-medium text-slate-900">
           Already have a key? Paste it here
         </label>
         <div className="mt-1 flex flex-wrap gap-2">
@@ -181,18 +170,18 @@ export function KeyPrompt({
             autoComplete="off"
             spellCheck={false}
             aria-describedby="key-status"
-            className="min-w-0 flex-1 rounded-md border border-amber-400 bg-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-900"
+            className="field"
             placeholder="e.g. 0123456789abcdef0123456789abcdef01234567"
           />
           <button
             type="submit"
             disabled={phase === 'checking' || value.trim() === ''}
-            className="rounded-md bg-amber-900 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-900 focus-visible:ring-offset-2"
+            className="btn-primary shrink-0"
           >
             {phase === 'checking' ? 'Checking…' : 'Save key'}
           </button>
         </div>
-        <p id="key-status" role="status" aria-live="polite" className="mt-2 min-h-5 text-amber-900">
+        <p id="key-status" role="status" aria-live="polite" className="mt-2 min-h-5 text-slate-700">
           {message}
           {phase === 'invalid' && attempts > 1 && (
             <span className="mt-1 block text-xs">

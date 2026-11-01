@@ -69,28 +69,31 @@ export function ByoSettings({
 
   return (
     <section aria-label="Personal key settings">
-      <h3>Personal key (optional)</h3>
-      <p>
+      <h3 className="text-sm font-semibold text-slate-900">Personal key (optional)</h3>
+      <p className="mt-1 max-w-[68ch] text-sm leading-relaxed text-slate-700">
         Shared mode needs no key. A personal key stays in this browser and is
         used only for your own calls.
       </p>
-      <form onSubmit={save}>
-        <label htmlFor="byo-key">Meta key</label>
-        <input
-          id="byo-key"
-          type="password"
-          autoComplete="off"
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-        />
-        <button type="submit" disabled={busy}>
+      <form onSubmit={save} className="mt-2 flex flex-wrap items-end gap-2">
+        <label htmlFor="byo-key" className="min-w-0 flex-1 text-sm font-medium text-slate-900">
+          Meta key
+          <input
+            id="byo-key"
+            type="password"
+            autoComplete="off"
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            className="field mt-1 w-full"
+          />
+        </label>
+        <button type="submit" disabled={busy} className="btn-primary shrink-0">
           Save key
         </button>
-        <button type="button" onClick={clear}>
+        <button type="button" onClick={clear} className="btn-secondary shrink-0">
           Clear key
         </button>
       </form>
-      <p role="status" aria-live="polite">
+      <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">
         {BYO_STATUS_COPY[status]}
       </p>
     </section>

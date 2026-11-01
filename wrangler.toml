@@ -16,10 +16,25 @@
 # - Compatibility date: the no-config deploys ran under wrangler's default
 #   for their deploy date; 2025-10-30 pins the runtime era the submission
 #   preview was verified under, instead of letting the default drift.
-# - METER Durable Object: carried verbatim from the Entire tree's
-#   wrangler.toml (binding name, class name, migration tag v1). One named
-#   instance ('judging-window-v1', in functions/api/muse/meter-do.ts) is
-#   the single Q1 aggregate counter store.
+# - METER Durable Object: binding name and class name carried from the
+#   Entire tree's wrangler.toml. One named instance ('judging-window-v1',
+#   in functions/api/muse/meter-do.ts) is the single Q1 aggregate counter
+#   store. Two Pages-specific corrections (deploy-fix, 2026-10-31):
+#   Pages config does not support "migrations" (validation aborts the
+#   deploy), so the block is gone — a Pages deployment registers the
+#   class from the worker bundle's export, no migration step exists;
+#   and Pages requires a Durable Object binding to name the Worker that
+#   defines the class ("script_name"), which for this project is its
+#   own Pages worker script (names only, from the project record).
+# - Local dev note (measured 2026-10-31): under `wrangler pages dev` a
+#   script_name binding is cross-script, so the binding shows
+#   [not connected] and meter calls fail closed (diagnostics 503
+#   breaker_open) until the defining script also runs locally — a
+#   second `wrangler dev` serving dist/_worker.js under the production
+#   script name, with the class registered by a binding in its own
+#   config. With that host up, pages dev shows [connected] and the
+#   meter hop answers. A single local process cannot show the durable
+#   path; that is a local-dev property, not a deployment property.
 
 name = "civicscope-muse-portal"
 pages_build_output_dir = "dist"
@@ -27,12 +42,18 @@ compatibility_date = "2025-10-30"
 
 [durable_objects]
 bindings = [
-  { name = "METER", class_name = "MeterDurableObject" }
+  { name = "METER", class_name = "MeterDurableObject", script_name = "pages-worker--22936400-production" }
 ]
 
-[[migrations]]
-tag = "v1"
-new_classes = ["MeterDurableObject"]
+# Preview deployments: a preview deploy targets the project's preview
+# worker script, whose name differs from production's only in the final
+# segment. Wrangler selects the [env.preview] section for non-production
+# branches, so the preview binding names the preview script and each
+# environment's meter store stays inside its own script.
+[env.preview.durable_objects]
+bindings = [
+  { name = "METER", class_name = "MeterDurableObject", script_name = "pages-worker--22936400-preview" }
+]
 
 # Environment values are set by the OWNER after project creation
 # (see deploy-sequence.md) — names only here, never values:

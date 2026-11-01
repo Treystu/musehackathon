@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node tools/gen-seo.mjs",
+    "build": "tsc -b && vite build && node tools/gen-seo.mjs && node tools/build-worker.mjs",
     "build:app": "tsc -b && vite build",
     "gen:map": "node tools/gen-map-data.mjs",
     "preview": "vite preview",

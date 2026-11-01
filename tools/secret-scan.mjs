@@ -27,7 +27,23 @@ const ALLOW_FILES = [
   /tests[\\/]ai[\\/]diagnostics-route\.test\.ts$/,
   /src[\\/]core[\\/]censusKey\.test\.ts$/,
   /src[\\/]core[\\/]census-key-resolution\.test\.ts$/,
-  /src[\\/]ui[\\/]KeyPrompt\.tsx$/,
+]
+/**
+ * String-scoped exemption for the one PRODUCTION file on the list:
+ * src/ui/KeyPrompt.tsx trips 'hex key 40' only on its input placeholder
+ * example (the sequential placeholder below, identical in the pre-union
+ * tree). Only that literal is stripped before scanning that file - the
+ * file itself stays fully scanned, so any other key-shaped string in
+ * it still trips the scan. (Narrowed 2026-10-31 at FU3 integration;
+ * the test files above keep the file-level precedent.)
+ */
+const ALLOW_STRINGS_IN_FILE = [
+  {
+    file: /src[\\/]ui[\\/]KeyPrompt\.tsx$/,
+    // Assembled from segments (repo fake-value convention) so this
+    // file's own source holds no 40-char hex run for the scan to trip on.
+    literals: ['0123456789abcdef' + '0123456789abcdef' + '01234567'],
+  },
 ]
 /** Pinned CivicScope baseline commit SHA in docs — a public git hash, not a secret. */
 const KNOWN_PUBLIC_SHAS = new Set(['3aa7e10dc59e764a8636aa273d4ff86714a3e782'])
@@ -46,7 +62,12 @@ let hits = 0
 for (const file of walk(ROOT)) {
   if (ALLOW_FILES.some((re) => re.test(file))) continue
   if (!/\.(ts|tsx|js|mjs|json|md)$/.test(file)) continue
-  const text = readFileSync(file, 'utf8')
+  let text = readFileSync(file, 'utf8')
+  for (const { file: fileRe, literals } of ALLOW_STRINGS_IN_FILE) {
+    if (fileRe.test(file)) {
+      for (const lit of literals) text = text.split(lit).join('')
+    }
+  }
   for (const { name, re } of PATTERNS) {
     const m = text.match(re)
     if (m && !KNOWN_PUBLIC_SHAS.has(m[0])) {

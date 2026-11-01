@@ -20,6 +20,7 @@
 import {
   defaultMeterConfig,
   type BreakerState,
+  type Meter,
   type MeterConfig,
   type MeterSnapshot,
 } from '../../../src/core/ai/meter'
@@ -168,6 +169,8 @@ export class MeterDurableObject {
           return json(200, {
             result: await this.meter.breakerState(asOptNumber(args[0])),
           })
+        case 'configSnapshot':
+          return json(200, { result: await this.meter.configSnapshot() })
         case 'operatorReset':
           await this.meter.operatorReset()
           return json(200, { result: null })
@@ -251,6 +254,10 @@ export class DurableMeterClient {
 
   breakerState(now?: number): Promise<BreakerState> {
     return this.call<BreakerState>('breakerState', now === undefined ? [] : [now])
+  }
+
+  configSnapshot(): Promise<ReturnType<Meter['configSnapshot']>> {
+    return this.call<ReturnType<Meter['configSnapshot']>>('configSnapshot', [])
   }
 }
 

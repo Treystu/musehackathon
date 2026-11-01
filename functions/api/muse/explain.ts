@@ -8,7 +8,8 @@
 import { MAX_EXPLAIN_VALUES, type ExplainRequest } from '../../../src/core/ai/provider'
 import { isKnownFigureKey } from '../../../src/core/ai/intent-schema'
 import { realValidator, type FigureForValidation } from '../../../src/core/ai/validator'
-import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
+import { preCallGate, mapMeterError, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
 const ALLOWED_PATHS = new Set(['/api/muse/explain'])
@@ -49,11 +50,11 @@ function parseValues(raw: unknown): ExplainRequest['values'] | null {
   return values
 }
 
-export async function handleExplain(
+async function handleExplainCore(
   req: { method: string; path: string; body: unknown; clientId: string },
   deps: ProxyDeps,
 ): Promise<ProxyReply> {
-  const gate = preCallGate(req, deps, ALLOWED_PATHS, req.path)
+  const gate = await preCallGate(req, deps, ALLOWED_PATHS, req.path)
   if (gate) return gate
 
   const body = req.body as Record<string, unknown>
@@ -70,9 +71,9 @@ export async function handleExplain(
     return err(400, 'shape_invalid', 'too many values')
   }
 
-  const reservation = deps.meter.reserve(req.clientId, EST_COST_MICRO, EST_TOKENS)
+  const reservation = await deps.meter.reserve(req.clientId, EST_COST_MICRO, EST_TOKENS)
   if (!reservation) {
-    deps.meter.recordError('budget_exhausted')
+    await deps.meter.recordError('budget_exhausted')
     return err(429, 'budget_exhausted')
   }
 
@@ -81,7 +82,7 @@ export async function handleExplain(
       { figureSetId: body.figureSetId, values },
       new AbortController().signal,
     )
-    deps.meter.settle(
+    await deps.meter.settle(
       reservation,
       req.clientId,
       ACTUAL_COST_MICRO,
@@ -90,7 +91,7 @@ export async function handleExplain(
     )
 
     if (typeof result.prose !== 'string') {
-      deps.meter.recordError('provider_down')
+      await deps.meter.recordError('provider_down')
       return err(502, 'provider_down', 'provider returned no prose')
     }
 
@@ -100,16 +101,35 @@ export async function handleExplain(
     )
     if (!verdict.pass) {
       // Local withhold diagnostic: count the failure class only.
-      deps.meter.recordError(verdict.failure)
+      await deps.meter.recordError(verdict.failure)
       return { status: 200, body: { withheld: true, failure: verdict.failure } }
     }
     return { status: 200, body: { prose: result.prose } }
   } catch (e) {
-    deps.meter.release(reservation)
-    deps.meter.recordFailure()
+    await deps.meter.release(reservation)
+    await deps.meter.recordFailure()
     const mapped = mapProviderError(e)
-    deps.meter.recordError(String(mapped.body.error))
+    await deps.meter.recordError(String(mapped.body.error))
     return mapped
+  }
+}
+
+/**
+ * Exported handler: the core above settles against deps.meter, which in
+ * the portal deployment is the Durable Object client. A meter that
+ * cannot be read or written fails closed here — 503 breaker_open via
+ * mapMeterError, and no unmetered provider call is made — instead of
+ * surfacing as an unhandled error.
+ */
+export async function handleExplain(
+  req: { method: string; path: string; body: unknown; clientId: string },
+  deps: ProxyDeps,
+): Promise<ProxyReply> {
+  try {
+    return await handleExplainCore(req, deps)
+  } catch (e) {
+    if (e instanceof MeterUnavailableError) return mapMeterError(e)
+    throw e
   }
 }
 

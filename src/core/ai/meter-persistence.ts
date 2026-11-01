@@ -350,6 +350,17 @@ export class PersistentMeter {
   }
 
   /**
+   * The diagnostics configuration view. Configuration is fixed at
+   * construction, so this reads no storage: it answers from cfg alone
+   * (via a throwaway Meter, keeping the reported shape identical to
+   * Meter.configSnapshot by construction) and cannot fail with
+   * MeterUnavailableError.
+   */
+  async configSnapshot(): Promise<ReturnType<Meter['configSnapshot']>> {
+    return new Meter(this.cfg).configSnapshot()
+  }
+
+  /**
    * Explicit operator reset: the ONLY path that overwrites an invalid
    * or unknown-version record. Starts from zero and records the event
    * in the error counts, per the fail-closed failure-mode design.

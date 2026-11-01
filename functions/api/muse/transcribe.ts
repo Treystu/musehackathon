@@ -12,7 +12,8 @@
  * routes in this tree use; the Entire tree's ./shared module carried
  * the same helper API.)
  */
-import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
+import { preCallGate, mapMeterError, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
 export type { ProxyDeps } from '../../../src/server/muse-proxy'
@@ -63,11 +64,11 @@ function decodeBase64(b64: string): Uint8Array | null {
   }
 }
 
-export async function handleTranscribe(
+async function handleTranscribeCore(
   req: { method: string; path: string; body: unknown; clientId: string },
   deps: ProxyDeps,
 ): Promise<ProxyReply> {
-  const gate = preCallGate(req, deps, ALLOWED_PATHS, req.path)
+  const gate = await preCallGate(req, deps, ALLOWED_PATHS, req.path)
   if (gate) return gate
   const body = req.body as Record<string, unknown>
 
@@ -96,9 +97,9 @@ export async function handleTranscribe(
   const estSeconds = Math.max(1, Math.ceil(bytes.byteLength / AUDIO_BYTES_PER_SECOND))
   const estCostMicro = estSeconds * COST_PER_SECOND_MICRO
   const estTokens = estSeconds * TOKENS_PER_SECOND
-  const reservation = deps.meter.reserve(req.clientId, estCostMicro, estTokens)
+  const reservation = await deps.meter.reserve(req.clientId, estCostMicro, estTokens)
   if (!reservation) {
-    deps.meter.recordError('budget_exhausted')
+    await deps.meter.recordError('budget_exhausted')
     return err(429, 'budget_exhausted')
   }
 
@@ -119,22 +120,41 @@ export async function handleTranscribe(
       result.confidence > 1 ||
       result.transcript.length > MAX_TRANSCRIPT_CHARS
     ) {
-      deps.meter.release(reservation)
-      deps.meter.recordError('provider_down')
+      await deps.meter.release(reservation)
+      await deps.meter.recordError('provider_down')
       return err(502, 'provider_down', 'provider returned an unusable transcription')
     }
     const tokensOut = Math.ceil(result.transcript.length / CHARS_PER_TOKEN)
-    deps.meter.settle(reservation, req.clientId, estCostMicro, estTokens, tokensOut)
+    await deps.meter.settle(reservation, req.clientId, estCostMicro, estTokens, tokensOut)
     return {
       status: 200,
       body: { transcript: result.transcript, confidence: result.confidence },
     }
   } catch (e) {
-    deps.meter.release(reservation)
-    deps.meter.recordFailure()
+    await deps.meter.release(reservation)
+    await deps.meter.recordFailure()
     const mapped = mapProviderError(e)
-    deps.meter.recordError(String(mapped.body.error))
+    await deps.meter.recordError(String(mapped.body.error))
     return mapped
+  }
+}
+
+/**
+ * Exported handler: the core above settles against deps.meter, which in
+ * the portal deployment is the Durable Object client. A meter that
+ * cannot be read or written fails closed here — 503 breaker_open via
+ * mapMeterError, and no unmetered provider call is made — instead of
+ * surfacing as an unhandled error.
+ */
+export async function handleTranscribe(
+  req: { method: string; path: string; body: unknown; clientId: string },
+  deps: ProxyDeps,
+): Promise<ProxyReply> {
+  try {
+    return await handleTranscribeCore(req, deps)
+  } catch (e) {
+    if (e instanceof MeterUnavailableError) return mapMeterError(e)
+    throw e
   }
 }
 

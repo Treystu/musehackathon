@@ -8,13 +8,16 @@
  * a query, a provider body, or a per-visitor value.
  *
  * The meter is the same instance the proxy routes settle against, so these
- * totals are the ones that govern shutoff and the breaker. In the portal
- * deployment that meter's state is backed by the Durable Object store
- * (binding METER, one named instance; src/core/ai/meter-persistence.ts over
- * functions/api/muse/meter-do.ts), so the export states
- * `meterPersistence: "durable"` — the persistence class the deployment
- * actually carries (union change, Panel B4 gap G1: the pre-union route
- * hard-coded "isolate" from the in-memory-only deployment).
+ * totals are the ones that govern shutoff and the breaker. Its persistence
+ * class is read from the deployment env (meterPersistenceFor): the portal
+ * binds the Durable Object store (binding METER, one named instance;
+ * src/core/ai/meter-persistence.ts over functions/api/muse/meter-do.ts)
+ * and reports `meterPersistence: "durable"`; a deployment without the
+ * binding settles against the in-isolate Meter and reports "isolate".
+ * The field states the class the deployment actually carries — the
+ * pre-union route hard-coded "isolate" from the in-memory-only
+ * deployment, and the union draft hard-coded "durable" before the
+ * handlers were wired to the client; both are replaced by the env read.
  *
  * Public by design: aggregate counters are the F7 operator surface and contain
  * nothing per-visitor. No CORS headers are served, and a foreign Origin is
@@ -28,7 +31,13 @@ import {
 import { MUSE_SPARK_MODEL } from '../../../src/core/ai/meta-client'
 import { PROXY_ERRORS } from '../../../src/core/ai/proxy-errors'
 import { VALIDATOR_FAILURES } from '../../../src/core/ai/validator'
-import { meterFor, type MuseEnv, type PagesContext } from '../../../src/server/muse-adapter'
+import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
+import {
+  meterFor,
+  meterPersistenceFor,
+  type MuseEnv,
+  type PagesContext,
+} from '../../../src/server/muse-adapter'
 
 function json(body: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -50,8 +59,22 @@ export async function handleDiagnostics(context: PagesContext<MuseEnv>): Promise
   const keyPresent = typeof env.MUSE_API_KEY === 'string' && env.MUSE_API_KEY.length > 0
   const model = env.MUSE_MODEL || MUSE_SPARK_MODEL
   const meter = meterFor(env)
-  const config = meter.configSnapshot()
-  const snapshot = meter.snapshot()
+
+  // The meter reads cross the Durable Object hop in the portal
+  // deployment. A meter that cannot be read fails closed on the same
+  // taxonomy as the proxy routes (503 breaker_open) rather than
+  // surfacing as an unhandled error or, worse, a fabricated total.
+  let config: Awaited<ReturnType<typeof meter.configSnapshot>>
+  let snapshot: Awaited<ReturnType<typeof meter.snapshot>>
+  let breaker: Awaited<ReturnType<typeof meter.breakerState>>
+  try {
+    config = await meter.configSnapshot()
+    snapshot = await meter.snapshot()
+    breaker = await meter.breakerState()
+  } catch (e) {
+    if (e instanceof MeterUnavailableError) return json({ error: 'breaker_open' }, 503)
+    throw e
+  }
 
   // Allowlist iteration, not passthrough: an error class recorded under any
   // other name is dropped rather than exported as an attacker-chosen string.
@@ -69,14 +92,14 @@ export async function handleDiagnostics(context: PagesContext<MuseEnv>): Promise
       sharedKeyPresent: keyPresent,
       modelIsDefault: model === MUSE_SPARK_MODEL,
       perClientCap: config.perClientCapConfigured ? 'configured' : 'unset',
-      meterPersistence: 'durable',
+      meterPersistence: meterPersistenceFor(env),
       budgetCapMicroUsd: config.budgetCapMicroUsd,
       spentMicroUsd: snapshot.spentMicroUsd,
       requests: snapshot.requests,
       tokensIn: snapshot.tokensIn,
       tokensOut: snapshot.tokensOut,
       budgetExhausted: snapshot.budgetExhausted,
-      breaker: meter.breakerState(),
+      breaker,
       errors,
       deployment: {
         pages: env.CF_PAGES === '1',

@@ -284,6 +284,47 @@ describe('search', () => {
     expect(index.search('s', 3).length).toBeLessThanOrEqual(3)
     expect(searchPlaces(index.places, 'new', 2)).toHaveLength(2)
   })
+
+  it('resolves a City, ST query inside the named state only', () => {
+    // The Ask model returns geographies in this form (the eval corpus's
+    // canonical geography), and display names never carry the state, so the
+    // suffixed form used to match nothing at all — every named-place intent
+    // failed at run time while ZIP-form intents worked.
+    const hits = index.search('austin, tx')
+    expect(hits.length).toBeGreaterThan(0)
+    expect(hits.every((h) => h.state === 'TX')).toBe(true)
+    const austin = hits.find((h) => h.displayName === 'Austin')!
+    expect(austin.zips).toContain('78701')
+  })
+
+  it('accepts a state suffix without the comma', () => {
+    const hits = index.search('Austin TX')
+    expect(hits.length).toBeGreaterThan(0)
+    expect(hits.every((h) => h.state === 'TX')).toBe(true)
+  })
+
+  it('does not let a suffixed query resolve into another state', () => {
+    const hits = index.search('austin, ar')
+    expect(hits.length).toBeGreaterThan(0)
+    expect(hits.every((h) => h.state === 'AR')).toBe(true)
+    expect(hits.some((h) => h.state === 'TX')).toBe(false)
+  })
+
+  it('resolves the demo comparison: Honolulu, HI and Hilo, HI', () => {
+    for (const query of ['honolulu, hi', 'hilo, hi']) {
+      const hits = index.search(query)
+      expect(hits.length).toBeGreaterThan(0)
+      expect(hits.every((h) => h.state === 'HI')).toBe(true)
+    }
+    const honolulu = index.search('honolulu, hi')
+    expect(honolulu.some((h) => h.zips.includes('96813'))).toBe(true)
+  })
+
+  it('leaves a suffix that is not a state code in the query', () => {
+    // "zz" is not a USPS code, so nothing is stripped and the whole string
+    // is matched as a name, which matches nothing.
+    expect(index.search('austin, zz')).toEqual([])
+  })
 })
 
 describe('reverse lookup', () => {

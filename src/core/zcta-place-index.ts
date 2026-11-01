@@ -228,6 +228,45 @@ function normalise(text: string): string {
 }
 
 /**
+ * The USPS codes a query suffix can name: the fifty states, the District of
+ * Columbia, and the territories the place file carries. A trailing token is
+ * treated as a state only when it is one of these — "Fort Worth" is a city,
+ * not a city plus a state, and a suffix that is not a code stays in the query.
+ */
+const US_STATE_CODES: ReadonlySet<string> = new Set([
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI', 'ID',
+  'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO',
+  'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA',
+  'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'PR',
+  'GU', 'VI', 'AS', 'MP',
+])
+
+/**
+ * Splits a trailing state designator off a query, when one is present:
+ * "Austin, TX" and "Austin TX" both become the city "austin" scoped to TX.
+ * The Ask model returns geographies in exactly this form — it is the eval
+ * corpus's canonical geography — and a person types the same into the search
+ * box, while display names never carry the state. A suffixed query could
+ * therefore never match anything, which silently broke every named-place Ask
+ * intent at run time (found live, 2026-11-01: the Honolulu/Hilo comparison
+ * parsed correctly and then resolved zero ZIP codes). A full state name
+ * ("Austin, Texas") is not split; the model's contracted form is the code.
+ */
+export function splitStateSuffix(query: string): { name: string; state: string | null } {
+  const match = /^(.+?)[,\s]+([a-z]{2})$/.exec(query)
+  if (match && US_STATE_CODES.has(match[2]!.toUpperCase())) {
+    return { name: match[1]!, state: match[2]!.toUpperCase() }
+  }
+  return { name: query, state: null }
+}
+
+/** The USPS code itself when the whole string is one ("CO"), else null. */
+export function asStateCode(text: string): string | null {
+  const code = text.trim().toUpperCase()
+  return US_STATE_CODES.has(code) ? code : null
+}
+
+/**
  * Ranks places against a query.
  *
  * The order is fixed and documented rather than clever: an exact name, then a
@@ -239,7 +278,9 @@ function normalise(text: string): string {
  * There is deliberately no tiebreak by size. "Austin, TX" and "Austin, AR" are
  * both correct answers to "austin", and ordering them by population would be this
  * app ranking places, which is the one thing it does not do. Both are offered,
- * each with the ZIP codes it covers, and the reader chooses.
+ * each with the ZIP codes it covers, and the reader chooses. A query that
+ * names its state ("austin, tx") has already chosen, so only that state's
+ * places are ranked at all.
  *
  * Matches are bucketed by rank and each bucket is capped, rather than truncating
  * the whole scan part-way through. An earlier version stopped after 400 scored
@@ -251,13 +292,18 @@ export function searchPlaces(
   query: string,
   limit = 8,
 ): PlaceSuggestion[] {
-  const q = normalise(query)
-  if (!q) return []
+  const raw = normalise(query)
+  if (!raw) return []
+  // A state suffix scopes the search to that state before ranking, so a
+  // suffixed query can only resolve inside the state it names — never to a
+  // same-named place elsewhere that happens to sort first.
+  const { name: q, state } = splitStateSuffix(raw)
 
   const buckets: PlaceSuggestion[][] = [[], [], [], []]
   const CAP = 64
 
   for (const place of places) {
+    if (state !== null && place.state !== state) continue
     const name = place.displayName.toLowerCase()
     let rank: number
     if (name === q) rank = 0

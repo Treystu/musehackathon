@@ -4,7 +4,7 @@ import { createLiveProvider, META_API_BASE, MUSE_SPARK_MODEL } from '../core/ai/
 import { getMetaKey } from '../core/ai/meta-key'
 import { DISPLAYABLE_KEYS } from '../core/ai/intent-schema'
 import type { ValidatedIntent } from '../core/ai/provider'
-import { loadPlaceIndex, type PlaceIndex, type PlaceSuggestion } from '../core/zcta-place-index'
+import { asStateCode, loadPlaceIndex, splitStateSuffix, type PlaceIndex, type PlaceSuggestion } from '../core/zcta-place-index'
 import { FairHousingNotice } from './FairHousingNotice'
 import { GuidedTour, TourNotice, shouldShowTour } from './GuidedTour'
 import { applyFigureFilters, FIGURE_FILTERS } from '../core/figure-filters'
@@ -22,6 +22,7 @@ import { FundingSection } from './Funding'
 import { StateFilter } from './StateFilter'
 import { MapView } from './MapView'
 import { sortSweepRows } from '../core/sweep-sorting'
+import { stateName } from '../core/sweep/chunk'
 import { AskPanel } from './ai/AskPanel'
 import { BriefingView } from './ai/BriefingView'
 import {
@@ -226,13 +227,20 @@ export default function App() {
    * nowhere to go, so Run rendered disabled. Each mode now lands on the surface
    * that already exists rather than on a new one.
    *
-   * Two rules are enforced here rather than trusted to the model:
+   * Three rules are enforced here rather than trusted to the model:
    * - A geography is resolved through the same place index the search box uses;
    *   an unresolvable name contributes nothing instead of a guessed ZIP.
    * - A sweep bound the screening surface cannot express is dropped. The surface
    *   offers a maximum for rent, burden and home value and a minimum for
    *   households; turning "rent over $500" into "rent under $500" would answer
    *   the opposite question, which is worse than not running it.
+   * - A sweep geography scopes the screen. The bound alone used to apply to
+   *   the whole loaded table, so "places in Colorado under $1,500" listed
+   *   Kentucky — the same bound over a different set than the question named
+   *   (found live, 2026-11-01). The named places resolve to their states and
+   *   the screen re-scopes through the manual state filter's own machinery;
+   *   a geography whose state cannot be pinned down is disclosed in the run
+   *   note rather than silently dropped.
    */
   const executeIntent = useCallback(
     (intent: ValidatedIntent): string => {
@@ -268,13 +276,54 @@ export default function App() {
         if (Object.keys(next).length === 0) {
           return 'This bound cannot be set on the screening table, which offers a maximum for rent, rent burden and home value and a minimum for households. Nothing was changed.'
         }
+
+        // Scope the screen to the states the request names, through the same
+        // scope the manual state filter drives. A state's scope is its ZIP
+        // prefixes, derived from the place index and limited to the prefixes
+        // the manual filter itself offers, so an Ask scope can never be one
+        // the reader could not have set by hand.
+        const namedStates: string[] = []
+        for (const geography of intent.geographies) {
+          const state = asStateCode(geography) ?? splitStateSuffix(geography.trim().toLowerCase()).state
+          if (state && !namedStates.includes(state)) namedStates.push(state)
+        }
+        const scopePrefixes: string[] = []
+        if (placeIndex && namedStates.length > 0) {
+          const offered = new Set(q.stateChoices.map((option) => option.code))
+          const found = new Set<string>()
+          for (const place of placeIndex.places) {
+            if (!namedStates.includes(place.state)) continue
+            for (const zip of place.zips) found.add(zip.slice(0, 2))
+          }
+          for (const prefix of found) if (offered.has(prefix)) scopePrefixes.push(prefix)
+          scopePrefixes.sort()
+        }
+        let scopeNote = ''
+        if (intent.geographies.length > 0 && scopePrefixes.length === 0) {
+          scopeNote = ' The place in this request could not be matched to a state, so the bound was applied to the whole loaded table.'
+        } else if (scopePrefixes.length > 0) {
+          const label =
+            namedStates.length === 1 ? stateName(scopePrefixes[0]!) : `${namedStates.length} states`
+          const alreadyScoped =
+            scopePrefixes.length === q.stateScope.length &&
+            scopePrefixes.every((prefix) => q.stateScope.includes(prefix))
+          if (alreadyScoped) {
+            scopeNote = ` The screen is showing ${label}.`
+          } else {
+            void q.applyScope(scopePrefixes)
+            scopeNote = ` The screen is narrowing to ${label} (it scopes by state${namedStates.some((s) => !intent.geographies.some((g) => asStateCode(g) === s)) ? ', not by city' : ''}); its figures fill in below.`
+          }
+        }
+
         setFigureFilters(next)
         const preset = PRESETS.find((item) => item.sort === intent.metricKeys[0])
         if (preset) setSorting({ presetId: preset.id, sortKey: preset.sort, ascending: true })
         setView('explore')
-        return dropped === 0
-          ? 'Applied the bound to the screening table below.'
-          : `Applied ${Object.keys(next).length} bound(s); ${dropped} could not be expressed by the table and was not applied.`
+        return (
+          (dropped === 0
+            ? 'Applied the bound to the screening table below.'
+            : `Applied ${Object.keys(next).length} bound(s); ${dropped} could not be expressed by the table and was not applied.`) + scopeNote
+        )
       }
 
       const seed = zips[0]
@@ -286,7 +335,7 @@ export default function App() {
       setView('explore')
       return `Opened similar-ZIP search from ${seed}.`
     },
-    [addZip, placeIndex],
+    [addZip, placeIndex, q.applyScope, q.stateScope, q.stateChoices],
   )
 
   /*
@@ -730,7 +779,7 @@ export default function App() {
               </section>
             )}
 
-            {q.sweepStatus === 'idle' && q.censusKeyPresent && (
+            {(q.sweepStatus === 'idle' || q.stateScope.length > 0) && q.censusKeyPresent && (
               <div className="mt-4">
                 <StateFilter
                   options={q.stateChoices}

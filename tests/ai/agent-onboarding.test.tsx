@@ -4,7 +4,6 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { CENSUS_KEY_EVENT } from '../../src/core/censusKey'
 import { META_KEY_EVENT } from '../../src/core/ai/meta-key'
 import {
-  AGENT_ONBOARDING_RUN_STATUS,
   WORKFLOW_VERSION,
   grantApproval,
   observeAppKeyEvent,
@@ -18,7 +17,8 @@ import {
   type WorkflowGraph,
   type WorkflowRun,
 } from '../../src/core/ai/agent-workflow'
-import { AgentHandoff } from '../../src/ui/ai/agent-handoff'
+import { AgentHandoff } from '../../src/ui/ai/AgentHandoff'
+import { INDEPENDENT_RUN_STATUS } from '../../src/core/ai/onboarding'
 
 const GRAPH_PATH = new URL('../../docs/agent-onboarding/workflow.v1.json', import.meta.url)
 const graph = JSON.parse(readFileSync(GRAPH_PATH, 'utf8')) as WorkflowGraph
@@ -175,13 +175,13 @@ describe('abort test — unexpected screen before any key entry', () => {
 
 describe('AgentHandoff entry point', () => {
   it('renders the entry point, both success event names, and a non-passing run status', () => {
-    const html = renderToStaticMarkup(<AgentHandoff onOpenManual={() => undefined} />)
+    const html = renderToStaticMarkup(<AgentHandoff />)
     expect(html).toContain('Set up with your agent')
     expect(html).toContain('civicscope:census-key')
     expect(html).toContain('civicscope:meta-key-changed')
     expect(html).toContain('Continue manually instead')
-    expect(html).toContain(`Independent verification run of the agent workflow: ${AGENT_ONBOARDING_RUN_STATUS}`)
-    expect(AGENT_ONBOARDING_RUN_STATUS).toBe('PENDING')
+    expect(html).toContain(`Independent-run check: ${INDEPENDENT_RUN_STATUS}`)
+    expect(INDEPENDENT_RUN_STATUS).toBe('AWAITING')
     expect(html).not.toContain('PASSED')
   })
 

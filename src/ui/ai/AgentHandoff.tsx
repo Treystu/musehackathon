@@ -50,16 +50,13 @@ export function AgentHandoff({
     <section aria-labelledby="agent-handoff-heading">
       <h2 id="agent-handoff-heading">Set up with your agent</h2>
       <p>
-        An AI agent can walk you through getting the keys this app can use,
-        following a written, versioned workflow (version {WORKFLOW_VERSION},
-        kept in the project repository). The agent never receives your key
-        and cannot confirm setup by reporting one — the app confirms success
-        itself, here, when its own re-validation event fires for a key (
-        {CENSUS_KEY_EVENT} for the Census key, {META_KEY_EVENT} for a
-        personal key) and its re-check passes. If anything on screen
-        does not match what the workflow expects, the agent must stop before
-        any key is entered and hand you back to the manual steps at the same
-        point.
+        An AI agent can set this up with you, following the versioned
+        workflow in the project repository (version {WORKFLOW_VERSION}). The
+        agent never receives your key: the app confirms success itself, here,
+        when its re-validation event fires ({CENSUS_KEY_EVENT} for the Census
+        key, {META_KEY_EVENT} for a personal key) and its re-check passes. If
+        a screen does not match the workflow, the agent stops before any key
+        entry and hands you back to the manual steps below.
       </p>
 
       <KeySetupStatus censusFetcher={censusFetcher} metaFetcher={metaFetcher} />

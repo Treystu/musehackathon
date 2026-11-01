@@ -11,6 +11,7 @@ import {
   validateMetaKey,
   type MetaKeyFetcher,
 } from '../../core/ai/meta-key'
+import { getCensusKeySource } from '../../core/censusKey'
 
 /**
  * Event-driven key confirmation.
@@ -99,10 +100,28 @@ export function useKeyConfirmations(fetchers: KeyCheckFetchers = {}): KeyConfirm
 /** The confirmation list: per-key state from the re-validation loop. */
 export function KeySetupStatus(fetchers: KeyCheckFetchers) {
   const checks = useKeyConfirmations(fetchers)
+  // The confirmation above tracks the visitor's own key only — by
+  // design, the shared deployment key never fires the key event and
+  // must not be mistaken for a completed setup. But rendering a bare
+  // "not set up yet" while the app is visibly loading the full dataset
+  // on the shared key reads as a contradiction (seen live 2026-11-01),
+  // so the absent state names the shared key as context when one is
+  // carrying the app. It still does not claim setup success.
+  const [sharedActive, setSharedActive] = useState<boolean>(
+    () => getCensusKeySource() === 'shared',
+  )
+  useEffect(() => {
+    const onKey = () => setSharedActive(getCensusKeySource() === 'shared')
+    window.addEventListener(CENSUS_KEY_EVENT, onKey)
+    return () => window.removeEventListener(CENSUS_KEY_EVENT, onKey)
+  }, [])
   return (
     <ul aria-label="Key setup status">
       <li>
-        Census API key: {KEY_CHECK_COPY[checks.census]}
+        Census API key:{' '}
+        {checks.census === 'absent' && sharedActive
+          ? "not set up in this browser — the app is running on the project's shared application key, so the full dataset loads without one. Adding your own key is optional."
+          : KEY_CHECK_COPY[checks.census]}
       </li>
       <li>
         Personal key (optional): {KEY_CHECK_COPY[checks.meta]}

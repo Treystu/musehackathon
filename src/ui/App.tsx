@@ -30,7 +30,6 @@ import {
   figureInputsFromMetrics,
 } from './ai/figure-input'
 import type { FigureResolver } from '../core/ai/briefing'
-import { AgentHandoff } from './ai/agent-handoff'
 
 type View = 'explore' | 'map' | 'methodology'
 
@@ -534,12 +533,11 @@ export default function App() {
         </div>
       )}
 
-      {/* F5a entry point: agent-guided setup, confirmed only by the app's
-          own key events. Its manual button lands on the same KeyPrompt the
-          workflow's abort path hands off to. */}
-      <div className="mt-4">
-        <AgentHandoff onOpenManual={() => setShowKeyPrompt(true)} />
-      </div>
+      {/* The agent-setup surface lives in the Ask panel (the single
+          canonical AgentHandoff). A second mount here was removed in the
+          2026-11-01 simplification: two instances of the same panel on
+          one page read as a contradiction, and the explore view's job
+          is the data. */}
     </>
   )
 

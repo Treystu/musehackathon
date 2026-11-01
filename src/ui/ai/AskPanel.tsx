@@ -38,6 +38,21 @@ export const EMPTY_TRANSCRIPT_NOTE =
 export const RAW_TEXT_DISCLOSURE =
   'Free-text Ask sends the words you type to the wording helper; this path cannot be answered from structured choices alone. The figures still come from CivicScope.'
 
+/**
+ * Starting points offered under the welcome. Each one is a shape the
+ * intent path is verified to run — a two-place rent comparison (the
+ * first was exercised live against the portal), a single-place lookup,
+ * a bounded sweep, and a rent-burden comparison — over the displayable
+ * housing figures. No example promises a verdict about a place; each
+ * asks for figures the reader then weighs themselves.
+ */
+export const EXAMPLE_PROMPTS: readonly string[] = [
+  'Compare rent in Honolulu and Hilo',
+  'What is the median home value in Austin, Texas?',
+  'Show me places in Colorado where rent is under $1,500 a month',
+  'Compare rent burden in Portland and Seattle',
+]
+
 export const PROXY_ERROR_COPY: Record<ProxyError, string> = {
   not_allowlisted:
     'That request is not on the approved list, so it cannot be sent. You can still search, filter, and read every figure by hand below.',
@@ -270,6 +285,35 @@ export function AskPanel({
   return (
     <section aria-labelledby="ask-heading">
       <h2 id="ask-heading">Ask CivicScope</h2>
+      {/* The welcome leads, per the owner's direction (2026-11-01): the
+          AI greets and offers starting points instead of presenting a
+          blank form. The wording invites the factors a person actually
+          weighs; the examples stay inside the intent envelope the app
+          can run (compare / lookup / filtered sweep over the housing
+          figures), so a tapped example succeeds rather than stranding
+          the reader in a clarification. */}
+      <p className="mt-1 text-sm text-slate-700">
+        Tell me what area you are in, or what area you want to check out, and
+        what matters to you — schools, cost of living, rent, home prices — and
+        I can research the areas in the federal data and show you the figures
+        for your options.
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2" aria-label="Example questions">
+        {EXAMPLE_PROMPTS.map((example) => (
+          <button
+            key={example}
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setText(example)
+              void runQuery(example)
+            }}
+            className="min-h-[44px] rounded-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+          >
+            {example}
+          </button>
+        ))}
+      </div>
       <form onSubmit={submit}>
         <label htmlFor="ask-input">Ask in plain language</label>
         <p id="ask-raw-text-note" role="note" className="house-raw-text-disclosure">

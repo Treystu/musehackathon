@@ -38,6 +38,7 @@
  * expectations at all.
  */
 import { useEffect, useId, useRef, useState } from 'react'
+import { getCensusKeySource } from '../core/censusKey'
 
 /**
  * Bumped when the wording changes in a way that matters.
@@ -228,6 +229,19 @@ export function GuidedTour({ open, onDismiss }: { open: boolean; onDismiss: () =
  */
 export function TourNotice({ onOpen, onDismiss }: { onOpen: () => void; onDismiss: () => void }) {
   const headingId = useId()
+  // The load sentence follows the key the app is actually running on:
+  // on a deployment with a shared application key (the hackathon
+  // portal) the full load works without a personal key, and saying it
+  // "needs a free Census API key" next to a fully loaded table reads
+  // as a contradiction (seen live 2026-11-01). With no key at all the
+  // original sentence is the accurate one.
+  const keySource = getCensusKeySource()
+  const loadSentence =
+    keySource === 'shared'
+      ? "Loading all 33,791 at once works here too: this site runs on the project's shared Census key, and adding your own key is optional."
+      : keySource === 'personal'
+        ? 'Loading all 33,791 at once works with the Census key stored in this browser.'
+        : 'Loading all 33,791 at once needs a free Census API key, which stays in this browser.'
   return (
     <aside
       aria-labelledby={headingId}
@@ -237,8 +251,7 @@ export function TourNotice({ onOpen, onDismiss }: { onOpen: () => void; onDismis
         New here
       </h2>
       <p className="mt-1">
-        Looking up a single ZIP code works straight away, with no account. Loading all 33,791 at once needs a
-        free Census API key, which stays in this browser.
+        Looking up a single ZIP code works straight away, with no account. {loadSentence}
       </p>
       <div className="mt-2 flex flex-wrap gap-2">
         <button

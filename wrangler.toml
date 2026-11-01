@@ -23,9 +23,15 @@
 #   Pages config does not support "migrations" (validation aborts the
 #   deploy), so the block is gone — a Pages deployment registers the
 #   class from the worker bundle's export, no migration step exists;
-#   and Pages requires a Durable Object binding to name the Worker that
-#   defines the class ("script_name"), which for this project is its
-#   own Pages worker script (names only, from the project record).
+#   The class lives in the standalone civicscope-meter worker;
+#   this binding names it cross-script. (History: binding the class
+#   same-project - by class_name only, or with script_name pointing
+#   at the project's own script - failed in every client, native
+#   wrangler included, verified 2026-11-01: Pages validation demands
+#   a script_name, and the publish backend cannot resolve the
+#   project's own script in the cross-script registry.) The
+#   [env.preview] binding below still names the preview script -
+#   untested; the production deploy does not read that section.
 # - Local dev note (measured 2026-10-31): under `wrangler pages dev` a
 #   script_name binding is cross-script, so the binding shows
 #   [not connected] and meter calls fail closed (diagnostics 503
@@ -42,7 +48,7 @@ compatibility_date = "2025-10-30"
 
 [durable_objects]
 bindings = [
-  { name = "METER", class_name = "MeterDurableObject", script_name = "pages-worker--22936400-production" }
+  { name = "METER", class_name = "MeterDurableObject", script_name = "civicscope-meter" }
 ]
 
 # Preview deployments: a preview deploy targets the project's preview

@@ -6,19 +6,28 @@
  * on purpose. Three properties are deliberate:
  *   - The shared key is read from the environment and never leaves the server.
  *   - Nothing is stored or logged: no body, no query text, no IP, no cookie.
- *     The meter is an in-memory aggregate counter, so a cold isolate starts at
- *     zero rather than inheriting anything durable.
+ *     The meter holds aggregate counters only. Where the deployment binds
+ *     the METER Durable Object (the portal), that one named instance is
+ *     the counter store, so totals survive isolate restarts; where no
+ *     binding is configured, the meter is in-isolate memory and a cold
+ *     isolate starts at zero. Diagnostics reports which of the two a
+ *     deployment carries (meterPersistenceFor) — the claim is read from
+ *     the same env that chooses the meter, never hard-coded.
  *   - Per-client cap support is wired to configuration but has no default
  *     value. The cap is S10, the owner's number; inventing one here would
  *     silently decide it.
  */
+import {
+  getMeterClient,
+  type DurableObjectNamespaceLike,
+} from '../../functions/api/muse/meter-do'
 import { Meter, defaultMeterConfig } from '../core/ai/meter'
 import {
   createMetaDirectProvider,
   META_API_BASE,
   MUSE_SPARK_MODEL,
 } from '../core/ai/meta-client'
-import type { ProxyDeps, ProxyReply } from './muse-proxy'
+import type { MeterContract, ProxyDeps, ProxyReply } from './muse-proxy'
 
 export interface MuseEnv {
   /** Server-side Meta Model API key. Absent means the proxy cannot serve. */
@@ -30,6 +39,12 @@ export interface MuseEnv {
   MUSE_BUDGET_CAP_MICRO_USD?: string
   /** S10 owner value. Unset means no per-client cap is applied. */
   MUSE_PER_CLIENT_CAP_MICRO_USD?: string
+  /**
+   * Meter Durable Object binding (wrangler.toml, portal deployment).
+   * Present means the meter is the durable DO-backed client; absent
+   * means the in-isolate Meter.
+   */
+  METER?: DurableObjectNamespaceLike
   /** Pages platform metadata, read by the diagnostics surface. Public values. */
   CF_PAGES?: string
   CF_PAGES_BRANCH?: string
@@ -45,7 +60,7 @@ export interface PagesContext<E> {
   waitUntil(promise: Promise<unknown>): void
 }
 
-let sharedMeter: Meter | null = null
+let sharedMeter: MeterContract | null = null
 
 function parsePositiveInt(raw: string | undefined): number | undefined {
   if (!raw) return undefined
@@ -54,12 +69,19 @@ function parsePositiveInt(raw: string | undefined): number | undefined {
 }
 
 /**
- * The meter is shared by every route in the isolate on purpose: the aggregate
- * shutoff is a property of the deployment, not of one route. Diagnostics reads
- * the same instance rather than keeping a second set of totals.
+ * The meter is shared by every route in the deployment on purpose: the
+ * aggregate shutoff is a property of the deployment, not of one route.
+ * Diagnostics reads the same instance rather than keeping a second set
+ * of totals. With the METER binding the shared instance is the Durable
+ * Object client (one named instance, 'judging-window-v1'); without it,
+ * the in-isolate Meter configured from env as before.
  */
-export function meterFor(env: MuseEnv): Meter {
+export function meterFor(env: MuseEnv): MeterContract {
   if (sharedMeter) return sharedMeter
+  if (env.METER) {
+    sharedMeter = getMeterClient(env.METER)
+    return sharedMeter
+  }
   const base = defaultMeterConfig()
   const perClient = parsePositiveInt(env.MUSE_PER_CLIENT_CAP_MICRO_USD)
   sharedMeter = new Meter({
@@ -68,6 +90,14 @@ export function meterFor(env: MuseEnv): Meter {
     ...(perClient === undefined ? {} : { perClientCapMicroUsd: perClient }),
   })
   return sharedMeter
+}
+
+/**
+ * The persistence class the diagnostics surface reports for this env:
+ * 'durable' exactly when meterFor would hand out the DO-backed client.
+ */
+export function meterPersistenceFor(env: MuseEnv): 'durable' | 'isolate' {
+  return env.METER ? 'durable' : 'isolate'
 }
 
 /** Test seam: the singleton is per-process, so route tests that change config

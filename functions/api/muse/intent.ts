@@ -8,7 +8,8 @@
  * server-side only and is never sent to the browser.
  */
 import { validateIntent } from '../../../src/core/ai/intent-schema'
-import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
+import { preCallGate, mapMeterError, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute, type MuseEnv, type PagesContext } from '../../../src/server/muse-adapter'
 
 export type { ProxyDeps } from '../../../src/server/muse-proxy'
@@ -18,20 +19,20 @@ const MAX_QUERY_CHARS = 500
 const EST_TOKENS = 512
 const EST_COST_MICRO = 1000
 
-export async function handleIntent(
+async function handleIntentCore(
   req: { method: string; path: string; body: unknown; clientId: string },
   deps: ProxyDeps,
 ): Promise<ProxyReply> {
-  const gate = preCallGate(req, deps, ALLOWED_PATHS, req.path)
+  const gate = await preCallGate(req, deps, ALLOWED_PATHS, req.path)
   if (gate) return gate
   const body = req.body as Record<string, unknown>
   const slots = (body.slots ?? {}) as Record<string, unknown>
   if (typeof body.queryText === 'string' && body.queryText.length > MAX_QUERY_CHARS) {
     return err(400, 'shape_invalid', 'queryText exceeds ceiling')
   }
-  const reservation = deps.meter.reserve(req.clientId, EST_COST_MICRO, EST_TOKENS)
+  const reservation = await deps.meter.reserve(req.clientId, EST_COST_MICRO, EST_TOKENS)
   if (!reservation) {
-    deps.meter.recordError('budget_exhausted')
+    await deps.meter.recordError('budget_exhausted')
     return err(429, 'budget_exhausted')
   }
   try {
@@ -48,18 +49,37 @@ export async function handleIntent(
     )
     const check = validateIntent(result.intent)
     if (!check.ok) {
-      deps.meter.release(reservation)
-      deps.meter.recordError(check.error)
+      await deps.meter.release(reservation)
+      await deps.meter.recordError(check.error)
       return { status: 422, body: { error: check.error, detail: check.detail } }
     }
-    deps.meter.settle(reservation, req.clientId, EST_COST_MICRO, 128, 64)
+    await deps.meter.settle(reservation, req.clientId, EST_COST_MICRO, 128, 64)
     return { status: 200, body: { intent: check.intent } }
   } catch (e) {
-    deps.meter.release(reservation)
-    deps.meter.recordFailure()
+    await deps.meter.release(reservation)
+    await deps.meter.recordFailure()
     const mapped = mapProviderError(e)
-    deps.meter.recordError(String(mapped.body.error))
+    await deps.meter.recordError(String(mapped.body.error))
     return mapped
+  }
+}
+
+/**
+ * Exported handler: the core above settles against deps.meter, which in
+ * the portal deployment is the Durable Object client. A meter that
+ * cannot be read or written fails closed here — 503 breaker_open via
+ * mapMeterError, and no unmetered provider call is made — instead of
+ * surfacing as an unhandled error.
+ */
+export async function handleIntent(
+  req: { method: string; path: string; body: unknown; clientId: string },
+  deps: ProxyDeps,
+): Promise<ProxyReply> {
+  try {
+    return await handleIntentCore(req, deps)
+  } catch (e) {
+    if (e instanceof MeterUnavailableError) return mapMeterError(e)
+    throw e
   }
 }
 

@@ -1,12 +1,44 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { handleDiagnostics } from '../../functions/api/muse/diagnostics'
 import {
+  MeterDurableObject,
+  type DurableObjectNamespaceLike,
+  type DurableObjectStateLike,
+  type DurableObjectStorageLike,
+} from '../../functions/api/muse/meter-do'
+import {
   meterFor,
   resetMeterForTests,
   type MuseEnv,
 } from '../../src/server/muse-adapter'
 
 const SECRET = 'sk-live-SENTINEL-route-never-echoed'
+
+/**
+ * A METER binding backed by one in-memory Durable Object (the
+ * meter-do.test.ts harness pattern), so a test env can carry the
+ * portal's durable meter without a Workers runtime.
+ */
+function fakeMeterNamespace(): DurableObjectNamespaceLike {
+  const map = new Map<string, unknown>()
+  const storage: DurableObjectStorageLike = {
+    async get<T>(key: string): Promise<T | undefined> {
+      const v = map.get(key)
+      return v === undefined ? undefined : (structuredClone(v) as T)
+    },
+    async put(key: string, value: unknown): Promise<void> {
+      map.set(key, structuredClone(value))
+    },
+  }
+  const state: DurableObjectStateLike = { storage }
+  const doObj = new MeterDurableObject(state)
+  return {
+    idFromName: (name: string) => name,
+    get: () => ({
+      fetch: (input, init) => doObj.fetch(new Request(input, init)),
+    }),
+  }
+}
 
 function context(
   env: MuseEnv,
@@ -30,7 +62,11 @@ describe('GET /api/muse/diagnostics', () => {
   })
 
   it('reports a configured key as a boolean and never echoes the key', async () => {
-    const response = await handleDiagnostics(context({ MUSE_API_KEY: SECRET }))
+    // The portal env: key set + METER binding present, so the durable
+    // persistence report is earned by the binding, not hard-coded.
+    const response = await handleDiagnostics(
+      context({ MUSE_API_KEY: SECRET, METER: fakeMeterNamespace() }),
+    )
     const text = await response.text()
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe('no-store')
@@ -49,6 +85,8 @@ describe('GET /api/muse/diagnostics', () => {
     const body = await response.json()
     expect(body.sharedKeyPresent).toBe(false)
     expect(body.modelIsDefault).toBe(true)
+    // No METER binding in this env: the in-isolate meter is the truth.
+    expect(body.meterPersistence).toBe('isolate')
   })
 
   it('reports whether a per-client cap is configured without publishing its value', async () => {

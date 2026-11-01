@@ -36,7 +36,11 @@ import { join } from 'node:path'
 const TIGER_ZCTA =
   'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/2/query'
 
-const SITE = process.env.SITE_ORIGIN ?? 'https://civicscope.pages.dev'
+// This repository's deployment is the hackathon portal, so its own
+// origin is the default the generated sitemap, per-ZIP canonicals, and
+// robots.txt advertise. SITE_ORIGIN still overrides it (the CivicScope
+// tool's tree keeps its own default for its production deployment).
+const SITE = process.env.SITE_ORIGIN ?? 'https://civicscope-muse-portal.pages.dev'
 /**
  * Output location matters more than it looks.
  *

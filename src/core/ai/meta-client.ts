@@ -238,7 +238,7 @@ export function createMetaDirectProvider(options: MetaDirectOptions): MuseProvid
   const doFetch: FetchLike = options.fetchImpl ?? ((...args) => fetch(...args))
   const endpoint = `${options.baseUrl.replace(/\/$/, '')}/chat/completions`
 
-  async function complete(body: Record<string, unknown>, signal: AbortSignal) {
+  async function completeOnce(body: Record<string, unknown>, signal: AbortSignal) {
     const key = options.getApiKey()
     if (!key) throw new ProviderCallError('bad_key')
     let res: Response
@@ -261,6 +261,33 @@ export function createMetaDirectProvider(options: MetaDirectOptions): MuseProvid
     const parsed = await res.json().catch(() => null)
     if (!res.ok) throw new ProviderCallError(mapMetaFailure(res.status, parsed))
     return parsed
+  }
+
+  /**
+   * One completion, with exactly one retry on the two failure classes the
+   * upstream was measured flapping on (2026-11-01, live against the portal):
+   * the same key and the same request alternated between clean parses and
+   * 401-class rejections in minute-scale windows, depending on the client
+   * network — and each rejection also counted against the meter's circuit
+   * breaker, stretching a bad window into a longer outage. A single retry
+   * turns a per-attempt failure into a per-pair failure; a genuinely bad
+   * key still surfaces after the second attempt, unchanged. Rate limits and
+   * billing failures are never retried: waiting is the correct response to
+   * the first, and the second will not heal inside one user action.
+   */
+  async function complete(body: Record<string, unknown>, signal: AbortSignal) {
+    try {
+      return await completeOnce(body, signal)
+    } catch (e) {
+      if (
+        e instanceof ProviderCallError &&
+        (e.code === 'bad_key' || e.code === 'provider_down') &&
+        !signal.aborted
+      ) {
+        return completeOnce(body, signal)
+      }
+      throw e
+    }
   }
 
   return {

@@ -246,9 +246,18 @@ export default function App() {
     (intent: ValidatedIntent): string => {
       const zips: string[] = []
       for (const geography of intent.geographies) {
-        const resolved = /^\d{5}$/.test(geography.trim())
-          ? geography.trim()
-          : placeIndex?.search(geography, 1)[0]?.zips[0]
+        if (/^\d{5}$/.test(geography.trim())) {
+          if (!zips.includes(geography.trim())) zips.push(geography.trim())
+          continue
+        }
+        // Prefer a city record over a county fallback. A county record's
+        // first ZIP can be a small area with no published figure for the
+        // measure asked about — the Honolulu comparison opened on exactly
+        // one (96759, no rent figure) while the city's own ZIPs carry the
+        // figures (found live, 2026-11-01). The search box still offers
+        // every record; choosing between them is execution's job.
+        const hits = placeIndex?.search(geography, 8) ?? []
+        const resolved = (hits.find((hit) => hit.isCity) ?? hits[0])?.zips[0]
         if (resolved && !zips.includes(resolved)) zips.push(resolved)
       }
 

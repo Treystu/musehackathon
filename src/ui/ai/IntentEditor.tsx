@@ -39,8 +39,8 @@ export function IntentEditor({
   onChange: (next: ValidatedIntent) => void
 }) {
   const [place, setPlace] = useState('')
-  const [metric, setMetric] = useState<string>(DISPLAYABLE_KEYS[0])
-  const [filterMetric, setFilterMetric] = useState<string>(FILTER_LEGAL_KEYS[0])
+  const [metric, setMetric] = useState<string>(DISPLAYABLE_KEYS[0] as string)
+  const [filterMetric, setFilterMetric] = useState<string>(FILTER_LEGAL_KEYS[0] as string)
   const [filterOp, setFilterOp] = useState<IntentFilter['op']>('gt')
   const [filterValue, setFilterValue] = useState('0')
   const [error, setError] = useState('')

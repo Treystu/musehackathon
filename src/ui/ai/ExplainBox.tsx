@@ -2,6 +2,11 @@ import { DISCLOSURE_TEXT } from '../../core/ai/validator'
 
 export type ExplainState = 'withheld' | 'empty' | 'ready'
 
+export interface ExplanationState {
+  prose?: string | null
+  withheld?: boolean
+}
+
 export function explainState(
   prose: string | null | undefined,
   withheld?: boolean,

@@ -1,7 +1,48 @@
-# House (Ask) workbench headers. The Permissions-Policy below carries
-# the Item 12 mic decision: microphone=(self) ships in the same change
-# as the mic implementation, never earlier; camera stays closed. The
-# full CSP for the product surface is owned by the pad security test
-# at port time (see docs/civicscope-audit.md) and is not duplicated here.
 /*
-  Permissions-Policy: microphone=(self), camera=()
+ * Cloudflare Pages headers.
+ *
+ * The Content-Security-Policy is generated from the actual set of origins the
+ * app contacts, verified against the plugin registry. A strict allowlist is
+ * the right posture here for a specific reason beyond ordinary hardening: the
+ * whole product claim is that we serve no ads, run no analytics, and do not
+ * profile users. A CSP that enumerates every destination the browser may talk
+ * to makes that claim mechanically verifiable rather than a promise, because
+ * an unexpected third-party script has nowhere to send data.
+ *
+ * 'unsafe-inline' for style-src is required by the Tailwind build output.
+ * script-src has NO unsafe-inline and NO unsafe-eval, which is the part that
+ * actually matters.
+ */
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(self), camera=(), payment=(), usb=(), interest-cohort=()
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://tigerweb.geo.census.gov https://api.census.gov https://data.cdc.gov https://nces.ed.gov https://educationdata.urban.org https://photon.komoot.io https://data.ny.gov https://data.cityofnewyork.us https://geodata.epa.gov https://api.meta.ai; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/*.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/*.css
+  Cache-Control: public, max-age=31536000, immutable
+
+/*
+ * The map's baked assets. These are regenerated only by `npm run gen:map`, and
+ * the generator prints a new manifest when the contents change, so a year-long
+ * cache is safe: a stale map would mean a stale census of ZIP positions, and the
+ * live contract test fails if TIGERweb stops serving the same layer.
+ *
+ * Without this header each visit re-downloads 420 KB of geometry that has not
+ * changed, which is the map equivalent of spending a request on a cache hit.
+/map/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/z/*
+  Cache-Control: public, max-age=86400

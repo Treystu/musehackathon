@@ -1,38 +1,40 @@
 /**
- * POST /api/muse/briefing — same-origin proxy route (House).
- * Shape validation, closed allowlist, meter reservation/settlement,
- * breaker, hard shutoff — the same discipline as intent/explain.
- * Pack composition runs before the provider call: every figure in
- * the set is re-verified against its source data
- * (src/core/ai/briefing.ts), and a figure that fails verification
- * fails the request loudly — no prose is generated from an
- * unverified set. The model's prose is validator-gated before it
- * leaves this function; a failed verdict returns a withholding flag,
- * never the failed prose. Counts only; no bodies are stored (Q1).
+ * POST /api/muse/briefing — same-origin proxy route (F6, plan 6.5.5).
+ * Same discipline as the explain route: shape validation, closed
+ * allowlist, meter reservation/settlement, breaker, hard shutoff. The
+ * figures in the body were re-verified against their SourceRefs by the
+ * client-side pack generator before this call; the model's prose is
+ * validator-gated here before it leaves, and a failed verdict returns
+ * a withholding flag, never the failed prose. Counts only; no bodies
+ * are stored (Q1).
  */
-import { composeBriefingRequest, type BriefingFigure } from '../../../src/core/ai/briefing'
+import {
+  MAX_BRIEFING_VALUES,
+  type BriefingRequest,
+} from '../../../src/core/ai/provider'
+import { verifyFigureSet } from '../../../src/core/ai/briefing'
 import { isKnownFigureKey } from '../../../src/core/ai/intent-schema'
-import { realValidator } from '../../../src/core/ai/validator'
-import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from './shared'
+import { realValidator, type FigureForValidation } from '../../../src/core/ai/validator'
+import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { museRoute } from '../../../src/server/muse-adapter'
 
 const ALLOWED_PATHS = new Set(['/api/muse/briefing'])
-const MAX_VALUES = 24
 const MAX_ID_CHARS = 128
-const EST_COST_MICRO = 1600
-const EST_TOKENS = 1024
-const ACTUAL_COST_MICRO = 1600
-const ACTUAL_TOKENS_IN = 256
-const ACTUAL_TOKENS_OUT = 384
+const EST_COST_MICRO = 1200
+const EST_TOKENS = 768
+const ACTUAL_COST_MICRO = 1200
+const ACTUAL_TOKENS_IN = 192
+const ACTUAL_TOKENS_OUT = 192
 
-const VALUE_FIELDS = new Set(['key', 'value', 'marginOfError', 'vintage'])
+const VALUE_FIELDS = new Set(['key', 'value', 'marginOfError'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function parseValues(raw: unknown): BriefingFigure[] | null {
+function parseValues(raw: unknown): BriefingRequest['values'] | null {
   if (!Array.isArray(raw)) return null
-  const values: BriefingFigure[] = []
+  const values: BriefingRequest['values'] = []
   for (const item of raw) {
     if (!isRecord(item)) return null
     if (Object.keys(item).some((key) => !VALUE_FIELDS.has(key))) return null
@@ -45,12 +47,10 @@ function parseValues(raw: unknown): BriefingFigure[] | null {
     ) {
       return null
     }
-    if (item.vintage !== undefined && typeof item.vintage !== 'string') return null
     values.push({
       key: item.key,
       value: item.value,
       marginOfError: item.marginOfError,
-      vintage: item.vintage,
     })
   }
   return values
@@ -73,20 +73,22 @@ export async function handleBriefing(
   }
   const values = parseValues(body.values)
   if (!values) return err(400, 'shape_invalid', 'briefing needs values[]')
-  if (values.length > MAX_VALUES) {
+  if (values.length > MAX_BRIEFING_VALUES) {
     return err(400, 'shape_invalid', 'too many values')
   }
 
-  // Pack composition: re-verify every figure against its source data
-  // before any meter reservation or provider call. A failed figure
-  // fails the request loudly and names the figure.
-  const composed = composeBriefingRequest(body.figureSetId, values)
-  if (!composed.ok) {
+  // Union hand-merge (Panel B1): the Entire route's pre-call gate.
+  // Re-verify every figure against the registry before any meter
+  // reservation or provider call; a failed figure fails the request
+  // loudly and names the figure. (The CivicScope route previously
+  // relied on the client-side pack generator's re-verification alone.)
+  const verification = verifyFigureSet(values)
+  if (!verification.ok) {
     return {
       status: 422,
       body: {
         error: 'shape_invalid',
-        detail: `figure failed source verification: ${composed.key} — ${composed.detail}`,
+        detail: `figure failed source verification: ${verification.key} — ${verification.detail}`,
       },
     }
   }
@@ -99,7 +101,7 @@ export async function handleBriefing(
 
   try {
     const result = await deps.provider.briefing(
-      composed.request,
+      { figureSetId: body.figureSetId, values },
       new AbortController().signal,
     )
     deps.meter.settle(
@@ -115,7 +117,10 @@ export async function handleBriefing(
       return err(502, 'provider_down', 'provider returned no prose')
     }
 
-    const verdict = realValidator.validate(result.prose, composed.figures)
+    const verdict = realValidator.validate(
+      result.prose,
+      values as FigureForValidation[],
+    )
     if (!verdict.pass) {
       // Local withhold diagnostic: count the failure class only.
       deps.meter.recordError(verdict.failure)
@@ -130,3 +135,6 @@ export async function handleBriefing(
     return mapped
   }
 }
+
+/** Pages Function entry point. The handler above stays framework-free. */
+export const onRequestPost = museRoute(handleBriefing)

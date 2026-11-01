@@ -1,0 +1,12 @@
+{
+  "generatedFrom": "US Census Bureau TIGERweb (tigerWMS_Current)",
+  "licence": "Public domain, US Census Bureau",
+  "zctaCentroids": 33791,
+  "stateOutlines": 56,
+  "centroidBytes": 168996,
+  "statesBytes": 256717,
+  "placeMappingZctas": 33791,
+  "placeMappingCities": 28808,
+  "placeMappingCounties": 4983,
+  "placeMappingBytes": 713412
+}

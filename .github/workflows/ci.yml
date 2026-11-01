@@ -1,0 +1,108 @@
+name: ci
+
+on:
+  push:
+    branches: [main, contest/house-port]
+  pull_request:
+    branches: [main, contest/house-port]
+
+# Least privilege: this workflow only needs to read the repo and open a status
+# check. It holds no secrets and never deploys.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Hermetic: no network, no credentials. The live-contract suite is a
+      # separate job because it depends on third-party availability.
+      - name: Typecheck, build, unit and security tests
+        run: npm run verify
+
+  live-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # The data-integrity suite proves no Census missing-value sentinel can
+      # reach a user. It needs a real key, without which those tests would skip
+      # and the guarantee would be unverified.
+      CENSUS_KEY: ${{ secrets.CENSUS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # One test in this suite drives the real application in a real browser so
+      # that every figure it shows can be compared against the Census Bureau
+      # cell by cell. A semantic review cannot catch a wrong number; this can.
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      # Asserts the *shape* of every upstream response. These run without a
+      # Census key, so they verify the keyless sources and the error-handling
+      # contract rather than the country-wide data payload.
+      - name: Live API contract tests
+        env:
+          # The browser-driven comparison needs a served app and a key.
+          E2E_BASE_URL: http://127.0.0.1:4173
+        run: npm run build:app && (npx vite preview --port 4173 --strictPort --host 127.0.0.1 &) && sleep 6 && npx vitest run --config vitest.live.config.ts
+
+  completion-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # The gate verifies the deployed site. Supplied here rather than defaulted
+      # in the script, so moving the project between accounts or domains does not
+      # silently change what CI measures.
+      GATE_SITE: ${{ vars.GATE_SITE || 'https://civicscope.pages.dev' }}
+      # The accessibility audit needs a served build. The gate starts one, so the
+      # browser suite has something to load.
+      SKIP_E2E: '0'
+      # On a push to main, production must be serving the build this gate just
+      # made. Set only there: a pull request is legitimately not deployed, and
+      # deploys are a manual step (`npm run deploy`), so the post-merge run
+      # reads as stale until one has run — which is the notification that the
+      # site is behind, the failure mode found live on 2026-10-07 when
+      # production was ten merged PRs out of date and the gate still passed.
+      GATE_EXPECT_DEPLOYED: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      # The deterministic completion gate plus the axe-core accessibility audit.
+      # The Jev semantic layer is skipped unless a key is present, so this job
+      # never depends on a credentialed service being reachable.
+      - name: Completion gate
+        run: npm run gate

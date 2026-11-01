@@ -1,0 +1,10 @@
+/*
+ * Cloudflare Pages redirects.
+ *
+ * The app is a single-page application with no router, so unmatched paths serve
+ * the shell rather than returning 404. The statically generated per-ZIP pages
+ * under /z/<zip>/ exist on disk and are served directly by Pages before this
+ * rule applies, so the SPA fallback only catches genuine app routes.
+ */
+
+/*    /index.html   200

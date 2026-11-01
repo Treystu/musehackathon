@@ -1,2 +1,27 @@
 node_modules/
 dist/
+*.tsbuildinfo
+
+# Local environment. Never commit a credential.
+.env
+.env.local
+.env.*.local
+/.scmorc
+
+# Agent skills are installed tooling, not project source. This one carries no
+# scripts, but agent directories should not be committed by default.
+.agents/
+.claude/
+.opencode/
+
+# Generated gate artefacts. gate-report.json is a per-run output and
+# .gate-request.txt is a local convenience copy of the request under review.
+gate-report.json
+.gate-request.txt
+
+# completion-gate scratch output (cf. .gate-request.txt)
+g3.txt
+
+# The exhaustive data audit writes its report here. The report is evidence about a
+# run rather than source, and it is large enough to be noise in a diff.
+audit/

@@ -8,7 +8,7 @@ import {
 import type { MuseProvider } from '../../core/ai/provider'
 import { hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import { ExplainBox } from './ExplainBox'
-import type { ExplanationState } from './ExplainOnAsk'
+import type { ExplanationState } from './ExplainBox'
 import { FigureCard, type FigureInput } from './FigureCard'
 
 /**

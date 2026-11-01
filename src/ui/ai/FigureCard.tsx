@@ -2,6 +2,9 @@ export interface FigureInput {
   key: string
   value: number | null
   marginOfError?: number
+  suppressed?: boolean
+  /** Local matching hints; these are not included in an ExplainRequest. */
+  geographies?: readonly string[]
   source: string
   publisher: string
   dataset: string

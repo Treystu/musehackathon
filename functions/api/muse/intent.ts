@@ -3,14 +3,15 @@
  * Shape validation, closed allowlist, token ceilings, meter
  * reservation/settlement, breaker, hard shutoff at cap. Counts only;
  * no bodies, query text, IPs, or keys are stored (Q1).
- * Framework-free handler so hermetic tests call it directly; the Pages
- * Function wrapper at port time is a thin adapter. The shared key lives
+ * Framework-free handler so hermetic tests call it directly; the onRequestPost
+ * export at the bottom is the thin HTTP adapter. The shared key lives
  * server-side only and is never sent to the browser.
  */
 import { validateIntent } from '../../../src/core/ai/intent-schema'
-import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from './shared'
+import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { museRoute, type MuseEnv, type PagesContext } from '../../../src/server/muse-adapter'
 
-export type { ProxyDeps } from './shared'
+export type { ProxyDeps } from '../../../src/server/muse-proxy'
 
 const ALLOWED_PATHS = new Set(['/api/muse/intent'])
 const MAX_QUERY_CHARS = 500
@@ -61,3 +62,7 @@ export async function handleIntent(
     return mapped
   }
 }
+
+/** Pages Function entry point. The handler above stays framework-free. */
+export const onRequestPost = museRoute(handleIntent)
+export type { MuseEnv, PagesContext }

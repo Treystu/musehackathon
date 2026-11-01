@@ -1,11 +1,29 @@
-# Port-time deployment config for the House workbench (Pages).
-# Only the meter Durable Object is declared here; the rest of the
-# Pages project config is owned by the port target. The worker entry
-# re-exports MeterDurableObject from functions/api/muse/meter-do.ts
-# so the binding below can attach. One named instance
-# ('judging-window-v1') is the single Q1 aggregate counter store.
+# Portal wrangler config — the Muse Hackathon portal (Option B).
+#
+# ADOPTED by Panel B1 as `wrangler.toml` at the ROOT of the union tree
+# (~/workspace/musehackathon-union, branch sandbox/portal-union), from
+# Panel B2's candidate (portal-b-2026-10-31/b2/wrangler.portal.toml),
+# verbatim except this header. It REPLACES the workbench-era wrangler.toml
+# inherited from the Entire tree, whose header said the rest of the Pages
+# config "is owned by the port target" — this file is that port target config.
+#
+# Provenance of each setting:
+# - Build output `dist`: the CivicScope app's Vite build (`npm run build` =
+#   tsc -b && vite build && tools/gen-seo.mjs) writes dist/. The existing
+#   civicscope production + preview were deployed with NO wrangler.toml at
+#   all, using `wrangler pages deploy dist --project-name civicscope`
+#   (package.json scripts + docs/submission-path-deploy.md, 2026-10-30).
+# - Compatibility date: the no-config deploys ran under wrangler's default
+#   for their deploy date; 2025-10-30 pins the runtime era the submission
+#   preview was verified under, instead of letting the default drift.
+# - METER Durable Object: carried verbatim from the Entire tree's
+#   wrangler.toml (binding name, class name, migration tag v1). One named
+#   instance ('judging-window-v1', in functions/api/muse/meter-do.ts) is
+#   the single Q1 aggregate counter store.
 
-name = "musehackathon-house"
+name = "civicscope-muse-portal"
+pages_build_output_dir = "dist"
+compatibility_date = "2025-10-30"
 
 [durable_objects]
 bindings = [
@@ -15,3 +33,16 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_classes = ["MeterDurableObject"]
+
+# Environment values are set by the OWNER after project creation
+# (see deploy-sequence.md) — names only here, never values:
+# - MUSE_API_KEY   : server-side secret (`wrangler pages secret put`).
+# - CENSUS_APP_KEY : project environment variable, injected at build/serve
+#                    time per docs/shared-app-key.md (the judges' shared
+#                    application key slot; client-visible by design).
+# - MUSE_MODEL     : OPTIONAL plain variable. Leave unset to run the
+#                    default model; diagnostics report modelIsDefault true
+#                    either way. Set only to pin it explicitly.
+#
+# [vars]
+# MUSE_MODEL = "muse-spark-1.3"

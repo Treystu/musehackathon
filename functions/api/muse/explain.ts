@@ -5,13 +5,13 @@
  * leaves this function; a failed verdict returns a withholding flag, never
  * the failed prose. Counts only; no bodies are stored (Q1).
  */
-import type { ExplainRequest } from '../../../src/core/ai/provider'
+import { MAX_EXPLAIN_VALUES, type ExplainRequest } from '../../../src/core/ai/provider'
 import { isKnownFigureKey } from '../../../src/core/ai/intent-schema'
 import { realValidator, type FigureForValidation } from '../../../src/core/ai/validator'
-import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from './shared'
+import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { museRoute } from '../../../src/server/muse-adapter'
 
 const ALLOWED_PATHS = new Set(['/api/muse/explain'])
-const MAX_VALUES = 24
 const MAX_ID_CHARS = 128
 const EST_COST_MICRO = 800
 const EST_TOKENS = 512
@@ -66,7 +66,7 @@ export async function handleExplain(
   }
   const values = parseValues(body.values)
   if (!values) return err(400, 'shape_invalid', 'explain needs values[]')
-  if (values.length > MAX_VALUES) {
+  if (values.length > MAX_EXPLAIN_VALUES) {
     return err(400, 'shape_invalid', 'too many values')
   }
 
@@ -112,3 +112,6 @@ export async function handleExplain(
     return mapped
   }
 }
+
+/** Pages Function entry point. The handler above stays framework-free. */
+export const onRequestPost = museRoute(handleExplain)

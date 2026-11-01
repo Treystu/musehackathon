@@ -5,11 +5,17 @@
  * the same proxy discipline as intent/explain. Counts only: the audio
  * and the transcript pass through to the provider / caller and are
  * never stored (Q1). Framework-free handler so hermetic tests call it
- * directly; the Pages Function wrapper at port time is a thin adapter.
+ * directly; the onRequestPost export at the bottom is the thin HTTP
+ * adapter. (Union hand-merge, Panel B1: this handler is the Entire
+ * tree's Item 12 implementation, re-homed onto the CivicScope proxy
+ * framework — src/server/muse-proxy + muse-adapter — that the other
+ * routes in this tree use; the Entire tree's ./shared module carried
+ * the same helper API.)
  */
-import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from './shared'
+import { preCallGate, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { museRoute } from '../../../src/server/muse-adapter'
 
-export type { ProxyDeps } from './shared'
+export type { ProxyDeps } from '../../../src/server/muse-proxy'
 
 const ALLOWED_PATHS = new Set(['/api/muse/transcribe'])
 
@@ -131,3 +137,6 @@ export async function handleTranscribe(
     return mapped
   }
 }
+
+/** Pages Function entry point. The handler above stays framework-free. */
+export const onRequestPost = museRoute(handleTranscribe)

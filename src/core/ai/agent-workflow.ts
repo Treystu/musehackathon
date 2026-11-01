@@ -1,6 +1,6 @@
 /**
- * Agent-onboarding workflow — the executable semantics of
- * docs/agent-onboarding/workflow.v1.json.
+ * F5a agent-onboarding workflow — the executable semantics of
+ * docs/agent-onboarding/workflow.v1.json (plan §6.2.5, §6.5.4).
  *
  * Two properties are structural, not promised:
  *
@@ -11,14 +11,14 @@
  *    key). An agent saying "the key is X" or "the key works" moves nothing.
  *
  * 2. An unexpected screen aborts the run before any key entry and hands
- *    off to the manual path (the setup wizard) at the equivalent step,
- *    with key state reported by presence only. Key material cannot appear
- *    in a run state, because a run state never holds any.
+ *    off to the manual path (F5b) at the equivalent step, with key state
+ *    reported by presence only. Key material cannot appear in a run state,
+ *    because a run state never holds any.
  *
  * The graph itself lives in the versioned JSON artefact; this module is
  * its validator and interpreter, and the tests pin the two together.
  */
-import { CENSUS_KEY_EVENT } from './census-key'
+import { CENSUS_KEY_EVENT } from '../censusKey'
 import { META_KEY_EVENT } from './meta-key'
 
 export type WorkflowPathId = 'census' | 'meta'
@@ -51,7 +51,7 @@ export interface WorkflowStep {
    */
   completion: 'checkpoint' | 'app-event'
   successEvent?: string
-  /** The manual-wizard step an abort at this step hands off to. */
+  /** The F5b manual-wizard step an abort at this step hands off to. */
   manualEquivalent: string
   onFailure: WorkflowFailureBranch[]
   next: string | null
@@ -86,15 +86,22 @@ export const PATH_SUCCESS_EVENT: Record<WorkflowPathId, string> = {
   meta: META_KEY_EVENT,
 }
 
+/**
+ * Status of the independent clean-account run (§6.2.5). No recorded run
+ * means not done; this constant is the only place the UI reads it from,
+ * and it stays PENDING until a non-author's run is recorded in
+ * docs/agent-onboarding/run-record.md.
+ */
+export const AGENT_ONBOARDING_RUN_STATUS = 'PENDING' as const
+
 const BUILTIN_GOTOS: ReadonlySet<string> = new Set(['abort-to-manual', 'report-and-stop', 'wait'])
 
 /**
  * Structural validation of a parsed workflow graph. Returns a list of
- * problems; an empty list means the graph satisfies the workflow
- * semantics: both key paths present, every step checkpointed, approval
- * points named, every step reachable, an abort branch at every step
- * where a screen can surprise, and key-entry steps gated on the app's
- * own event.
+ * problems; an empty list means the graph satisfies the §6.5.4 semantics:
+ * both key paths present, every step checkpointed, approval points named,
+ * every step reachable, an abort branch at every step where a screen can
+ * surprise, and key-entry steps gated on the app's own event.
  */
 export function validateWorkflowGraph(graph: WorkflowGraph): string[] {
   const problems: string[] = []
@@ -208,7 +215,7 @@ export type RunStatus =
   | 'stopped'
 
 export interface ManualHandoff {
-  /** The manual-wizard step the user continues at — the equivalent of the abort step. */
+  /** The F5b step the user continues at — the equivalent of the abort step. */
   manualEquivalent: string
   /** Key presence at the moment of handoff. Presence only, by construction. */
   keyPresence: KeyPresenceProbe

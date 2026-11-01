@@ -1,5 +1,6 @@
-import { ExplainBox } from './ExplainBox'
-import type { ExplanationState } from './ExplainOnAsk'
+import type { MuseProvider } from '../../core/ai/provider'
+import { ExplainAction } from './ExplainAction'
+import { ExplainBox, type ExplanationState } from './ExplainBox'
 import { FigureCard, type FigureInput } from './FigureCard'
 
 /**
@@ -10,14 +11,26 @@ export function ViewFigure({
   figure,
   explanation,
   explanationTitle = 'Explanation',
+  provider,
+  figureSetId = 'view-figure',
 }: {
   figure: FigureInput
   explanation?: ExplanationState
   explanationTitle?: string
+  provider?: MuseProvider
+  figureSetId?: string
 }) {
   return (
     <section aria-label={`Figure ${figure.key}`}>
       <FigureCard figure={figure} />
+      {provider ? (
+        <ExplainAction
+          title="this figure"
+          figureSetId={figureSetId}
+          figures={[figure]}
+          provider={provider}
+        />
+      ) : null}
       {explanation ? (
         <ExplainBox
           title={explanationTitle}

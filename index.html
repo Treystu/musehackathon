@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CivicScope — free, auditable US housing and neighbourhood data</title>
+    <meta
+      name="description"
+      content="Free housing, school, and neighbourhood data for the United States, fetched directly from the Census Bureau, NCES, and CDC in your browser. Every figure shows its source, table, and margin of error. No ads, no tracking, no accounts."
+    />
+    <meta name="color-scheme" content="light" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <link rel="canonical" href="https://civicscope.example/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="CivicScope — free, auditable US housing data" />
+    <meta
+      property="og:description"
+      content="Housing, school, and neighbourhood data for the US with published sources and margins of error. Free forever, no ads."
+    />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "CivicScope",
+        "applicationCategory": "GovernmentApplication",
+        "operatingSystem": "Any",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "description": "Free housing, school, and neighbourhood data for the United States, with published sources and margins of error."
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <p style="max-width: 40rem; margin: 2rem auto; padding: 0 1rem; font-family: system-ui, sans-serif">
+        CivicScope fetches public data directly in your browser, so it needs JavaScript enabled. If you cannot
+        enable it, the underlying data is all public: the Census Bureau
+        (<a href="https://api.census.gov/data.html">api.census.gov</a>), NCES
+        (<a href="https://nces.ed.gov/ccd/">nces.ed.gov/ccd</a>), and CDC PLACES
+        (<a href="https://www.cdc.gov/places/">cdc.gov/places</a>).
+      </p>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

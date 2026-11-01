@@ -64,3 +64,11 @@ export function mapProviderError(e: unknown): ProxyReply {
   if (code === 'bad_key') return err(401, 'bad_key')
   return err(502, 'provider_down')
 }
+
+/**
+ * Union addition (Panel B1, per Panel B2's deploy precondition): the
+ * Pages worker bundle must re-export the meter Durable Object class so
+ * the METER binding in wrangler.toml can attach. meter-do.ts was
+ * written expecting this re-export at port time.
+ */
+export { MeterDurableObject } from './meter-do'

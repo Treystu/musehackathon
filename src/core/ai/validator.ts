@@ -26,11 +26,14 @@ export interface FigureForValidation {
   suppressed?: boolean
 }
 
-export type ValidatorFailure =
-  | 'intent_gate'
-  | 'invented_numeral'
-  | 'precision'
-  | 'banned_construction'
+export const VALIDATOR_FAILURES = [
+  'intent_gate',
+  'invented_numeral',
+  'precision',
+  'banned_construction',
+] as const
+
+export type ValidatorFailure = (typeof VALIDATOR_FAILURES)[number]
 
 export type ValidatorVerdict =
   | { pass: true }
@@ -284,7 +287,7 @@ function parseWordNumber(words: string[], start: number): { value: number; next:
   let started = false
 
   // "a hundred" / "a thousand"
-  if ((words[i] === 'a' || words[i] === 'an') && words[i + 1] !== undefined && words[i + 1] in SCALES) {
+  if ((words[i] === 'a' || words[i] === 'an') && words[i + 1] !== undefined && (words[i + 1] as string) in SCALES) {
     group = 1
     started = true
     i++

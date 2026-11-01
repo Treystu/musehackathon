@@ -13,6 +13,7 @@ import type {
   TranscribeResult,
   ValidatedIntent,
 } from '../../core/ai/provider'
+import { diagnostics } from '../../core/ai/diagnostics'
 import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../core/ai/proxy-errors'
@@ -20,8 +21,9 @@ import { AgentHandoff } from './AgentHandoff'
 import { ByoOffer } from './ByoOffer'
 import { ClarificationPanel, type ClarificationCandidates } from './ClarificationPanel'
 import { IntentEditor } from './IntentEditor'
-import { ExplainOnAsk, type ExplanationState } from './ExplainOnAsk'
+import { ExplainOnAsk } from './ExplainOnAsk'
 import { MicInput, type MicRecorder } from './MicInput'
+import type { ExplanationState } from './ExplainBox'
 import type { FigureInput } from './FigureCard'
 
 export const SPOKEN_NUMBER_MISMATCH_NOTE =
@@ -91,10 +93,14 @@ export function Disclosure() {
 
 /**
  * Ask panel. Text is the primary path; mic (Item 12) is an equal main
- * input beside it (Q2) — consent-gated in MicInput, and a transcript
- * only ever lands in the editable query text / understood-request
- * chips before anything can run. BYO recovery is wired here via
- * ByoOffer (settings/shutoff entry) + byoProvider retry.
+ * input beside it — consent-gated in MicInput, and a transcript only
+ * ever lands in the editable query text / understood-request chips
+ * before anything can run. BYO recovery is wired here via ByoOffer
+ * (settings/shutoff entry) + byoProvider retry.
+ *
+ * Union hand-merge (Panel B1): the CivicScope panel (diagnostics
+ * counters, execution note, ExplainAction wiring) carries the Entire
+ * tree's mic path, spoken-number gate, and AgentHandoff setup surface.
  */
 export function AskPanel({
   provider,
@@ -120,7 +126,12 @@ export function AskPanel({
    */
   byoProvider?: MuseProvider
   validator?: Validator
-  onExecute?: (intent: ValidatedIntent) => void
+  /**
+   * Runs the intent. May return a sentence for the reader: a mode can be
+   * validated and still land on a surface that cannot express one of its
+   * bounds, and saying so is better than changing nothing in silence.
+   */
+  onExecute?: (intent: ValidatedIntent) => string | void
   proxyError?: ProxyError | null
   clarificationCandidates?: ClarificationCandidates
   onOpenSettings?: () => void
@@ -140,12 +151,16 @@ export function AskPanel({
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [caughtError, setCaughtError] = useState<ProxyError | null>(null)
+  const [executionNote, setExecutionNote] = useState('')
 
   const errorNote = proxyErrorNote(proxyError) ?? note
 
   function accept(result: IntentResult, spokenTranscript?: string) {
     const check = validateIntent(result.intent)
     if (!check.ok) {
+      // Count the class only. The model's output and the reader's words are
+      // deliberately not recorded anywhere.
+      diagnostics.recordIntentFailure('schema_invalid')
       setNote('That request cannot be run as asked. Try the manual search below.')
       return
     }
@@ -167,6 +182,7 @@ export function AskPanel({
     if (result.prose) {
       const verdict = validator.validate(result.prose, [])
       if (!verdict.pass) {
+        diagnostics.recordWithhold(verdict.failure)
         setNote('Wording was withheld for failing verification. Figures are shown without it.')
       }
     }
@@ -189,6 +205,10 @@ export function AskPanel({
       accept(await provider.intent(request, new AbortController().signal), spokenTranscript)
     } catch (err) {
       const known = extractProxyError(err)
+      // A proxy failure is counted even when the BYO retry below recovers: the
+      // shared path did fail, and hiding that would understate its error rate.
+      diagnostics.recordIntentFailure(known ?? 'unexpected')
+      diagnostics.recordErrorState(known ?? 'unexpected')
       if (
         known &&
         byoProvider &&
@@ -262,7 +282,11 @@ export function AskPanel({
           onChange={(e) => setText(e.target.value)}
           autoComplete="off"
         />
-        <button type="submit" disabled={busy}>
+        <button
+          type="submit"
+          disabled={busy}
+          className="min-h-[44px] rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+        >
           Ask
         </button>
       </form>
@@ -295,14 +319,23 @@ export function AskPanel({
             />
           ) : (
             <>
-              <button type="button" disabled={!onExecute} onClick={() => onExecute?.(intent)}>
+              <button
+                type="button"
+                disabled={!onExecute}
+                onClick={() => {
+                  const said = onExecute?.(intent)
+                  setExecutionNote(typeof said === 'string' ? said : 'Running this request.')
+                }}
+              >
                 Run this request
               </button>
+              {executionNote && <p role="status">{executionNote}</p>}
               <ExplainOnAsk
                 intent={intent}
                 figures={figures}
                 explanation={explanation}
                 onExplain={onExplain}
+                provider={provider}
               />
             </>
           )}

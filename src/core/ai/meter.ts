@@ -30,6 +30,9 @@ export type BreakerState = 'closed' | 'open' | 'half-open'
  * the persistence adapter (meter-persistence.ts). Mirrors the private
  * fields field-for-field; reservations carry no expiry here — the TTL
  * lives in the persisted record owned by the adapter.
+ * (Union hand-merge: this interface and the exportState/importState
+ * methods below come from the Entire tree's meter; the rest of this file
+ * is the CivicScope version, including configSnapshot for diagnostics.)
  */
 export interface MeterState {
   requests: number
@@ -71,6 +74,27 @@ export class Meter {
       spentMicroUsd: this.spentMicroUsd,
       budgetExhausted: this.spentMicroUsd >= this.cfg.budgetCapMicroUsd,
       errors: Object.fromEntries(this.errors),
+    }
+  }
+
+  /**
+   * Configuration the diagnostics surface may report. The per-client cap is
+   * deliberately a boolean: S10 is the owner's number, and an operator
+   * endpoint does not need to publish it to prove whether one is configured.
+   */
+  configSnapshot(): {
+    budgetCapMicroUsd: number
+    perClientCapConfigured: boolean
+    perRequestTokenCeiling: number
+    breakerFailureThreshold: number
+    breakerCooldownMs: number
+  } {
+    return {
+      budgetCapMicroUsd: this.cfg.budgetCapMicroUsd,
+      perClientCapConfigured: this.cfg.perClientCapMicroUsd !== undefined,
+      perRequestTokenCeiling: this.cfg.perRequestTokenCeiling,
+      breakerFailureThreshold: this.cfg.breakerFailureThreshold,
+      breakerCooldownMs: this.cfg.breakerCooldownMs,
     }
   }
 
@@ -127,6 +151,18 @@ export class Meter {
     this.reservations.delete(id)
   }
 
+  /** Count one failure by closed error class (counts only, Q1). */
+  recordError(cls: string): void {
+    this.errors.set(cls, (this.errors.get(cls) ?? 0) + 1)
+  }
+  recordFailure(now = Date.now()): void {
+    this.failures += 1
+    if (this.failures >= this.cfg.breakerFailureThreshold) {
+      this.breaker = 'open'
+      this.breakerOpenedAt = now
+    }
+  }
+
   /** Export the full state (deep copy) for a persistence adapter. */
   exportState(): MeterState {
     return {
@@ -166,18 +202,6 @@ export class Meter {
       this.reservations.set(k, { ...v })
     }
     this.nextReservationId = state.nextReservationId
-  }
-
-  /** Count one failure by closed error class (counts only, Q1). */
-  recordError(cls: string): void {
-    this.errors.set(cls, (this.errors.get(cls) ?? 0) + 1)
-  }
-  recordFailure(now = Date.now()): void {
-    this.failures += 1
-    if (this.failures >= this.cfg.breakerFailureThreshold) {
-      this.breaker = 'open'
-      this.breakerOpenedAt = now
-    }
   }
 }
 

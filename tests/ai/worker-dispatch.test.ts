@@ -38,8 +38,22 @@ describe('advanced-mode worker dispatch', () => {
     expect(body).not.toContain('__CIVICSCOPE_SHARED_APP_KEYS__')
   })
 
-  it('injects the shared-key slot when CENSUS_APP_KEY is bound', async () => {
+  it('injects the shared-key script tag when CENSUS_APP_KEY is bound', async () => {
     const res = await dispatchFetch(req('/'), fakeEnv({ CENSUS_APP_KEY: 'testfake123' }), exec)
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('<script src="/shared-app-keys.js"></script>')
+    // The key itself never rides the HTML: the CSP refuses inline
+    // scripts, so the assignment is served from the script route.
+    expect(body).not.toContain('testfake123')
+  })
+
+  it('serves the shared-key slot assignment from the script route', async () => {
+    const res = await dispatchFetch(
+      req('/shared-app-keys.js'),
+      fakeEnv({ CENSUS_APP_KEY: 'testfake123' }),
+      exec,
+    )
     expect(res.status).toBe(200)
     const body = await res.text()
     expect(body).toContain('__CIVICSCOPE_SHARED_APP_KEYS__')

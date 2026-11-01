@@ -15,8 +15,8 @@
  *
  * The personal key above is no longer the only key the app can run on. Since
  * the federation decided by the owner on 2026-10-31, a deployment may supply
- * the project's shared application Census key at build time (its canonical
- * home is the Entire hackathon repo's configuration), and the app uses it as
+ * the project's shared application Census key at build or serve time (its
+ * canonical home is the Entire hackathon repo's configuration), and the app uses it as
  * the default for visitors who have not added their own. That changes the
  * default experience, not the personal-key properties: a visitor's own key
  * still never leaves their browser, still wins over the shared default, and
@@ -24,6 +24,8 @@
  * resolution below carries the source alongside the value so no surface can
  * mistake the shared default for a key the visitor added.
  */
+
+import { readSharedCensusAppKey } from './config/shared-app-key'
 
 const STORAGE_KEY = 'civicscope.censusKey.v1'
 const RETURN_KEY = 'civicscope.returnPath'
@@ -82,9 +84,9 @@ function notifyKeyChanged(): void {
  *   browser, its lifecycle is theirs (setCensusKey / clearCensusKey), and
  *   CENSUS_KEY_EVENT tracks it.
  * - 'shared': the deployment supplied the project's shared application key
- *   at build time. It identifies the application to the Census Bureau, not
- *   the visitor; nothing about it is stored in the browser, and it never
- *   fires CENSUS_KEY_EVENT — its presence is a build-time constant.
+ *   (at build time or serve time — see getSharedCensusKey). It identifies
+ *   the application to the Census Bureau, not the visitor; nothing about
+ *   it is stored in the browser, and it never fires CENSUS_KEY_EVENT.
  */
 export type CensusKeySource = 'personal' | 'shared'
 
@@ -95,23 +97,37 @@ export interface CensusKeyResolution {
 
 /**
  * The deployment-supplied shared application key, or undefined when the
- * deployment did not provide one.
+ * deployment did not provide one. Two supply paths, consulted in order:
  *
- * Surfaced through the app's build mechanism: vite.config.ts adds
- * CENSUS_APP_KEY to Vite's envPrefix, so a value set on the deployment at
- * build time reaches the client as import.meta.env.CENSUS_APP_KEY. The code
- * ships with no value; an unset variable is simply absent, and every caller
- * then behaves exactly as the app did before the shared key existed. The
- * value is read at call time rather than captured at module load, so what
- * the app acts on is always what the running build shipped.
+ * 1. Build time: vite.config.ts adds CENSUS_APP_KEY to Vite's envPrefix,
+ *    so a value set on the deployment at build time reaches the client
+ *    as import.meta.env.CENSUS_APP_KEY.
+ * 2. Serve time: the root Pages middleware (functions/_middleware.ts)
+ *    reads the deployment's CENSUS_APP_KEY Pages variable — settable
+ *    without a rebuild — and exposes it in the global slot that
+ *    src/core/config/shared-app-key.ts reads (docs/shared-app-key.md).
+ *    The portal deployment uses this path: its build ships with no
+ *    value baked in, so path 1 is absent there.
+ *
+ * The code ships with no value of its own; when neither path supplies
+ * one, every caller behaves exactly as the app did before the shared
+ * key existed. A value pasted into a deployment dashboard routinely
+ * carries a trailing newline, which the Census API would reject, so
+ * both paths trim; the serve-time reader additionally normalizes a
+ * malformed deployment value to absent. The value is read at call
+ * time rather than captured at module load, so what the app acts on
+ * is always what the deployment currently supplies.
  */
 export function getSharedCensusKey(): string | undefined {
   const v = import.meta.env.CENSUS_APP_KEY
-  if (typeof v !== 'string') return undefined
-  // A value pasted into a deployment dashboard routinely carries a trailing
-  // newline; the Census API would reject the key because of it.
-  const trimmed = v.trim()
-  return trimmed.length > 0 ? trimmed : undefined
+  if (typeof v === 'string') {
+    // A value pasted into a deployment dashboard routinely carries a trailing
+    // newline; the Census API would reject the key because of it.
+    const trimmed = v.trim()
+    if (trimmed.length > 0) return trimmed
+  }
+  const served = readSharedCensusAppKey()
+  return served === null ? undefined : served
 }
 
 /**

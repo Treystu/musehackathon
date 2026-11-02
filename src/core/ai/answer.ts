@@ -1415,14 +1415,60 @@ export function composeAnswer(input: {
   // decomposed, researched) is met. Otherwise the summary names what
   // is unmeasured, or — when no Census criterion was stated at all
   // (A1's flagship) — makes no meeting claim in the first place.
-  const unmeasuredLabels = criterionEvidence
-    .filter((e) => e.status !== 'met')
-    .map((e) => e.criterion)
+  //
+  // Summary-claim accounting cure (P3c, rerun-p3b C5 — mode
+  // summary_meet_claim_with_unmet_decomposed_criterion, measured
+  // summary_overclaim 0.92 / honesty 0.14 on the shipped build):
+  // ONE accounting — criterionEvidence above — now drives BOTH the
+  // claim and the bookend lists, split by exact status. The shipped
+  // rule read the two from different sets: its unmeasured set was
+  // every status other than met, so a partially measured decomposed
+  // criterion (Houston at 4,000 of 8,000 households without internet
+  // access, 50 percent against the disclosed quarter-share bar) was
+  // listed under "Not measured here" — contradicting the card's own
+  // partially measured label for the same criterion — while the
+  // fallback sentence still asserted the places "meet the stated
+  // Census criteria" over a shown place that fails that criterion.
+  // Now: a meet claim (either shipped wording) asserts only when
+  // every accounted criterion is met; any partially measured or
+  // not measurable criterion falls the summary to the neutral
+  // shown-with-figures form the rule already uses when no Census
+  // criterion was stated, plus one clause per exact status set —
+  // "Partially measured here:" carries exactly the
+  // partially_measured criteria (represented in the prose, never
+  // silently dropped and never relabelled not measured), and
+  // "Not measured here:" carries exactly the not_measurable ones.
+  const notMeasuredLabels = [
+    ...new Set(
+      criterionEvidence.filter((e) => e.status === 'not_measurable').map((e) => e.criterion),
+    ),
+  ]
+  const partiallyMeasuredLabels = [
+    ...new Set(
+      criterionEvidence
+        .filter((e) => e.status === 'partially_measured')
+        .map((e) => e.criterion),
+    ),
+  ]
   const accountingComplete =
     screen.criteria.length > 0 &&
     screen.droppedCriteria.length === 0 &&
-    unmeasuredLabels.length === 0 &&
+    notMeasuredLabels.length === 0 &&
+    partiallyMeasuredLabels.length === 0 &&
     !unsupportedGeography
+  // The summary is prose and renders verbatim everywhere (card,
+  // spoken headline), so the labels joined here are mapped to plain
+  // language at this composition seam — the stored criterion values
+  // stay metric keys for the consumers that match on them
+  // (F-B-ANSWER-CARD).
+  const partialClause =
+    partiallyMeasuredLabels.length > 0
+      ? ` Partially measured here: ${partiallyMeasuredLabels.map(criterionDisplayLabel).join(', ')}.`
+      : ''
+  const notMeasuredClause =
+    notMeasuredLabels.length > 0
+      ? ` Not measured here: ${notMeasuredLabels.map(criterionDisplayLabel).join(', ')}.`
+      : ''
   const summary =
     input.summaryOverride ??
     (screen.rows.length === 0
@@ -1433,14 +1479,7 @@ export function composeAnswer(input: {
           ? 'The counties named here are formed from the ZIP areas assigned to each county, with the deciding figures aggregated from those ZIP areas and shown from Census data.'
           : accountingComplete
             ? 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.'
-            : screen.criteria.length === 0
-              ? 'The places named here are shown with their Census figures for the measures in this request.'
-              : // The summary is prose and renders verbatim everywhere
-                // (card, spoken headline), so the labels joined here are
-                // mapped to plain language at this composition seam —
-                // the stored criterion values stay metric keys for the
-                // consumers that match on them (F-B-ANSWER-CARD).
-                `The places named here meet the stated Census criteria, with the deciding figures shown from Census data. Not measured here: ${unmeasuredLabels.map(criterionDisplayLabel).join(', ')}.`)
+            : `The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`)
   return {
     status,
     stage: 'compose',

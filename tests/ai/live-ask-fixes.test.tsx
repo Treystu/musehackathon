@@ -281,6 +281,58 @@ describe('live ask: clarification candidates belong to the current question', ()
 })
 
 describe('live ask: no research status line while blocked in clarification', () => {
+  it('"best schools near Hilo" no longer clarifies: the research-first handoff fires and the pipeline owns research', async () => {
+    // RE-POINTED (2026-11-02): this case previously pinned "best
+    // schools near Hilo" CLARIFYING, with the standalone research
+    // call as its only path forward. The owner's requirement of
+    // 2026-11-02 08:29 HST superseded that pin — a partially
+    // servable question gets a partial grounded answer, never a
+    // dead-end clarification — so the question now hands off to the
+    // Answer Layer's research-first path (see
+    // research-first-handoff.test.tsx for the end-to-end case), the
+    // clarification never renders, and the standalone call does not
+    // fire: the pipeline's research-first stage is this question's
+    // research. The status-line suppression this describe exists
+    // for is preserved by the still-clarifying case below.
+    const researchCalls: ResearchRequest[] = []
+    const requests: { intent: ValidatedIntent; queryText: string }[] = []
+    const provider = createStubProvider({
+      async intent() {
+        return {
+          intent: {
+            mode: 'lookup',
+            geographies: ['Hilo'],
+            metricKeys: [],
+            filters: [],
+            clarificationNeeded: true,
+          } satisfies ValidatedIntent,
+        }
+      },
+      research(req) {
+        researchCalls.push(req)
+        return new Promise(() => {})
+      },
+    })
+    render(
+      <AskPanel
+        provider={provider}
+        onExecute={() => ''}
+        onAnswerRequest={(intent, queryText) => requests.push({ intent, queryText })}
+        parseRetryDelaysMs={[]}
+      />,
+    )
+    await ask('best schools near Hilo')
+    expect(clarificationSection()).toBeNull()
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.intent).toMatchObject({
+      geographies: ['Hilo'],
+      metricKeys: [],
+      clarificationNeeded: false,
+    })
+    expect(researchCalls).toHaveLength(0)
+    expect(container.textContent).not.toContain('Looking up what the Census data does not cover')
+  })
+
   it('suppresses the loading line in clarification, and still fires the standalone call the coverage fallback depends on', async () => {
     const researchCalls: ResearchRequest[] = []
     let releaseResearch: ((value: never) => void) | undefined
@@ -289,7 +341,10 @@ describe('live ask: no research status line while blocked in clarification', () 
         return {
           intent: {
             mode: 'lookup',
-            geographies: ['Hilo'],
+            // A genuine ambiguity in the current parse — the case
+            // clarification exists for, so this question still
+            // clarifies under the research-first handoff.
+            geographies: ['Springfield, IL', 'Springfield, MO'],
             metricKeys: [],
             filters: [],
             clarificationNeeded: true,
@@ -311,7 +366,7 @@ describe('live ask: no research status line while blocked in clarification', () 
         parseRetryDelaysMs={[]}
       />,
     )
-    await ask('best schools near Hilo')
+    await ask('best schools in Springfield')
     expect(clarificationSection()).not.toBeNull()
     // The call fired (its failure is the politics coverage fallback),
     // but its status line must not render over a blocked question.
@@ -319,8 +374,8 @@ describe('live ask: no research status line while blocked in clarification', () 
     expect(container.textContent).not.toContain('Looking up what the Census data does not cover')
     await act(async () => {
       releaseResearch?.({
-        prose: 'Hilo schools include well-rated elementary options.',
-        sources: [{ title: 'Hawaii DOE', url: 'https://example.org/doe' }],
+        prose: 'Springfield schools include well-rated elementary options in both states.',
+        sources: [{ title: 'School directory', url: 'https://example.org/schools' }],
       } as never)
     })
     await act(async () => {

@@ -16,6 +16,10 @@ import type {
   ValidatedIntent,
 } from '../../core/ai/provider'
 import { diagnostics } from '../../core/ai/diagnostics'
+import {
+  decomposeResearchCriteria,
+  type ResearchCriterion,
+} from '../../core/ai/answer'
 import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
 import {
   NATIONAL_SCREEN_LABELS,
@@ -91,12 +95,151 @@ export function needsResearch(queryText: string | undefined): boolean {
  * "like this place", so it keeps the existing views alone.
  */
 export function answerEligible(intent: ValidatedIntent): boolean {
+  if (isResearchFirstHandoff(intent)) return true
   if (intent.mode === 'sweep_filter') return true
   if (intent.filters.length > 0) return true
   return (
     (intent.mode === 'lookup' || intent.mode === 'compare') &&
     intent.geographies.length > 0 &&
     intent.metricKeys.length > 0
+  )
+}
+
+/**
+ * Protected-class / characterization content in the reader's own
+ * words. The research-first handoff below must never become a path
+ * around the safety posture: when the asking is done by a protected
+ * characteristic (or a political character — politicsCoverageNote
+ * above), the clarification and the upstream refusals keep their
+ * job, exactly as before this handoff existed. The list is lexical
+ * and deliberately narrow — it gates only the handoff, never the
+ * parse, the clarification, or the standalone research fallback.
+ */
+const PROTECTED_CHARACTERIZATION_RE =
+  /\b(race|racial|ethnic|ethnicity|black|white|hispanic|latino|latina|asian|african american|native american|indigenous|religion|religious|muslim|jewish|hindu|national origin|demographics?)\b/i
+
+/**
+ * The researched criteria a question carries, for the handoff
+ * discriminator: the shipped decomposition catalog's own split when
+ * it splits anything, and — when outside-knowledge triggers fire
+ * (needsResearch) but the catalog splits nothing — the catalog's
+ * combined-criterion carry, so a question whose outside criteria the
+ * catalog has no entry for ("best libraries and quietest streets")
+ * is still research-first servable as one combined criterion.
+ * The combined carry excludes politics questions (the coverage-note
+ * posture owns their fallback), and researchFirstHandoff refuses a
+ * politics-characterization question outright, split or not.
+ */
+export function researchFirstCriteria(
+  queryText: string | undefined,
+): ResearchCriterion[] {
+  if (!queryText || queryText.trim() === '') return []
+  const decomposed = decomposeResearchCriteria(queryText)
+  if (decomposed.some((criterion) => criterion.id !== 'combined')) return decomposed
+  if (decomposed.length > 0 && needsResearch(queryText) && !politicsCoverageNote(queryText)) {
+    return decomposed
+  }
+  return []
+}
+
+/**
+ * Genuine place ambiguity, read from what the parse actually
+ * carries. The parse has no separate alternatives field: candidate
+ * places for one ambiguous name arrive AS the intent's geographies
+ * (that is the list clarificationCandidatesFor hands the panel), so
+ * ambiguity is two or more DISTINCT geographies sharing one place
+ * name — "Springfield, IL" beside "Springfield, MO". Two different
+ * names ("Hilo" beside "Austin") are two named places, not an
+ * ambiguity. Limit, pinned in tests: a parse that collapses an
+ * ambiguous name to a single geography is indistinguishable from a
+ * resolved one in this state, and hands off — resolution then
+ * happens through the place index in the runner, the same authority
+ * execution uses.
+ */
+export function hasAmbiguousPlaceCandidates(geographies: readonly string[]): boolean {
+  const variantsByName = new Map<string, Set<string>>()
+  for (const geography of geographies) {
+    const name = (geography.split(',')[0] ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+    const variants = variantsByName.get(name) ?? new Set<string>()
+    variants.add(geography.trim().toLowerCase())
+    variantsByName.set(name, variants)
+  }
+  for (const variants of variantsByName.values()) {
+    if (variants.size > 1) return true
+  }
+  return false
+}
+
+/**
+ * The research-first handoff (owner requirement, 2026-11-02 08:29
+ * HST: a partially servable question gets a partial grounded
+ * answer, never a dead-end clarification — his headline example is
+ * "Which area has the best schools and the fewest fast food
+ * restaurants?"). The Answer Layer already serves such questions
+ * (answer.ts research-first: research, extract, resolve through the
+ * place index, pull Census figures, compose with per-criterion
+ * evidence), but the live Ask path never reached it: an
+ * external-only parse clarifies, and clarification was the end.
+ *
+ * The discriminator, built from the parse state that actually
+ * exists. A clarifying intent hands off when ALL of these hold:
+ *  - nothing-to-screen: the parse carries no runnable Census
+ *    content — no filters and no metricKeys (the pipeline's own
+ *    research-first condition is the same pair), so clarification's
+ *    only forward path would be inventing a Census question the
+ *    reader did not ask;
+ *  - not ambiguous-identity: the geographies are not rival
+ *    candidates for one name (hasAmbiguousPlaceCandidates) — that
+ *    is the case the clarification panel exists to resolve;
+ *  - the question decomposes into at least one researched
+ *    criterion (researchFirstCriteria) — a criteria-less question
+ *    ("best place to raise a family") decomposes to nothing and
+ *    keeps clarifying, the safety corpus posture;
+ *  - no protected-class or characterization content is doing the
+ *    asking (PROTECTED_CHARACTERIZATION_RE for protected classes,
+ *    politicsCoverageNote for political character).
+ * A parse that fails validation upstream — the policy-blocked
+ * shape — never reaches this function: accept() runs it only on a
+ * validated intent, so refusals keep their path untouched.
+ *
+ * The handoff intent is the parse verbatim (mode and geographies
+ * carried — the geography bound rides into the pipeline's research
+ * places and figure pull) with the clarification flag cleared.
+ * That state is the marker: withRunnability is the single owner of
+ * the flag and stamps clarificationNeeded = !canRun for every
+ * parse, editor, and clarification path, so a settled flag on an
+ * intent canRun still rejects is a state only this handoff
+ * produces (isResearchFirstHandoff).
+ */
+export function researchFirstHandoff(
+  intent: ValidatedIntent,
+  queryText: string | undefined,
+): ValidatedIntent | null {
+  if (!intent.clarificationNeeded || canRun(intent)) return null
+  if (intent.filters.length > 0 || intent.metricKeys.length > 0) return null
+  if (hasAmbiguousPlaceCandidates(intent.geographies)) return null
+  if (!queryText || PROTECTED_CHARACTERIZATION_RE.test(queryText)) return null
+  // Characterization by politics keeps the coverage-note posture
+  // even when the rest of the question decomposes cleanly: the note
+  // and the clarification stay, and standalone research remains the
+  // fallback whose failure produces the note.
+  if (politicsCoverageNote(queryText)) return null
+  if (researchFirstCriteria(queryText).length === 0) return null
+  return { ...intent, clarificationNeeded: false }
+}
+
+/**
+ * Whether an intent is a research-first handoff: settled (the
+ * clarification flag is clear) yet not runnable by canRun, carrying
+ * no Census content. See researchFirstHandoff for why that state
+ * has exactly one producer.
+ */
+export function isResearchFirstHandoff(intent: ValidatedIntent): boolean {
+  return (
+    !intent.clarificationNeeded &&
+    !canRun(intent) &&
+    intent.metricKeys.length === 0 &&
+    intent.filters.length === 0
   )
 }
 
@@ -349,7 +492,13 @@ export function AskPanel({
    * screen so what ran is always visible and adjustable.
    */
   function executeNow(next: ValidatedIntent, queryText?: string) {
-    if (onExecute) {
+    // A placeless research-first handoff has no view for onExecute
+    // to open — its only output would be a "nothing was opened" note
+    // contradicting the answer the layer is composing — so it goes
+    // to the answer layer alone. A placed handoff still opens its
+    // geography in the views, like any lookup.
+    const placelessHandoff = isResearchFirstHandoff(next) && next.geographies.length === 0
+    if (onExecute && !placelessHandoff) {
       const said = onExecute(next)
       setExecutionNote(typeof said === 'string' ? said : '')
     }
@@ -409,6 +558,20 @@ export function AskPanel({
       rescued = rescueNationalScreen(parsed, queryText)
       if (rescued) parsed = rescued
     }
+    // Research-first handoff: a parse that settled into clarification
+    // but is research-first servable (researchFirstHandoff above)
+    // goes to the Answer Layer instead of the clarification panel.
+    // Only with an answer layer wired — without one there is no
+    // pipeline to hand to, and the panel plus standalone research
+    // remain the result, as in the pre-answer-layer mounts. The
+    // national-screen rescue runs first and keeps its precedence: a
+    // question it can screen deterministically is screened, not
+    // researched.
+    let handedOff: ValidatedIntent | null = null
+    if (!rescued && parsed.clarificationNeeded && onAnswerRequest) {
+      handedOff = researchFirstHandoff(parsed, queryText)
+      if (handedOff) parsed = handedOff
+    }
     // Spoken-number validation (mic path): every numeral heard must
     // match a number in the understood request. A mismatch fails
     // closed, the same way failed prose is withheld: the understood
@@ -436,10 +599,14 @@ export function AskPanel({
           ? `No place was named, so this screens the whole country by ${label}, lowest first. The understood request is below.`
           : `This screens ${rescued.geographies.join(', ')} by ${label}, lowest first. The understood request is below.`,
       )
+    } else if (handedOff) {
+      setNote(
+        'That question is answered from research first: the places the cited findings name are shown with their Census figures in the answer below.',
+      )
     } else if (parsed.clarificationNeeded) {
       setNote('More detail is needed before anything runs. Check the understood request below.')
     }
-    if (canRun(parsed)) executeNow(parsed, queryText)
+    if (canRun(parsed) || handedOff) executeNow(parsed, queryText)
     return parsed
   }
 
@@ -463,9 +630,11 @@ export function AskPanel({
     // researches the screened subset with this same question text),
     // and firing the standalone path too would spend two research
     // calls on one question and render two overlapping web sections.
-    // Every other outcome — clarification, an ineligible mode, a
-    // refused or failed parse — settles by firing the standalone
-    // path, so its coverage-note fallback is preserved.
+    // A research-first handoff out of clarification hands research
+    // to the pipeline the same way. Every other outcome — a
+    // clarification that stays one, an ineligible mode, a refused or
+    // failed parse — settles by firing the standalone path, so its
+    // coverage-note fallback is preserved.
     let researchDeferred = false
     if (needsResearch(queryText)) {
       if (onAnswerRequest) {
@@ -480,7 +649,17 @@ export function AskPanel({
     const settleResearch = (parsed: ValidatedIntent | null) => {
       if (!researchDeferred) return
       researchDeferred = false
-      if (parsed && canRun(parsed) && answerEligible(parsed)) return
+      // A research-first handoff hands research to the pipeline the
+      // same way a runnable eligible intent does — the pipeline's
+      // research-first stage IS this question's research, and firing
+      // the standalone path too would spend two calls on it.
+      if (
+        parsed &&
+        (canRun(parsed) || isResearchFirstHandoff(parsed)) &&
+        answerEligible(parsed)
+      ) {
+        return
+      }
       startResearch(queryText)
     }
     const request = {
@@ -601,7 +780,8 @@ export function AskPanel({
    * call; the findings section itself, when research lands, is
    * content rather than a status line and still renders.
    */
-  const inClarification = intent !== null && !canRun(intent)
+  const inClarification =
+    intent !== null && !canRun(intent) && !isResearchFirstHandoff(intent)
 
   return (
     <section aria-labelledby="ask-heading">
@@ -782,7 +962,7 @@ export function AskPanel({
       {intent && (
         <>
           <IntentEditor intent={intent} onChange={handleIntentChange} />
-          {!canRun(intent) ? (
+          {!canRun(intent) && !isResearchFirstHandoff(intent) ? (
             <ClarificationPanel
               intent={intent}
               candidates={clarificationCandidatesFor(

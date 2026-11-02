@@ -157,8 +157,18 @@ describe('AskPanel answer wiring', () => {
     expect(requests[0]!.intent).toMatchObject({ mode: 'lookup', geographies: ['Austin, TX'] })
   })
 
-  it('a question the pipeline cannot serve still gets the standalone research path', async () => {
-    const requests: unknown[] = []
+  it('an external-only clarification now hands off to the pipeline instead of the standalone path', async () => {
+    // RE-POINTED (2026-11-02): this case previously pinned "best
+    // schools near Hilo" as a question the pipeline cannot serve —
+    // clarification, no answer request, standalone research as the
+    // fallback. The owner's requirement of 2026-11-02 08:29 HST (a
+    // partially servable question gets a partial grounded answer,
+    // never a dead-end clarification) superseded that pin: the
+    // pipeline's research-first path serves exactly this shape, so
+    // the handoff fires and the pipeline owns research. The
+    // standalone fallback survives for clarifications that stay
+    // clarifications — the next case.
+    const requests: { intent: ValidatedIntent; queryText: string }[] = []
     const researchCalls: ResearchRequest[] = []
     const provider = createStubProvider({
       async intent() {
@@ -189,13 +199,56 @@ describe('AskPanel answer wiring', () => {
       />,
     )
     await ask('best schools near Hilo')
-    // Clarification-needed: nothing ran, so no answer request — and
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.queryText).toBe('best schools near Hilo')
+    expect(requests[0]?.intent).toMatchObject({
+      geographies: ['Hilo'],
+      clarificationNeeded: false,
+    })
+    expect(researchCalls).toHaveLength(0)
+  })
+
+  it('a clarification that stays a clarification still gets the standalone research path', async () => {
+    const requests: unknown[] = []
+    const researchCalls: ResearchRequest[] = []
+    const provider = createStubProvider({
+      async intent() {
+        return {
+          intent: {
+            mode: 'lookup',
+            // Genuine ambiguity in the current parse: the handoff
+            // discriminator leaves this with the clarification panel.
+            geographies: ['Springfield, IL', 'Springfield, MO'],
+            metricKeys: [],
+            filters: [],
+            clarificationNeeded: true,
+          } satisfies ValidatedIntent,
+        }
+      },
+      async research(req) {
+        researchCalls.push(req)
+        return {
+          prose: 'Springfield schools include well-rated options in both states.',
+          sources: [{ title: 'School directory', url: 'https://example.org/schools' }],
+        }
+      },
+    })
+    render(
+      <AskPanel
+        provider={provider}
+        onExecute={() => ''}
+        onAnswerRequest={(intent, queryText) => requests.push({ intent, queryText })}
+        parseRetryDelaysMs={[]}
+      />,
+    )
+    await ask('best schools in Springfield')
+    // Clarification stands: nothing ran, so no answer request — and
     // the deferred standalone research fires as the fallback.
     expect(requests).toHaveLength(0)
     expect(researchCalls).toHaveLength(1)
     const section = container.querySelector('section[aria-label="From the web"]')
     expect(section).not.toBeNull()
-    expect(section?.textContent).toContain('Hilo schools include')
+    expect(section?.textContent).toContain('Springfield schools include')
   })
 
 })

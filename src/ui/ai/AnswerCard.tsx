@@ -6,6 +6,7 @@ import type {
 } from '../../core/ai/answer'
 import { METRIC_DEFS_BY_KEY } from '../../core/civicscope-registry'
 import { formatMetricNumber } from '../metric-format'
+import { ResultMap } from '../map/ResultMap'
 import { HelpTip } from './HelpTip'
 
 /**
@@ -437,6 +438,18 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
           {droppedClaims}
         </p>
       )}
+      {/*
+        P6 RESULT MAP MOUNT SEAM (drive item 13): the result map for a
+        verified answer, rendered under the card's places inside this
+        same section. This is the whole AnswerCard change — ResultMap
+        owns its loading, geometry, legend and failure line, and
+        renders nothing for a non-verified or placeless answer. No
+        onSelect is passed: the Ask surface's comparison selection is
+        App-owned and AnswerCard has no seam for it today, so a tap on
+        the map shows that place's card figures in the map's own panel
+        (the P6 requirement) rather than selecting for comparison.
+      */}
+      {answer.status === 'verified' && answer.places.length > 0 && <ResultMap answer={answer} />}
     </section>
   )
 }

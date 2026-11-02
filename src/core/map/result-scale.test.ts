@@ -1,0 +1,231 @@
+import { describe, expect, it } from 'vitest'
+
+import type { AnswerPlace, ComposedAnswer } from '../ai/answer'
+import {
+  colorForValue,
+  drivingMetricKey,
+  eligibleMetricKeys,
+  emittedFigureValues,
+  formatAnswerFigure,
+  legendModel,
+  nationalCircleRadius,
+  orderedResultPlaces,
+  overflowPlaceNames,
+  resultMapMode,
+  resultMapPlaces,
+  screeningCoverageLine,
+} from './result-scale'
+
+/**
+ * Hermetic pins for the result-map model. The figures-by-reference
+ * assertion is mechanical (spec section 6.7): every number the map
+ * layer can emit must exist, exactly, among the verified answer's
+ * figures — a recompute path added later fails here.
+ */
+
+function place(zcta: string, name: string, figures: [string, number][], memberZctas?: string[]): AnswerPlace {
+  return {
+    zcta,
+    name,
+    figures: figures.map(([key, value]) => ({ key, value })),
+    claims: [],
+    ...(memberZctas ? { memberZctas } : {}),
+  }
+}
+
+function answer(partial: Partial<ComposedAnswer>): ComposedAnswer {
+  return {
+    status: 'verified',
+    stage: 'verify',
+    criteria: [{ metricKey: 'median_gross_rent', bound: 'atMost', value: 2000, intentOp: 'lt' }],
+    droppedCriteria: [],
+    unresolvedGeographies: [],
+    screenedCount: 3,
+    places: [],
+    generalClaims: [],
+    sources: [],
+    summary: '',
+    droppedClaims: [],
+    failures: [],
+    researchCriteria: [],
+    criterionEvidence: [],
+    candidateCap: 10,
+    candidateCapApplied: false,
+    unresolvedCandidates: [],
+    geographyLevel: 'place',
+    unsupportedGeography: null,
+    requestedCount: null,
+    countyMethod: null,
+    notMeasurableCounties: [],
+    ...partial,
+  }
+}
+
+const SEATTLE = [
+  place('98101', 'Seattle, WA', [['median_gross_rent', 2340], ['median_home_value', 820000]]),
+  place('98103', 'Seattle, WA', [['median_gross_rent', 1895], ['median_home_value', 765000]]),
+  place('98115', 'Seattle, WA', [['median_gross_rent', 890], ['median_home_value', 640000]]),
+]
+
+describe('figures by reference — mechanical', () => {
+  it('every emitted number exists exactly on the verified answer places', () => {
+    const a = answer({ places: SEATTLE })
+    const cardValues = new Set(a.places.flatMap((p) => p.figures.map((f) => f.value)))
+    for (const metric of ['median_gross_rent', 'median_home_value']) {
+      const emitted = emittedFigureValues(a, metric)
+      expect(emitted.length).toBeGreaterThan(0)
+      for (const value of emitted) expect(cardValues.has(value)).toBe(true)
+    }
+  })
+
+  it('formatting matches the card formatter for the same figure', () => {
+    const figure = { key: 'median_gross_rent', value: 2340 }
+    // The card renders median gross rent as $2,340/mo (registry unit + sweep precision).
+    expect(formatAnswerFigure(figure)).toBe('$2,340/mo')
+  })
+
+  it('a place with no figure for the selected metric resolves to the no-data treatment, not an invented value', () => {
+    const places = resultMapPlaces(
+      [place('98101', 'Seattle, WA', [['median_gross_rent', 1000]]), place('98102', 'Seattle, WA', [['households', 500]])],
+      'median_gross_rent',
+    )
+    expect(places[1]!.figure).toBeNull()
+    expect(places[1]!.formatted).toBeNull()
+  })
+})
+
+describe('metric eligibility and driving metric', () => {
+  it('offers the intersection of figure keys with the driving metric first', () => {
+    const a = answer({ places: SEATTLE })
+    expect(drivingMetricKey(a)).toBe('median_gross_rent')
+    expect(eligibleMetricKeys(SEATTLE, drivingMetricKey(a))).toEqual(['median_gross_rent', 'median_home_value'])
+  })
+
+  it('switching the metric only re-reads figures — the place set and order do not change', () => {
+    const a = answer({ places: SEATTLE })
+    const byRent = resultMapPlaces(orderedResultPlaces(a), 'median_gross_rent').map((p) => p.key)
+    const byValue = resultMapPlaces(orderedResultPlaces(a), 'median_home_value').map((p) => p.key)
+    expect(byValue).toEqual(byRent)
+  })
+})
+
+describe('legend model — ends carry the figures', () => {
+  it('labels the ends with the max/min places figures verbatim', () => {
+    const legend = legendModel(SEATTLE, 'median_gross_rent')
+    expect(legend.single).toBe(false)
+    expect(legend.highest?.value).toBe(2340)
+    expect(legend.highest?.text).toBe('Highest median gross rent — $2,340/mo')
+    expect(legend.lowest?.value).toBe(890)
+    expect(legend.lowest?.text).toBe('Lowest median gross rent — $890/mo')
+  })
+
+  it('a single place gets no gradient claim, just the words', () => {
+    const legend = legendModel([SEATTLE[0]!], 'median_gross_rent')
+    expect(legend.single).toBe(true)
+    expect(legend.singleText).toBe('One place in this answer.')
+    expect(legend.highest).toBeNull()
+  })
+})
+
+describe('color scale — continuous, darker = higher', () => {
+  it('the maximum is darker than the minimum and the ramp is monotonic in between', () => {
+    const brightness = (css: string) => {
+      const parts = css.match(/\d+/g)!.map(Number)
+      return parts[0]! + parts[1]! + parts[2]!
+    }
+    const low = colorForValue(890, 890, 2340)
+    const mid = colorForValue(1600, 890, 2340)
+    const high = colorForValue(2340, 890, 2340)
+    expect(brightness(high)).toBeLessThan(brightness(mid))
+    expect(brightness(mid)).toBeLessThan(brightness(low))
+    expect(colorForValue(100, 100, 100)).toBe(colorForValue(100, 100, 100))
+  })
+})
+
+describe('mode detection', () => {
+  it('a national-level answer renders centroid mode', () => {
+    expect(resultMapMode(answer({ geographyLevel: 'national', places: SEATTLE }))).toBe('national')
+  })
+
+  it('a coast-to-coast place set renders centroid mode by span', () => {
+    const places = [
+      place('98101', 'Seattle, WA', [['median_gross_rent', 2000]]),
+      place('10001', 'New York, NY', [['median_gross_rent', 2100]]),
+    ]
+    const points = new Map([
+      ['98101', { lon: -122.3, lat: 47.6 }],
+      ['10001', { lon: -73.9, lat: 40.7 }],
+    ])
+    expect(resultMapMode(answer({ geographyLevel: 'place', places }), points)).toBe('national')
+  })
+
+  it('a two-state metro cluster stays a choropleth (Kansas City shape)', () => {
+    const places = [
+      place('64106', 'Kansas City, MO', [['median_gross_rent', 1100]]),
+      place('66101', 'Kansas City, KS', [['median_gross_rent', 950]]),
+    ]
+    const points = new Map([
+      ['64106', { lon: -94.58, lat: 39.1 }],
+      ['66101', { lon: -94.62, lat: 39.11 }],
+    ])
+    expect(resultMapMode(answer({ geographyLevel: 'place', places }), points)).toBe('choropleth')
+  })
+
+  it('four or more states render centroid mode even at place level', () => {
+    const places = ['Seattle, WA', 'Portland, OR', 'Boise, ID', 'Reno, NV'].map((name, i) =>
+      place(String(97000 + i), name, [['median_gross_rent', 1000 + i]]),
+    )
+    expect(resultMapMode(answer({ geographyLevel: 'place', places }))).toBe('national')
+  })
+
+  it('national circles grow with value: larger and ordered by the square root band', () => {
+    expect(nationalCircleRadius(2340, 890, 2340)).toBeGreaterThan(nationalCircleRadius(890, 890, 2340))
+    expect(nationalCircleRadius(890, 890, 2340)).toBe(5)
+    expect(nationalCircleRadius(2340, 890, 2340)).toBe(22)
+  })
+})
+
+describe('county guard — a county figure is never painted onto member ZCTAs', () => {
+  const county = place('county:06081', 'San Mateo County, CA', [['median_gross_rent', 2800]], ['94002', '94010', '94401'])
+  const a = answer({ geographyLevel: 'county', places: [county], screenedCount: 3 })
+
+  it('county answers resolve to county mode', () => {
+    expect(resultMapMode(a)).toBe('county')
+  })
+
+  it('the colored set contains exactly the county key — no member ZCTA is assigned the county figure', () => {
+    const colored = resultMapPlaces(a.places, 'median_gross_rent')
+    expect(colored.map((p) => p.key)).toEqual(['county:06081'])
+    for (const member of ['94002', '94010', '94401']) {
+      expect(colored.some((p) => p.key === member)).toBe(false)
+    }
+    expect(colored[0]!.isCounty).toBe(true)
+    expect(colored[0]!.memberZctas).toEqual(['94002', '94010', '94401'])
+    // The only emitted figure is the county's own, from its own figure list
+    // (single place, so the legend adds no end values).
+    expect(emittedFigureValues(a, 'median_gross_rent')).toEqual([2800])
+  })
+})
+
+describe('screening coverage line (P6 step 5)', () => {
+  it('is silent when the screen, the answer, and the map all cover the same places', () => {
+    const a = answer({ places: SEATTLE, screenedCount: 3 })
+    expect(screeningCoverageLine(a, 3)).toBeNull()
+  })
+
+  it('states what the screen covered vs what the map shows when they differ', () => {
+    const a = answer({ places: SEATTLE, screenedCount: 412 })
+    const line = screeningCoverageLine(a, 3)
+    expect(line).toContain('412')
+    expect(line).toContain('shows 3')
+  })
+
+  it('names places beyond the cap as text, in card order', () => {
+    const many = Array.from({ length: 27 }, (_, i) =>
+      place(String(98101 + i), `Place ${i}, WA`, [['median_gross_rent', 1000 + i]]),
+    )
+    const a = answer({ places: many, screenedCount: 27 })
+    expect(overflowPlaceNames(a)).toHaveLength(2)
+    expect(screeningCoverageLine(a, 25)).toContain('shows 25')
+  })
+})

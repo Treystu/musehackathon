@@ -220,6 +220,34 @@ export function Methodology({
       </section>
 
       {/*
+        Result maps (drive item 13, 2026-11-02): the wording scopes the
+        hexbin claim to the Explore map, where it remains true, and
+        states the answer map's own rule — verified places only,
+        generalized live geometry, figures by reference. Without this
+        section the older "hexbin, not a choropleth" claim would read
+        as a product-wide claim the answer map makes false.
+      */}
+      <section aria-labelledby="result-map-heading">
+        <h2 id="result-map-heading" className="section-title">
+          Maps in answers
+        </h2>
+        <div className="mt-2 space-y-3 text-sm leading-relaxed text-slate-700">
+          <p>
+            The country map on the Explore surface is a hexbin, not a choropleth of ZIP boundaries:
+            one hexagon per area, colored by the median of its ZIP areas. An answer, though, can
+            carry its own smaller map. Under a verified answer, the places in that answer — at most
+            25 — are drawn as their ZIP Code Tabulation Area boundaries, fetched from the Census
+            Bureau&rsquo;s TIGERweb service and generalized for display (about 100 metres), and
+            colored by a figure the answer itself shows. A county answer draws each county as one
+            area formed from its ZIP areas, carrying the county figure; a country-wide answer draws
+            a circle at each place&rsquo;s center, sized and colored by its figure, rather than
+            painting states or counties. If the boundaries cannot be loaded, the answer simply
+            carries no map — every figure remains in the answer and the screening table.
+          </p>
+        </div>
+      </section>
+
+      {/*
         The methodology Q&A box lives here and only here (owner phone
         review, 2026-11-02): it was previously mounted inside
         BriefingView, which put a second question box on the Explore

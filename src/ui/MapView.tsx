@@ -86,13 +86,14 @@ interface Props {
 export function MapView({ rows, loading, onSelect, selectedZctas, explainProvider }: Props) {
   const headingId = useId()
   const legendId = useId()
+  const metricId = useId()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
   const [metric, setMetric] = useState<MapMetricKey>('median_rent_burden_pct')
   const [assets, setAssets] = useState<{ centroids: ZctaPoint[]; basemap: Basemap | null } | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const { viewport, setViewport, setWidth, zoomAtData, reset } = useMapViewport()
+  const { viewport, setViewport, setSize, zoomAtData, reset } = useMapViewport()
 
   const active = MAP_METRICS.find((m) => m.key === metric) ?? MAP_METRICS[0]!
   const unit = active.unit
@@ -138,19 +139,20 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
    * makes it, so writing the canvas height from state and then measuring the
    * wrapper height is a feedback loop: the map grew fourteen pixels on every
    * pass, forever, dragging everything below it down the page and repainting
-   * about twenty-two thousand times a second. The height is fixed by CSS and
-   * never written back.
+   * about twenty-two thousand times a second. The viewport height is instead
+   * derived from the observed width inside useMapViewport — never measured
+   * from the canvas — so the loop cannot restart.
    */
   useEffect(() => {
     const wrap = wrapRef.current
     if (!wrap) return
     const observer = new ResizeObserver(() => {
       const width = Math.round(wrap.getBoundingClientRect().width)
-      setWidth(width)
+      setSize(width)
     })
     observer.observe(wrap)
     return () => observer.disconnect()
-  }, [setWidth])
+  }, [setSize])
 
   // The fit is computed once when the assets arrive, not per frame: it
   // projects all 33,791 positions, and recomputing it on every pan or zoom
@@ -347,48 +349,42 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
         Map
       </h2>
       <p className="section-note mt-1">
-        One hexagon per area, coloured by the selected figure. Each hexagon covers one or more ZIP codes and
-        shows the median of the ZIP codes inside it that have a figure. Zoom in and the hexagons separate: at the deepest zoom each one holds a single ZIP code and shows that ZIP code's own published figure unaltered, because a median across many ZIP codes is a figure that exists nowhere in the data. Point at a hexagon to see how many ZIP codes it covers. Every figure is also in the screening table, which is the accessible way to read this data.
+        One hexagon per area, coloured by the figure chosen below. A hexagon covering several ZIP codes shows
+        their median; zoom in and each hexagon becomes a single ZIP code with its own published figure. Every
+        figure is also in the screening table.
       </p>
 
-      <fieldset className="mt-3">
-        <legend className="text-sm font-semibold text-slate-900">What the colour shows</legend>
-        <p className="mt-1 max-w-3xl text-[0.8125rem] leading-snug text-slate-600">
-          One list, one meaning. <strong className="text-slate-900">Darker always means a higher number</strong>,
-          for every figure on this map. The full explanation for each one appears on hover.
-        </p>
-        <ul className="mt-2 space-y-1">
+      {/*
+        The metric picker is a select, not the radio list it used to be. The
+        list ran to seven rows: on a phone it pushed the map a full screen
+        down, and once scrolled past, the only metric name left beside the
+        map was whichever row happened to sit at the top — the last one,
+        "Households" — while the legend below the map named the metric
+        actually in force ("Rent burden"). A select keeps the chosen figure,
+        the map and the legend on one screen, so the three cannot appear to
+        disagree. The chosen figure's own explanation sits under the select,
+        because touch has no hover to carry it.
+      */}
+      <div className="mt-3">
+        <label htmlFor={metricId} className="text-sm font-semibold text-slate-900">
+          What the colour shows
+        </label>
+        <select
+          id={metricId}
+          value={metric}
+          onChange={(event) => setMetric(event.target.value)}
+          className="mt-1 block w-full max-w-xs rounded-md border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+        >
           {MAP_METRICS.map((m) => (
-            <li key={m.key}>
-              <label
-                className={`flex cursor-pointer items-baseline gap-2 rounded-md px-2 py-1.5 text-[0.8125rem] transition-colors hover:bg-slate-100 ${
-                  metric === m.key ? 'bg-slate-100 ring-1 ring-slate-300' : ''
-                }`}
-                title={m.blurb}
-              >
-                <input
-                  type="radio"
-                  name={`map-metric-${headingId}`}
-                  value={m.key}
-                  checked={metric === m.key}
-                  onChange={() => setMetric(m.key)}
-                  className="sr-only"
-                />
-                <span
-                  aria-hidden="true"
-                  className={`mt-0.5 inline-block h-3 w-3 shrink-0 rounded-full border ${
-                    metric === m.key ? 'border-[rgb(var(--accent))] bg-[rgb(var(--accent))]' : 'border-slate-400 bg-white'
-                  }`}
-                />
-                <span className="font-medium text-slate-900">{m.label}</span>
-                <span className="text-slate-600">
-                  darker = higher
-                  {m.unit === 'ratio' ? ' (a multiple, e.g. 4.5x)' : ''}
-                </span>
-              </label>
-            </li>
+            <option key={m.key} value={m.key}>
+              {m.label}
+            </option>
           ))}
-        </ul></fieldset>
+        </select>
+        <p className="mt-1 max-w-3xl text-[0.8125rem] leading-snug text-slate-600">
+          One scale for every figure: darker = higher. {active.blurb}
+        </p>
+      </div>
 
       {loadError ? (
         <p role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
@@ -406,7 +402,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
           role="img"
           aria-labelledby={`${headingId} ${legendId}`}
           onKeyDown={onKeyDown}
-          style={{ touchAction: 'pan-y' }}
+          style={{ touchAction: 'pan-y', height: viewport.height }}
           onMouseMove={onMouseMove}
           onMouseLeave={onMouseLeave}
           onPointerDown={onPointerDown}
@@ -414,7 +410,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerCancel}
           onClick={onClick}
-          className="block h-[560px] w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+          className="block w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
         />
         {hover ? (
           <div
@@ -523,7 +519,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
         <p className="mt-1 text-[0.8125rem] leading-snug text-slate-600">
           {loading
             ? 'Still loading. An asterisk marks a hexagon whose ZIP codes are only partly loaded, so its figure is the median of what has arrived so far rather than of everything.'
-            : `Loaded ${covered.toLocaleString('en-US')} of ${geoms.length.toLocaleString('en-US')} areas with a figure. Every figure the Census Bureau publishes has been loaded and is shown; areas left blank have no figure published at all, which is the publisher's answer rather than a loading failure.`}{' '}
+            : `Loaded ${covered.toLocaleString('en-US')} of ${geoms.length.toLocaleString('en-US')} areas with a figure; areas left blank have no figure published.`}{' '}
           Alaska, Hawaii and Puerto Rico are drawn as insets.
         </p>
       </div>

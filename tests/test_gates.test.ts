@@ -347,6 +347,45 @@ describe('gate: no hidden blocking on a missing key', () => {
 })
 
 /**
+ * Phone layout of the two data surfaces (owner's phone, 2026-11-02, and
+ * reproduced the same day in a fresh session at 412px against the shipped
+ * bundle — a stale-tab explanation was ruled out by that reproduction).
+ *
+ * The comparison matrix's label column measured 48px wide and 481px tall:
+ * the global td/th overflow-wrap:anywhere rule makes a label's min-content
+ * one character, so auto table layout starved the column even though the
+ * table had a min-width. And the map canvas was 560px tall at every width,
+ * so at phone width the width-bound fit drew the country ~200px tall in the
+ * middle of it, between two bands of blank panel.
+ */
+describe('gate: phone layout of the data surfaces', () => {
+  it('wraps comparison labels at word boundaries, in a column with a real minimum width', () => {
+    const css = read('src/styles/app.css')
+    expect(css, 'the word-wrap opt-out class must exist').toMatch(
+      /\.table-words th,\s*\.table-words td \{\s*overflow-wrap: normal;/,
+    )
+    const comparison = codeOnly(read('src/ui/Comparison.tsx'))
+    expect(comparison, 'the matrix must opt into word-boundary wrapping').toMatch(/table-words/)
+    expect(comparison, 'the label column must reserve width').toMatch(/min-w-\[10rem\]/)
+  })
+
+  it('picks the map figure from one compact control, not a screen of radio rows', () => {
+    const map = codeOnly(read('src/ui/MapView.tsx'))
+    expect(map, 'the metric control must be a select').toMatch(/<select/)
+    expect(map, 'the radio list must stay gone').not.toMatch(/type="radio"/)
+    expect(map, 'the canvas height must follow the viewport, not a fixed class').not.toMatch(/h-\[560px\]/)
+    expect(map).toMatch(/height: viewport\.height/)
+  })
+
+  it('derives the map canvas height from its width', () => {
+    const interactions = codeOnly(read('src/ui/map-interactions.ts'))
+    expect(interactions, 'height must be derived, capped and floored').toMatch(
+      /Math\.min\(560, Math\.max\(240,/,
+    )
+  })
+})
+
+/**
  * The map's colour scale and the legibility of what it draws.
  *
  * These pin three defects that were invisible in output-only assertions.

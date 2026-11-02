@@ -17,16 +17,36 @@ import {
 import { hexRadius, type HexBin } from '../core/map/binning'
 import { zoomAround, type Viewport } from '../core/map/projection'
 
-const INITIAL_VIEWPORT: Viewport = { width: 900, height: 560, scale: 1, offsetX: 0, offsetY: 0 }
+const INITIAL_VIEWPORT: Viewport = { width: 900, height: 504, scale: 1, offsetX: 0, offsetY: 0 }
 
 type ViewportSetter = Dispatch<SetStateAction<Viewport>>
+
+/**
+ * The canvas height for a given width: the internal map box's aspect
+ * (960x500), floored so a phone still gets a usable map and capped at the
+ * 560 the desktop layout was designed around.
+ *
+ * Height used to be a fixed 560 at every width. The fit is width-bound on a
+ * phone (screenTransform takes min(width/960, height/500)), so at 380px
+ * wide the country drew about 200px tall, centred in 560px of canvas, and
+ * most of the panel was blank above and below it — measured in a fresh
+ * session at 412px on 2026-11-02 against the owner's phone screenshots
+ * showing the same dead space. Deriving height from width keeps the map
+ * filling its box at every size.
+ */
+export function heightForWidth(width: number): number {
+  return Math.min(560, Math.max(240, Math.round(width * 0.56)))
+}
 
 export function useMapViewport() {
   const [viewport, setViewport] = useState<Viewport>(INITIAL_VIEWPORT)
 
-  const setWidth = useCallback((width: number) => {
+  const setSize = useCallback((width: number) => {
     if (width < 1) return
-    setViewport((current) => (current.width === width ? current : { ...current, width }))
+    const height = heightForWidth(width)
+    setViewport((current) =>
+      current.width === width && current.height === height ? current : { ...current, width, height },
+    )
   }, [])
 
   const zoomAtData = useCallback((geoms: readonly HexBin[], factor: number) => {
@@ -57,7 +77,7 @@ export function useMapViewport() {
     setViewport((current) => ({ ...INITIAL_VIEWPORT, width: current.width, height: current.height }))
   }, [])
 
-  return { viewport, setViewport, setWidth, zoomAtData, reset }
+  return { viewport, setViewport, setSize, zoomAtData, reset }
 }
 
 interface CanvasInteractionOptions {

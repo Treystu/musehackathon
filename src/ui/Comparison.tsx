@@ -48,12 +48,6 @@ export function Comparison({
 
       {explainProvider && entries.length > 1 && (
         <div className="mt-2">
-          {explainRows.length < comparableRows.length && (
-            <p className="text-xs text-slate-600">
-              This explanation uses the first {explainRows.length} shared figures so each selected area fits the
-              24-value request limit.
-            </p>
-          )}
           <ExplainAction
             title="the shared figures"
             figureSetId="comparison"
@@ -70,18 +64,24 @@ export function Comparison({
               Compare shared figures side by side
             </h3>
             <p className="mt-1 text-xs text-slate-600">
-              Only measures available for every selected area from the same publisher, table, and vintage appear
-              here. Margins of error stay beside their estimates. The figures describe differences; they do not
-              explain causes or recommend an area.
+              Measures published for every selected area, from the same source and vintage. Margins of error sit
+              beside each estimate. Figures describe differences; nothing here ranks or recommends an area.
             </p>
             <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[540px] border-collapse text-left text-sm">
+              {/*
+                table-words + a min-width on the label column: the global
+                overflow-wrap:anywhere rule let auto layout crush this
+                column to 48px on a phone (measured 2026-11-02), stacking
+                the row labels a letter at a time below a table min-width
+                that reserved nothing for them.
+              */}
+              <table className="table-words w-full min-w-[540px] border-collapse text-left text-sm">
                 <caption className="sr-only">
                   Published measures available for all selected areas from the same source, table, and vintage.
                 </caption>
                 <thead>
                   <tr className="border-b border-slate-300">
-                    <th scope="col" className="py-2 pr-4 font-semibold text-slate-800">Figure</th>
+                    <th scope="col" className="min-w-[10rem] py-2 pr-4 font-semibold text-slate-800">Figure</th>
                     {entries.map((d) => {
                       const where = placeLabel?.(d.zcta) ?? d.label ?? d.zcta
                       return (
@@ -96,7 +96,7 @@ export function Comparison({
                 <tbody>
                   {comparableRows.map((row) => (
                     <tr key={row.key} className="border-b border-slate-200 align-top">
-                      <th scope="row" className="max-w-64 py-3 pr-4 font-medium text-slate-800">
+                      <th scope="row" className="min-w-[10rem] max-w-64 py-3 pr-4 font-medium text-slate-800">
                         {row.label}
                         {row.note && <span className="mt-1 block text-xs font-normal text-slate-600">{row.note}</span>}
                       </th>

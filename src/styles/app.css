@@ -214,6 +214,25 @@
   }
 
   /*
+   * Tables whose labels are prose, not codes.
+   *
+   * The base layer sets `overflow-wrap: anywhere` on every td/th so a stray
+   * unbreakable string cannot blow out a dense table. The cost, measured on
+   * the owner's phone (2026-11-02) and reproduced in a fresh session at
+   * 412px: `anywhere` makes a label cell's min-content one character, so
+   * auto table layout crushed the comparison matrix's label column to 48px
+   * and stacked "Median gross rent" a letter at a time — even though the
+   * table carried a min-width, because a table min-width reserves nothing
+   * for any particular column. A table that opts into .table-words wraps at
+   * word boundaries instead; it is only for tables whose cell text is known
+   * to be ordinary words, which the comparison matrix's are.
+   */
+  .table-words th,
+  .table-words td {
+    overflow-wrap: normal;
+  }
+
+  /*
    * Section heading with an optional count beside it.
    *
    * The count is de-emphasised: it is orientation, not content, and a reader

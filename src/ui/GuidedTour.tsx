@@ -85,9 +85,9 @@ export function GuidedTour({ open, onDismiss }: { open: boolean; onDismiss: () =
       body: (
         <>
           <p>
-            Nothing here is stored on a server, and this site holds no copy of the data. Your browser fetches
-            every figure directly from its publisher, so any number on screen can be checked against the
-            original source by anyone.
+            For the data itself there is no server copy: this site holds no copy of the data, and no search is
+            recorded. Your browser fetches every figure directly from its publisher, so any number on screen
+            can be checked against the original source by anyone.
           </p>
           <p>
             Look up a single ZIP code above and it works immediately, with no account. To load all 33,791 at

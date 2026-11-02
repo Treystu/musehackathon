@@ -1,12 +1,14 @@
 /**
  * POST /api/muse/briefing — same-origin proxy route (F6, plan 6.5.5).
  * Same discipline as the explain route: shape validation, closed
- * allowlist, meter reservation/settlement, breaker, hard shutoff. The
- * figures in the body were re-verified against their SourceRefs by the
- * client-side pack generator before this call; the model's prose is
- * validator-gated here before it leaves, and a failed verdict returns
- * a withholding flag, never the failed prose. Counts only; no bodies
- * are stored (Q1).
+ * allowlist, provider-breaker wait-out, and best-effort meter
+ * accounting (accounting only since 2026-11-02: the meter never
+ * admits or refuses a request). The figures in the body were
+ * re-verified against their SourceRefs by the client-side pack
+ * generator before this call; the model's prose is validator-gated
+ * here before it leaves, and a failed verdict returns a withholding
+ * flag, never the failed prose. Counts only; no bodies are stored
+ * (Q1).
  */
 import {
   MAX_BRIEFING_VALUES,
@@ -15,14 +17,11 @@ import {
 import { verifyFigureSet } from '../../../src/core/ai/briefing'
 import { isKnownFigureKey } from '../../../src/core/ai/intent-schema'
 import { realValidator, type FigureForValidation } from '../../../src/core/ai/validator'
-import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
-import { preCallGate, mapMeterError, mapProviderError, attemptCall, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { preCallGate, mapProviderError, attemptCall, accountCall, accountError, accountFailure, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
 const ALLOWED_PATHS = new Set(['/api/muse/briefing'])
 const MAX_ID_CHARS = 128
-const EST_COST_MICRO = 1200
-const EST_TOKENS = 768
 const ACTUAL_COST_MICRO = 1200
 const ACTUAL_TOKENS_IN = 192
 const ACTUAL_TOKENS_OUT = 192
@@ -71,7 +70,7 @@ function parseValues(raw: unknown): BriefingRequest['values'] | null {
   return values
 }
 
-async function handleBriefingCore(
+export async function handleBriefing(
   req: { method: string; path: string; body: unknown; clientId: string },
   deps: ProxyDeps,
 ): Promise<ProxyReply> {
@@ -93,10 +92,10 @@ async function handleBriefingCore(
   }
 
   // Union hand-merge (Panel B1): the Entire route's pre-call gate.
-  // Re-verify every figure against the registry before any meter
-  // reservation or provider call; a failed figure fails the request
-  // loudly and names the figure. (The CivicScope route previously
-  // relied on the client-side pack generator's re-verification alone.)
+  // Re-verify every figure against the registry before any provider
+  // call; a failed figure fails the request loudly and names the
+  // figure. (The CivicScope route previously relied on the
+  // client-side pack generator's re-verification alone.)
   const verification = verifyFigureSet(values)
   if (!verification.ok) {
     return {
@@ -108,12 +107,6 @@ async function handleBriefingCore(
     }
   }
 
-  const reservation = await deps.meter.reserve(req.clientId, EST_COST_MICRO, EST_TOKENS)
-  if (!reservation) {
-    await deps.meter.recordError('budget_exhausted')
-    return err(429, 'budget_exhausted')
-  }
-
   try {
     const result = await attemptCall(deps, () =>
       deps.provider.briefing(
@@ -121,16 +114,12 @@ async function handleBriefingCore(
         new AbortController().signal,
       ),
     )
-    await deps.meter.settle(
-      reservation,
-      req.clientId,
-      ACTUAL_COST_MICRO,
-      ACTUAL_TOKENS_IN,
-      ACTUAL_TOKENS_OUT,
-    )
+    // The provider answered: count the call at its flat cost. Best
+    // effort — a failed accounting hop changes nothing the user sees.
+    accountCall(deps, req.clientId, ACTUAL_COST_MICRO, ACTUAL_TOKENS_IN, ACTUAL_TOKENS_OUT)
 
     if (typeof result.prose !== 'string') {
-      await deps.meter.recordError('provider_down')
+      accountError(deps, 'provider_down')
       return err(502, 'provider_down', 'provider returned no prose')
     }
 
@@ -140,35 +129,15 @@ async function handleBriefingCore(
     )
     if (!verdict.pass) {
       // Local withhold diagnostic: count the failure class only.
-      await deps.meter.recordError(verdict.failure)
+      accountError(deps, verdict.failure)
       return { status: 200, body: { withheld: true, failure: verdict.failure } }
     }
     return { status: 200, body: { prose: result.prose } }
   } catch (e) {
-    await deps.meter.release(reservation)
-    await deps.meter.recordFailure()
+    accountFailure(deps)
     const mapped = mapProviderError(e)
-    await deps.meter.recordError(String(mapped.body.error))
+    accountError(deps, String(mapped.body.error))
     return mapped
-  }
-}
-
-/**
- * Exported handler: the core above settles against deps.meter, which in
- * the portal deployment is the Durable Object client. A meter that
- * cannot be read or written fails closed here — 503 breaker_open via
- * mapMeterError, and no unmetered provider call is made — instead of
- * surfacing as an unhandled error.
- */
-export async function handleBriefing(
-  req: { method: string; path: string; body: unknown; clientId: string },
-  deps: ProxyDeps,
-): Promise<ProxyReply> {
-  try {
-    return await handleBriefingCore(req, deps)
-  } catch (e) {
-    if (e instanceof MeterUnavailableError) return mapMeterError(e)
-    throw e
   }
 }
 

@@ -20,7 +20,7 @@ function req(body: unknown) {
 }
 
 describe('explain route', () => {
-  it('rejects missing or malformed shapes before reserving', async () => {
+  it('rejects missing or malformed shapes before any provider call', async () => {
     const d = deps()
     const cases: unknown[] = [
       {},
@@ -43,7 +43,7 @@ describe('explain route', () => {
     expect(d.meter.snapshot().requests).toBe(0)
   })
 
-  it('rejects unknown figure keys and extra value fields before reserving', async () => {
+  it('rejects unknown figure keys and extra value fields before any provider call', async () => {
     const d = deps()
     const unknown = await handleExplain(
       req({ figureSetId: 'f1', values: [{ key: 'fabricated_metric', value: 999 }] }),
@@ -108,7 +108,7 @@ describe('explain route', () => {
     ])
   })
 
-  it('rejects a malformed place label before reserving', async () => {
+  it('rejects a malformed place label before any provider call', async () => {
     const d = deps()
     for (const label of [96720, '', 'x'.repeat(81)]) {
       const r = await handleExplain(
@@ -121,7 +121,7 @@ describe('explain route', () => {
     expect(d.meter.snapshot().requests).toBe(0)
   })
 
-  it('returns validated prose and settles the meter', async () => {
+  it('returns validated prose and records the call in the meter', async () => {
     const d = deps({
       async explain() {
         return { prose: 'The median gross rent is 1,200, plus or minus 50.' }
@@ -164,7 +164,7 @@ describe('explain route', () => {
     expect(r.body.failure).toBe('banned_construction')
   })
 
-  it('maps provider failures onto the closed taxonomy and releases the reservation', async () => {
+  it('maps provider failures onto the closed taxonomy', async () => {
     const d = deps({
       async explain() {
         throw Object.assign(new Error('rl'), { code: 'rate_limited' })
@@ -237,14 +237,26 @@ describe('explain route', () => {
     expect(r.status).toBe(200)
   })
 
-  it('returns budget_exhausted after the cap is settled', async () => {
+  it('serves over the budget cap: the cap reports, it does not gate', async () => {
+    // Accounting-only contract (2026-11-02): spend past the cap is a
+    // diagnostics fact (snapshot.budgetExhausted), never a refusal.
     const meter = new Meter({ ...defaultMeterConfig(), budgetCapMicroUsd: 100 })
-    const id = meter.reserve('c1', 100, 10)
-    expect(id).not.toBeNull()
-    meter.settle(id as string, 'c1', 100, 10, 10)
-    const d = { meter, provider: createStubProvider(), allowedModels: ['spark-test'] }
+    meter.recordCall('c1', 100, 10, 10)
+    expect(meter.snapshot().budgetExhausted).toBe(true)
+    const d = {
+      meter,
+      provider: createStubProvider({
+        async explain() {
+          return { prose: 'The median gross rent is 1,200, plus or minus 50.' }
+        },
+      }),
+      allowedModels: ['spark-test'],
+    }
     const r = await handleExplain(req({ figureSetId: 'f1', values: VALUES }), d)
-    expect(r.status).toBe(429)
-    expect(r.body.error).toBe('budget_exhausted')
+    expect(r.status).toBe(200)
+    expect(r.body.prose).toContain('1,200')
+    // The over-cap call is still counted, truthfully past the cap.
+    expect(meter.snapshot().requests).toBe(2)
+    expect(meter.snapshot().spentMicroUsd).toBeGreaterThan(100)
   })
 })

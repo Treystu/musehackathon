@@ -1,12 +1,32 @@
 /**
- * Q1 aggregate meter: counts only, never content. Reservation/settlement,
- * circuit breaker, per-client cap support (cap values are config, set at S10).
+ * Q1 aggregate meter: counts only, never content.
+ *
+ * Accounting only (owner directive, 2026-11-02): the meter counts and
+ * reports, but it is not an admission gate. The request path records
+ * completed calls with recordCall(); the budget and per-client caps
+ * are reporting thresholds — snapshot() still reports budgetExhausted
+ * so diagnostics stays truthful — and no route refuses or pauses a
+ * request because of them. The circuit breaker below is the provider
+ * breaker: it tracks genuine upstream failures (recordFailure) and a
+ * successful call resets it; it is provider health, not budget.
+ *
+ * reserve/settle/release remain on this class because the persisted
+ * meter's stored record and the Durable Object op surface carry them;
+ * no route calls them any more.
  */
 
 export interface MeterConfig {
-  /** Hard shutoff ceiling in micro-dollars (integer money; no floats). */
+  /**
+   * Budget reporting threshold in micro-dollars (integer money; no
+   * floats). Diagnostics reports spend against it; since 2026-11-02
+   * it refuses nothing.
+   */
   budgetCapMicroUsd: number
-  /** Per-client cap in micro-dollars; undefined = not yet configured (S10). */
+  /**
+   * Per-client cap in micro-dollars; undefined = not configured.
+   * Reporting configuration only: the judged flow enforces no
+   * per-client cap (owner resolution, 2026-11-02).
+   */
   perClientCapMicroUsd?: number
   /** Per-request token ceiling. */
   perRequestTokenCeiling: number
@@ -138,6 +158,22 @@ export class Meter {
 
   settle(id: string, clientId: string, actualMicroUsd: number, tin: number, tout: number): void {
     this.reservations.delete(id)
+    this.countCall(clientId, actualMicroUsd, tin, tout)
+  }
+
+  /**
+   * Count one completed provider call, with no reservation and no
+   * admission check of any kind: this is the only counting entry
+   * point the request path uses (accounting-only meter, 2026-11-02).
+   * The success bookkeeping settle() always did still applies — a
+   * provider that just answered is healthy, so the consecutive
+   * failure count resets and a half-open breaker closes.
+   */
+  recordCall(clientId: string, actualMicroUsd: number, tin: number, tout: number): void {
+    this.countCall(clientId, actualMicroUsd, tin, tout)
+  }
+
+  private countCall(clientId: string, actualMicroUsd: number, tin: number, tout: number): void {
     this.requests += 1
     this.tokensIn += tin
     this.tokensOut += tout

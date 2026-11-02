@@ -20,7 +20,7 @@ function req(body: unknown) {
 }
 
 describe('briefing route', () => {
-  it('rejects missing or malformed shapes before reserving', async () => {
+  it('rejects missing or malformed shapes before any provider call', async () => {
     const d = deps()
     const cases: unknown[] = [
       {},
@@ -43,7 +43,7 @@ describe('briefing route', () => {
     expect(d.meter.snapshot().requests).toBe(0)
   })
 
-  it('rejects unknown figure keys and extra value fields before reserving', async () => {
+  it('rejects unknown figure keys and extra value fields before any provider call', async () => {
     const d = deps()
     const unknown = await handleBriefing(
       req({ figureSetId: 'p1', values: [{ key: 'fabricated_metric', value: 999 }] }),

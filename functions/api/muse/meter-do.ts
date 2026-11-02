@@ -13,9 +13,12 @@
  * DurableMeterClient below, whose surface mirrors the synchronous
  * Meter ops the handlers use today, made async by the network hop.
  *
- * Failure modes stay fail-closed: a MeterUnavailableError from the
- * adapter is answered 503 breaker_open (closed taxonomy) and no
- * unmetered provider call is ever made.
+ * Failure modes at this layer: a MeterUnavailableError from the
+ * adapter is answered 503 breaker_open (closed taxonomy), so a caller
+ * can tell the record did not persist. Since 2026-11-02 the meter is
+ * accounting only — the request path treats that 503 as a lost
+ * accounting record and serves the user anyway; only the diagnostics
+ * read path still surfaces it.
  */
 import {
   defaultMeterConfig,
@@ -70,8 +73,9 @@ class DurableMeterStorage implements MeterStorage {
 
 /**
  * MeterConfig is deployment config: plan defaults, with optional env
- * overrides (the per-client cap value itself remains the S10 decision;
- * this only wires where the configured value arrives from).
+ * overrides. The caps in it are reporting thresholds since 2026-11-02;
+ * this only wires where the configured values arrive from, and
+ * diagnostics reports them.
  */
 function configFromEnv(env: Record<string, unknown>): MeterConfig {
   const cfg = defaultMeterConfig()
@@ -154,6 +158,14 @@ export class MeterDurableObject {
             asNumber(args[4]),
           )
           return json(200, { result: null })
+        case 'recordCall':
+          await this.meter.recordCall(
+            asString(args[0]),
+            asNumber(args[1]),
+            asNumber(args[2]),
+            asNumber(args[3]),
+          )
+          return json(200, { result: null })
         case 'release':
           await this.meter.release(asString(args[0]))
           return json(200, { result: null })
@@ -212,8 +224,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 /**
  * Client adapter used by the proxy routes at port time: the Meter op
  * surface over a DO stub. Any failure — unreachable stub, non-200, or
- * the DO's own fail-closed 503 — surfaces as MeterUnavailableError so
- * the proxy maps it to 503 breaker_open and makes no provider call.
+ * the DO's own 503 — surfaces as MeterUnavailableError. Callers split
+ * by purpose since 2026-11-02: the request path records accounting
+ * through these ops best-effort and swallows the error (a lost record
+ * is invisible to the user), while the diagnostics read path surfaces
+ * it as 503 rather than reporting fabricated totals.
  *
  * Failures are retried within the bounds above, on a per-op safety
  * split. A DO-answered 503 is proof the op never persisted (the
@@ -225,9 +240,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  * it: the reads (their persisted effect is the expired-reservation
  * sweep), release (a delete), and reserve (a duplicate only holds
  * its estimate against the cap until the adapter's 120 s TTL sweep;
- * it is never charged). settle, recordError and recordFailure
- * increment counters unconditionally, so they never retry an
- * ambiguous failure: a double settle would double-count spend.
+ * it is never charged). settle, recordCall, recordError and
+ * recordFailure increment counters unconditionally, so they never
+ * retry an ambiguous failure: a double count would corrupt spend.
  */
 export class DurableMeterClient {
   private readonly retryDelaysMs: readonly number[]
@@ -298,6 +313,17 @@ export class DurableMeterClient {
     tout: number,
   ): Promise<void> {
     return this.call<null>('settle', [id, clientId, actualMicroUsd, tin, tout], false).then(
+      () => undefined,
+    )
+  }
+
+  recordCall(
+    clientId: string,
+    actualMicroUsd: number,
+    tin: number,
+    tout: number,
+  ): Promise<void> {
+    return this.call<null>('recordCall', [clientId, actualMicroUsd, tin, tout], false).then(
       () => undefined,
     )
   }

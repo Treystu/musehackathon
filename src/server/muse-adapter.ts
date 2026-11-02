@@ -13,9 +13,10 @@
  *     isolate starts at zero. Diagnostics reports which of the two a
  *     deployment carries (meterPersistenceFor) — the claim is read from
  *     the same env that chooses the meter, never hard-coded.
- *   - Per-client cap support is wired to configuration but has no default
- *     value. The cap is S10, the owner's number; inventing one here would
- *     silently decide it.
+ *   - Per-client cap configuration is read for diagnostics truthfulness
+ *     only. The judged flow enforces no per-client cap (owner
+ *     resolution, 2026-11-02: the meter is accounting only), so an
+ *     unset value is the truthful default, not a missing decision.
  */
 import {
   getMeterClient,
@@ -35,9 +36,9 @@ export interface MuseEnv {
   /** Runtime model; allowlisted to exactly this value. */
   MUSE_MODEL?: string
   MUSE_BASE_URL?: string
-  /** Aggregate shutoff ceiling, micro-USD. Defaults to the plan's judging cap. */
+  /** Budget reporting threshold, micro-USD. Defaults to the plan's judging cap. */
   MUSE_BUDGET_CAP_MICRO_USD?: string
-  /** S10 owner value. Unset means no per-client cap is applied. */
+  /** Read for diagnostics reporting only; never enforced (2026-11-02). */
   MUSE_PER_CLIENT_CAP_MICRO_USD?: string
   /**
    * Meter Durable Object binding (wrangler.toml, portal deployment).
@@ -70,9 +71,10 @@ function parsePositiveInt(raw: string | undefined): number | undefined {
 
 /**
  * The meter is shared by every route in the deployment on purpose: the
- * aggregate shutoff is a property of the deployment, not of one route.
- * Diagnostics reads the same instance rather than keeping a second set
- * of totals. With the METER binding the shared instance is the Durable
+ * aggregate accounting is a property of the deployment, not of one
+ * route. Diagnostics reads the same instance rather than keeping a
+ * second set of totals. With the METER binding the shared instance is
+ * the Durable
  * Object client (one named instance, 'judging-window-v1'); without it,
  * the in-isolate Meter configured from env as before.
  */
@@ -155,6 +157,15 @@ export function museRoute(
 
     const deps = depsFor(context.env)
     if (!deps) return json({ error: 'provider_down', detail: 'no shared key configured' }, 503)
+
+    // Best-effort accounting rides the runtime's waitUntil: a meter
+    // hop may finish after the reply is sent instead of delaying it
+    // (accounting-only meter, 2026-11-02). depsFor returns a fresh
+    // deps object per request, so wiring the hook here cannot leak
+    // one request's context into another.
+    if (typeof context.waitUntil === 'function') {
+      deps.defer = (promise) => context.waitUntil(promise)
+    }
 
     const reply = await handler(
       {

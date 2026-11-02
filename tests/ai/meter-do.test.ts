@@ -130,6 +130,20 @@ describe('durable meter client', () => {
     expect(await client.breakerState()).toBe('closed')
   })
 
+  it('recordCall counts a completed call with no reservation (request-path accounting)', async () => {
+    const { state } = fakeState()
+    const doObj = new MeterDurableObject(state)
+    const client = new DurableMeterClient(stubFor(doObj))
+
+    await client.recordCall('c1', 800, 128, 128)
+    await client.recordCall('c1', 800, 128, 128)
+    const snap = await client.snapshot()
+    expect(snap.requests).toBe(2)
+    expect(snap.spentMicroUsd).toBe(1600)
+    expect(snap.tokensIn).toBe(256)
+    expect(snap.tokensOut).toBe(256)
+  })
+
   it('fails closed when the stub answers non-200 or throws', async () => {
     const down: DurableObjectStubLike = {
       fetch: () => Promise.resolve(new Response('{}', { status: 503 })),

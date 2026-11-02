@@ -1,46 +1,55 @@
 /**
  * Shared proxy machinery for /api/muse/* (House).
  * Closed error taxonomy — raw provider bodies are never forwarded.
- * The counter store behind ProxyDeps is the MeterContract below: the
- * in-isolate Meter (src/core/ai/meter.ts) where no storage binding is
- * configured, or the Durable Object client (functions/api/muse/
- * meter-do.ts) where the deployment binds one — src/server/muse-adapter
- * chooses, and the diagnostics route reports which one a deployment
- * actually carries. Handlers await every meter op, so the synchronous
- * and the network-backed meter are interchangeable here; a meter that
- * cannot be read or written fails closed (mapMeterError), never an
- * unmetered provider call.
+ *
+ * The meter is ACCOUNTING ONLY (owner directive, 2026-11-02): it
+ * counts and reports, but it never blocks, gates, delays, or fails a
+ * user request. Admission to a route is shape + allowlist + provider
+ * health alone. The counter store behind ProxyDeps is the
+ * MeterContract below: the in-isolate Meter (src/core/ai/meter.ts)
+ * where no storage binding is configured, or the Durable Object
+ * client (functions/api/muse/meter-do.ts) where the deployment binds
+ * one — src/server/muse-adapter chooses, and the diagnostics route
+ * reports which one a deployment actually carries.
+ *
+ * Why this changed, measured rather than believed: admission used to
+ * run through the meter — a reserve before every provider call, and
+ * budget/cap/breaker checks on the meter's snapshot — so one failed
+ * Durable Object hop mapped to a fail-closed 503 breaker_open that
+ * recorded nothing. Six hosted-browser sessions showed Explain and
+ * Briefing "unavailable" in the UI while the same routes answered 200
+ * to direct probes in the same windows; that fail-closed hop is the
+ * standing suspect, and de-gating removes the class, not the symptom.
+ * Caps are reporting thresholds only (diagnostics still reports
+ * budgetCapMicroUsd / spent / budgetExhausted truthfully), and the
+ * judged flow enforces no per-client cap. The provider breaker and
+ * its wait-out STAY: they track genuine upstream failures, which is
+ * provider health, not metering.
  */
 import type {
   BreakerState,
   Meter,
   MeterSnapshot,
 } from '../core/ai/meter'
-import { MeterUnavailableError } from '../core/ai/meter-persistence'
 import type { MuseProvider } from '../core/ai/provider'
 import type { ProxyError } from '../core/ai/proxy-errors'
 
 /**
- * The meter surface the handlers settle against. Each op may answer
- * synchronously (the in-isolate Meter) or across the Durable Object hop
- * (DurableMeterClient); the return unions let one deps shape carry
- * either, and `await` at the call sites normalises the two. The
- * synchronous Meter satisfies this contract structurally.
+ * The meter surface the handlers account against. Each op may answer
+ * synchronously (the in-isolate Meter) or across the Durable Object
+ * hop (DurableMeterClient); the return unions let one deps shape
+ * carry either, and `await` at the call sites normalises the two. The
+ * synchronous Meter satisfies this contract structurally. There is
+ * deliberately no reserve/settle/release here: counting a completed
+ * call (recordCall) is the whole request-path surface.
  */
 export interface MeterContract {
-  reserve(
-    clientId: string,
-    estMicroUsd: number,
-    estTokens: number,
-  ): string | null | Promise<string | null>
-  settle(
-    id: string,
+  recordCall(
     clientId: string,
     actualMicroUsd: number,
     tin: number,
     tout: number,
   ): void | Promise<void>
-  release(id: string): void | Promise<void>
   recordError(cls: string): void | Promise<void>
   recordFailure(now?: number): void | Promise<void>
   snapshot(): MeterSnapshot | Promise<MeterSnapshot>
@@ -56,6 +65,14 @@ export interface ProxyDeps {
   allowedModels: readonly string[]
   /** Wait-out timing; tests inject ~0. Defaults to DEFAULT_WAIT_OUT. */
   waitOut?: WaitOutConfig
+  /**
+   * Deferral for best-effort accounting promises: the Pages adapter
+   * wires the runtime's waitUntil here so a deferred Durable Object
+   * accounting hop can finish after the reply is sent. Absent in
+   * hermetic tests and non-Pages callers — accounting then runs
+   * fire-and-forget on the same promise.
+   */
+  defer?: (promise: Promise<unknown>) => void
 }
 
 /**
@@ -68,8 +85,9 @@ export interface ProxyDeps {
  * the provider call retries twice inside the route, and the shipped
  * client retry remains the outer layer — combined coverage of roughly
  * two minutes, with longer outages ending in the honest paused copy.
- * Breaker accounting is unchanged: one recordFailure per route
- * request, from the final attempt only.
+ * Breaker accounting is unchanged in count: one recordFailure per
+ * route request, from the final attempt only — recorded best-effort,
+ * like every meter write (see account() below).
  */
 export interface WaitOutConfig {
   breakerWaitMs: number
@@ -90,16 +108,83 @@ export function waitOutFor(deps: ProxyDeps): WaitOutConfig {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /**
+ * Best-effort meter accounting: run one meter write so that its
+ * failure is invisible to the request. The op starts immediately —
+ * with the synchronous in-isolate Meter it has already landed when
+ * this returns, which keeps hermetic route tests deterministic — and
+ * any promise it returns is handed to deps.defer (the runtime's
+ * waitUntil) when one is wired, or left fire-and-forget otherwise.
+ * Sync throws and async rejections are swallowed alike: a lost
+ * accounting record must never surface to a user, and diagnostics
+ * keeps reporting truthfully for the calls that did record.
+ */
+export function account(deps: ProxyDeps, op: (meter: MeterContract) => void | Promise<void>): void {
+  let result: void | Promise<void>
+  try {
+    result = op(deps.meter)
+  } catch {
+    return
+  }
+  if (result === undefined || result === null) return
+  const safe = Promise.resolve(result).catch(() => undefined)
+  if (deps.defer) {
+    try {
+      deps.defer(safe)
+      return
+    } catch {
+      // A deferral hook that throws must not take the write's
+      // invisibility down with it; fall through to fire-and-forget.
+    }
+  }
+  void safe
+}
+
+/** Count one completed provider call at its flat settle cost. */
+export function accountCall(
+  deps: ProxyDeps,
+  clientId: string,
+  actualMicroUsd: number,
+  tin: number,
+  tout: number,
+): void {
+  account(deps, (meter) => meter.recordCall(clientId, actualMicroUsd, tin, tout))
+}
+
+/** Count one failure by closed error class (counts only, Q1). */
+export function accountError(deps: ProxyDeps, cls: string): void {
+  account(deps, (meter) => meter.recordError(cls))
+}
+
+/** Record the request's one provider-breaker failure, best-effort. */
+export function accountFailure(deps: ProxyDeps): void {
+  account(deps, (meter) => meter.recordFailure())
+}
+
+/**
+ * Read the provider breaker state for the gate. The breaker lives in
+ * the meter store, so reading it can fail with the store — and a
+ * store failure is an accounting outage, not a provider outage: it
+ * answers 'closed' (proceed) here, never an admission refusal. Only
+ * a state the store actually reported can wait a request out.
+ */
+async function breakerStateOrClosed(deps: ProxyDeps): Promise<BreakerState> {
+  try {
+    return await deps.meter.breakerState()
+  } catch {
+    return 'closed'
+  }
+}
+
+/**
  * Poll the breaker until it is no longer open or the wait budget is
- * spent. A meter that throws fails the wait immediately (the caller's
- * fail-closed mapping handles it) — waiting never swallows a meter
- * outage into an unmetered call.
+ * spent. An unreadable breaker reads as closed (see
+ * breakerStateOrClosed), so the wait ends in "proceed", not a 503.
  */
 export async function waitForBreaker(deps: ProxyDeps): Promise<boolean> {
   const cfg = waitOutFor(deps)
   const deadline = Date.now() + cfg.breakerWaitMs
   for (;;) {
-    if ((await deps.meter.breakerState()) !== 'open') return true
+    if ((await breakerStateOrClosed(deps)) !== 'open') return true
     if (Date.now() >= deadline) return false
     await sleep(Math.min(cfg.pollMs, Math.max(0, deadline - Date.now())))
   }
@@ -139,7 +224,12 @@ export function err(status: number, e: ProxyError, detail?: string): ProxyReply 
   return { status, body: detail ? { error: e, detail } : { error: e } }
 }
 
-/** Pre-call gates shared by every route: shutoff, breaker, model allowlist. */
+/**
+ * Pre-call gates shared by every route: method/path allowlist, body
+ * shape, model allowlist, and the provider breaker wait-out. Nothing
+ * here reads a budget, a cap, or a reservation: spend state is
+ * diagnostics data, not admission data (2026-11-02).
+ */
 export async function preCallGate(
   req: { method: string; body: unknown },
   deps: ProxyDeps,
@@ -152,29 +242,14 @@ export async function preCallGate(
   if (typeof body.model === 'string' && !deps.allowedModels.includes(body.model)) {
     return err(400, 'not_allowlisted')
   }
-  if ((await deps.meter.snapshot()).budgetExhausted) return err(429, 'budget_exhausted')
-  // An open breaker is waited out, not failed on sight (see
+  // An open provider breaker is waited out, not failed on sight (see
   // DEFAULT_WAIT_OUT): the pause lasts ~30 s by configuration, and a
   // reader whose question lands inside it should get the answer when
-  // it lifts. No reservation is held during the wait — reserve happens
-  // in the handlers, after this gate passes.
-  if ((await deps.meter.breakerState()) === 'open' && !(await waitForBreaker(deps))) {
+  // it lifts.
+  if ((await breakerStateOrClosed(deps)) === 'open' && !(await waitForBreaker(deps))) {
     return err(503, 'breaker_open')
   }
   return null
-}
-
-/**
- * Map a meter persistence failure onto the closed taxonomy. A meter
- * that cannot be read or written fails closed as 503 breaker_open:
- * the AI surface degrades exactly as it does on an open breaker, and
- * no unmetered provider call is made. Anything else is provider_down.
- * (Mirror of functions/api/muse/shared.ts, kept beside the handlers'
- * shared machinery; the handlers import from here.)
- */
-export function mapMeterError(e: unknown): ProxyReply {
-  if (e instanceof MeterUnavailableError) return err(503, 'breaker_open')
-  return err(502, 'provider_down')
 }
 
 /** Map a thrown provider failure onto the closed taxonomy. */

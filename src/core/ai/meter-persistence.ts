@@ -10,10 +10,15 @@
  * MeterStorage interface; the Durable Object binding that implements it
  * lives in functions/api/muse/meter-do.ts.
  *
- * Failure modes are fail-closed: any storage failure, corrupt record,
- * or unknown schema version throws MeterUnavailableError and leaves the
- * stored record untouched. A corrupt record is never silently reset —
- * the only path that overwrites one is operatorReset().
+ * Failure modes are fail-closed at this layer: any storage failure,
+ * corrupt record, or unknown schema version throws
+ * MeterUnavailableError and leaves the stored record untouched. A
+ * corrupt record is never silently reset — the only path that
+ * overwrites one is operatorReset(). What changed on 2026-11-02 is
+ * the caller, not this layer: the request path treats a throw here as
+ * a lost accounting record and serves the user anyway (the meter is
+ * accounting only), while the diagnostics read path still surfaces
+ * it rather than fabricating totals.
  */
 import {
   Meter,
@@ -320,6 +325,18 @@ export class PersistentMeter {
   ): Promise<void> {
     return this.apply((m) => {
       m.settle(id, clientId, actualMicroUsd, tin, tout)
+    })
+  }
+
+  /** Accounting-only counting for the request path (2026-11-02). */
+  recordCall(
+    clientId: string,
+    actualMicroUsd: number,
+    tin: number,
+    tout: number,
+  ): Promise<void> {
+    return this.apply((m) => {
+      m.recordCall(clientId, actualMicroUsd, tin, tout)
     })
   }
 

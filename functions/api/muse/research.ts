@@ -5,27 +5,26 @@
  * runs the Muse Responses API's web_search tool through the provider
  * and returns prose WITH its sources. The provider refuses ungrounded
  * replies (no citations), so a 200 from this route always carries a
- * source list. Settled at a conservative flat rate: web search bills
+ * source list. Counted at a conservative flat rate: web search bills
  * separately ($2.50 per 1,000 searches) on top of tokens, and the flat
  * 5,000 micro-USD covers both at demo scale against the judging
- * allowance. Counts only; no bodies are stored (Q1).
+ * allowance. Accounting is best-effort only (2026-11-02): the meter
+ * never admits or refuses a request. Counts only; no bodies are
+ * stored (Q1).
  */
-import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
 import { findBannedConstruction } from '../../../src/core/ai/validator'
-import { preCallGate, mapMeterError, mapProviderError, attemptCall, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { preCallGate, mapProviderError, attemptCall, accountCall, accountError, accountFailure, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
 const ALLOWED_PATHS = new Set(['/api/muse/research'])
 const MAX_QUERY_CHARS = 500
 const MAX_PLACES = 8
 const MAX_PLACE_CHARS = 120
-const EST_COST_MICRO = 5000
-const EST_TOKENS = 1024
 const ACTUAL_COST_MICRO = 5000
 const ACTUAL_TOKENS_IN = 256
 const ACTUAL_TOKENS_OUT = 512
 
-async function handleResearchCore(
+export async function handleResearch(
   req: { method: string; path: string; body: unknown; clientId: string },
   deps: ProxyDeps,
 ): Promise<ProxyReply> {
@@ -52,12 +51,6 @@ async function handleResearchCore(
     places = body.places as string[]
   }
 
-  const reservation = await deps.meter.reserve(req.clientId, EST_COST_MICRO, EST_TOKENS)
-  if (!reservation) {
-    await deps.meter.recordError('budget_exhausted')
-    return err(429, 'budget_exhausted')
-  }
-
   try {
     const result = await attemptCall(deps, () =>
       deps.provider.research(
@@ -65,20 +58,16 @@ async function handleResearchCore(
         new AbortController().signal,
       ),
     )
-    await deps.meter.settle(
-      reservation,
-      req.clientId,
-      ACTUAL_COST_MICRO,
-      ACTUAL_TOKENS_IN,
-      ACTUAL_TOKENS_OUT,
-    )
+    // The provider answered: count the call at its flat cost. Best
+    // effort — a failed accounting hop changes nothing the user sees.
+    accountCall(deps, req.clientId, ACTUAL_COST_MICRO, ACTUAL_TOKENS_IN, ACTUAL_TOKENS_OUT)
     if (
       typeof result.prose !== 'string' ||
       !result.prose.trim() ||
       !Array.isArray(result.sources) ||
       result.sources.length === 0
     ) {
-      await deps.meter.recordError('provider_down')
+      accountError(deps, 'provider_down')
       return err(502, 'provider_down', 'research returned no sourced findings')
     }
     // Fair-housing gate (2026-11-02): research prose was prompt-guarded
@@ -89,7 +78,7 @@ async function handleResearchCore(
     // gate: ranking, recommendation, steering, or proxy
     // characterisation withholds the findings, recorded by class.
     if (findBannedConstruction(result.prose)) {
-      await deps.meter.recordError('banned_construction')
+      accountError(deps, 'banned_construction')
       return { status: 200, body: { withheld: true, failure: 'banned_construction' } }
     }
     return {
@@ -100,24 +89,10 @@ async function handleResearchCore(
       },
     }
   } catch (e) {
-    await deps.meter.release(reservation)
-    await deps.meter.recordFailure()
+    accountFailure(deps)
     const mapped = mapProviderError(e)
-    await deps.meter.recordError(String(mapped.body.error))
+    accountError(deps, String(mapped.body.error))
     return mapped
-  }
-}
-
-/** Exported handler; fails closed on meter unavailability, like its siblings. */
-export async function handleResearch(
-  req: { method: string; path: string; body: unknown; clientId: string },
-  deps: ProxyDeps,
-): Promise<ProxyReply> {
-  try {
-    return await handleResearchCore(req, deps)
-  } catch (e) {
-    if (e instanceof MeterUnavailableError) return mapMeterError(e)
-    throw e
   }
 }
 

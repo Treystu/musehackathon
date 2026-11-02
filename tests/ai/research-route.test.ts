@@ -43,7 +43,7 @@ describe('research route', () => {
     ])
   })
 
-  it('rejects malformed shapes before reserving', async () => {
+  it('rejects malformed shapes before any provider call', async () => {
     const d = deps()
     for (const body of [{}, { queryText: '' }, { queryText: 'x'.repeat(501) }, { queryText: 'ok', places: [42] }]) {
       const r = await handleResearch(req(body), d)

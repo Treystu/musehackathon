@@ -21,11 +21,19 @@ import {
 import type { ProxyDeps } from '../../src/server/muse-proxy'
 
 /**
- * FU1 wiring proof: the proxy handlers settle against the Durable
- * Object client (not the in-isolate Meter) when deps carry one, and a
- * meter that cannot be read or written fails closed — 503
- * breaker_open, no provider call — at both the gate and the reserve.
- * All hermetic: one in-memory Durable Object behind a fake namespace.
+ * Wiring proof, accounting-only contract (2026-11-02): the proxy
+ * handlers account against the Durable Object client (not the
+ * in-isolate Meter) when deps carry one, and a meter that cannot be
+ * read or written changes NOTHING for the user — the request still
+ * succeeds with the provider's answer and the lost accounting record
+ * is invisible. (Before de-gating, the same failures were 503
+ * breaker_open with no provider call; that fail-closed hop is the
+ * class the overhaul removes.) All hermetic: one in-memory Durable
+ * Object behind a fake namespace.
+ *
+ * Accounting through the DO client is deferred fire-and-forget in the
+ * handlers, so tests that assert recorded totals first flush the
+ * pending hops (flushAccounting); the reply never waits for them.
  */
 
 function fakeStorage(): DurableObjectStorageLike {
@@ -72,19 +80,27 @@ function depsWith(meter: ProxyDeps['meter'], provider: MuseProvider): ProxyDeps 
   return { meter, provider, allowedModels: ['spark-test'] }
 }
 
-describe('handlers settle against the Durable Object client', () => {
+/** Let deferred accounting hops land before asserting recorded totals. */
+async function flushAccounting(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+}
+
+describe('handlers account against the Durable Object client', () => {
   beforeEach(() => {
     resetMeterForTests()
   })
 
-  it('reserve -> settle flows through the client into durable state', async () => {
+  it('recordCall flows through the client into durable state', async () => {
     const { client } = fakeMeter()
     const r = await handleIntent(intentReq(), depsWith(client, createStubProvider()))
     expect(r.status).toBe(200)
     expect(r.body.intent).toBeDefined()
 
-    // A second client over the same object observes the settled totals:
-    // the state lives in the Durable Object, not in this isolate.
+    // A second client over the same object observes the recorded
+    // totals: the state lives in the Durable Object, not this isolate.
+    await flushAccounting()
     const snap = await client.snapshot()
     expect(snap.requests).toBe(1)
     expect(snap.spentMicroUsd).toBe(1000)
@@ -93,7 +109,7 @@ describe('handlers settle against the Durable Object client', () => {
     expect(snap.budgetExhausted).toBe(false)
   })
 
-  it('release + recordFailure + recordError flow through on provider failure', async () => {
+  it('recordFailure + recordError flow through on provider failure', async () => {
     const { client } = fakeMeter()
     const provider = createStubProvider({
       async intent() {
@@ -104,8 +120,9 @@ describe('handlers settle against the Durable Object client', () => {
     expect(r.status).toBe(429)
     expect(r.body.error).toBe('rate_limited')
 
+    await flushAccounting()
     const snap = await client.snapshot()
-    // Reservation released (nothing settled), the failure class counted.
+    // Nothing counted as a completed call; the failure class counted.
     expect(snap.requests).toBe(0)
     expect(snap.spentMicroUsd).toBe(0)
     expect(snap.errors.rate_limited).toBe(1)
@@ -118,12 +135,12 @@ describe('handlers settle against the Durable Object client', () => {
   })
 })
 
-describe('meter failure fails closed (MeterUnavailableError -> 503 breaker_open)', () => {
+describe('meter down: the request still succeeds (accounting-only pin)', () => {
   beforeEach(() => {
     resetMeterForTests()
   })
 
-  it('at the pre-call gate: an unreachable stub means no provider call', async () => {
+  it('an unreachable meter stub: provider answer served, failure invisible', async () => {
     const deadStub: DurableObjectStubLike = {
       async fetch() {
         throw new Error('unreachable')
@@ -136,21 +153,25 @@ describe('meter failure fails closed (MeterUnavailableError -> 503 breaker_open)
         return { intent: { mode: 'lookup', geographies: [], metricKeys: [], filters: [], clarificationNeeded: true } }
       },
     })
+    // The decisive de-gating pin: every meter op fails (breaker read
+    // at the gate, recordCall after the provider answers), and the
+    // reply is still the provider's 200 — no 503, no error field.
     const r = await handleIntent(
       intentReq(),
-      depsWith(new DurableMeterClient(deadStub), provider),
+      depsWith(new DurableMeterClient(deadStub, { retryDelaysMs: [0, 0] }), provider),
     )
-    expect(r.status).toBe(503)
-    expect(r.body.error).toBe('breaker_open')
-    expect(providerCalls).toBe(0)
+    expect(r.status).toBe(200)
+    expect(r.body.intent).toBeDefined()
+    expect(r.body.error).toBeUndefined()
+    expect(providerCalls).toBe(1)
   })
 
-  it('at reserve: a DO that 503s the reserve means no provider call', async () => {
+  it('a DO that 503s the accounting write: provider answer still served', async () => {
     const { doObj } = fakeMeter()
-    const reserveDown: DurableObjectStubLike = {
+    const accountingDown: DurableObjectStubLike = {
       fetch: (input, init) => {
         const op = (JSON.parse(init?.body ?? '{}') as { op?: string }).op
-        if (op === 'reserve') {
+        if (op === 'recordCall') {
           return Promise.resolve(
             new Response(JSON.stringify({ error: 'breaker_open' }), { status: 503 }),
           )
@@ -167,11 +188,11 @@ describe('meter failure fails closed (MeterUnavailableError -> 503 breaker_open)
     })
     const r = await handleIntent(
       intentReq(),
-      depsWith(new DurableMeterClient(reserveDown), provider),
+      depsWith(new DurableMeterClient(accountingDown, { retryDelaysMs: [0, 0] }), provider),
     )
-    expect(r.status).toBe(503)
-    expect(r.body.error).toBe('breaker_open')
-    expect(providerCalls).toBe(0)
+    expect(r.status).toBe(200)
+    expect(r.body.intent).toBeDefined()
+    expect(providerCalls).toBe(1)
   })
 })
 
@@ -192,7 +213,7 @@ describe('adapter chooses the meter the deployment actually carries', () => {
     expect(meterPersistenceFor({})).toBe('isolate')
   })
 
-  it('diagnostics reads the same durable store the handlers settle against', async () => {
+  it('diagnostics reads the same durable store the handlers account against', async () => {
     const { namespace, client } = fakeMeter()
     const env: MuseEnv = { MUSE_API_KEY: 'test-key', METER: namespace }
 
@@ -201,6 +222,7 @@ describe('adapter chooses the meter the deployment actually carries', () => {
       depsWith(client, createStubProvider()),
     )
     expect(r.status).toBe(200)
+    await flushAccounting()
 
     const response = await handleDiagnostics({
       request: new Request('https://app.test/api/muse/diagnostics', { method: 'GET' }),

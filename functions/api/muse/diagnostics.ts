@@ -7,8 +7,9 @@
  * integers, and closed enums only: there is no field that could carry the key,
  * a query, a provider body, or a per-visitor value.
  *
- * The meter is the same instance the proxy routes settle against, so these
- * totals are the ones that govern shutoff and the breaker. Its persistence
+ * The meter is the same instance the proxy routes account against, so
+ * these totals are the deployment's actual counts (reporting only
+ * since 2026-11-02: they govern no admission decision). Its persistence
  * class is read from the deployment env (meterPersistenceFor): the portal
  * binds the Durable Object store (binding METER, one named instance;
  * src/core/ai/meter-persistence.ts over functions/api/muse/meter-do.ts)
@@ -61,9 +62,11 @@ export async function handleDiagnostics(context: PagesContext<MuseEnv>): Promise
   const meter = meterFor(env)
 
   // The meter reads cross the Durable Object hop in the portal
-  // deployment. A meter that cannot be read fails closed on the same
-  // taxonomy as the proxy routes (503 breaker_open) rather than
-  // surfacing as an unhandled error or, worse, a fabricated total.
+  // deployment. This unmetered read path is the pattern for
+  // accounting-only reads: a meter that cannot be read answers 503
+  // breaker_open rather than surfacing as an unhandled error or,
+  // worse, a fabricated total. (The proxy routes no longer fail on
+  // meter errors at all — their writes are best-effort accounting.)
   let config: Awaited<ReturnType<typeof meter.configSnapshot>>
   let snapshot: Awaited<ReturnType<typeof meter.snapshot>>
   let breaker: Awaited<ReturnType<typeof meter.breakerState>>

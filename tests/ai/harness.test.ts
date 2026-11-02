@@ -310,11 +310,14 @@ async function assertErrorRow(id: string): Promise<void> {
       break
     }
     case 'err-15-breaker-open': {
+      // Provider breaker only (2026-11-02 re-pin): the breaker tracks
+      // genuine upstream failures and still waits/refuses on that
+      // basis; the removed half of this case was reserve() refusing
+      // on breaker state, which was meter admission, now gone.
       const meter = new Meter({ ...defaultMeterConfig(), breakerFailureThreshold: 2 })
       meter.recordFailure()
       meter.recordFailure()
       expect(meter.breakerState()).toBe('open')
-      expect(meter.reserve('c1', 100, 10)).toBeNull()
       const deps = {
         meter,
         provider: createStubProvider(),
@@ -327,15 +330,19 @@ async function assertErrorRow(id: string): Promise<void> {
       break
     }
     case 'err-16-budget-shutoff-byo': {
+      // Re-pinned 2026-11-02 (accounting-only meter): the server no
+      // longer refuses at the cap — the route serves, and the cap
+      // state reaches the client only as a diagnostics fact, which is
+      // what drives the BYO offer below. The case name is the golden
+      // corpus id and stays; its server half now pins the new
+      // contract (200 over the cap, spend still recorded).
       const meter = new Meter({ ...defaultMeterConfig(), budgetCapMicroUsd: 1000 })
-      const id = meter.reserve('c1', 1000, 100)
-      expect(id).not.toBeNull()
-      meter.settle(id as string, 'c1', 1000, 10, 10)
+      meter.recordCall('c1', 1000, 10, 10)
       expect(meter.snapshot().budgetExhausted).toBe(true)
       const deps = { meter, provider: createStubProvider(), allowedModels: ['spark-test'] }
       const r = await handleIntent({ ...INTENT_REQ }, deps)
-      expect(r.status).toBe(429)
-      expect(r.body.error).toBe('budget_exhausted')
+      expect(r.status).toBe(200)
+      expect(r.body.error).toBeUndefined()
       expect(shouldOfferByo('budget_exhausted')).toBe(true)
       expect(shouldOfferByo('credits_exhausted')).toBe(true)
       expect(decideAskPath({ budgetExhausted: true, breakerOpen: false, hasByoKey: true })).toBe('byo')

@@ -52,7 +52,7 @@ describe('transcribe route (Item 12)', () => {
     expect(seen!.mimeType).toBe('audio/webm')
   })
 
-  it('audio metering: the call settles into the meter as counts only', async () => {
+  it('audio metering: the call records into the meter as counts only', async () => {
     const d = deps(
       createStubProvider({
         async transcribe() {
@@ -119,7 +119,7 @@ describe('transcribe route (Item 12)', () => {
     expect(d.meter.snapshot().requests).toBe(0)
   })
 
-  it('rejects audio over the ceiling before any provider call or reservation', async () => {
+  it('rejects audio over the ceiling before any provider call', async () => {
     let calls = 0
     const d = deps(
       createStubProvider({
@@ -152,7 +152,7 @@ describe('transcribe route (Item 12)', () => {
     expect(get.body.error).toBe('not_allowlisted')
   })
 
-  it('maps provider failures onto the closed taxonomy and releases the reservation', async () => {
+  it('maps provider failures onto the closed taxonomy and counts nothing', async () => {
     let fail = true
     const d = deps(
       createStubProvider({
@@ -167,7 +167,9 @@ describe('transcribe route (Item 12)', () => {
     expect(r.body.error).toBe('rate_limited')
     expect(d.meter.snapshot().requests).toBe(0)
     expect(d.meter.snapshot().errors.rate_limited).toBe(1)
-    // Reservation was released: the same client can immediately succeed.
+    // No admission state lingers from the failure: the same client
+    // can immediately succeed (one failure is below the breaker
+    // threshold, and nothing was reserved against any cap).
     fail = false
     const ok = await handleTranscribe(req(AUDIO), d)
     expect(ok.status).toBe(200)
@@ -208,7 +210,10 @@ describe('transcribe route (Item 12)', () => {
     }
   })
 
-  it('hard shutoff: an exhausted budget returns budget_exhausted before the provider', async () => {
+  it('no hard shutoff: an over-cap meter still serves and keeps counting', async () => {
+    // Accounting-only contract (2026-11-02): the budget cap is a
+    // reporting threshold. Spend past it is reported by the snapshot,
+    // never refused at the route.
     let calls = 0
     const d = deps(
       createStubProvider({
@@ -220,9 +225,54 @@ describe('transcribe route (Item 12)', () => {
       { ...defaultMeterConfig(), budgetCapMicroUsd: 1 },
     )
     const r = await handleTranscribe(req(AUDIO), d)
-    expect(r.status).toBe(429)
-    expect(r.body.error).toBe('budget_exhausted')
-    expect(calls).toBe(0)
+    expect(r.status).toBe(200)
+    expect(r.body.transcript).toBe('x')
+    expect(calls).toBe(1)
+    expect(d.meter.snapshot().budgetExhausted).toBe(true)
+    expect(d.meter.snapshot().requests).toBe(1)
+  })
+
+  it('wait-out parity: a provider that recovers inside the retry schedule answers 200', async () => {
+    // Transcribe shares the sibling routes' provider-health path
+    // (preCallGate wait-out + attemptCall retries); this and the
+    // next test pin that parity, which the plan's Phase 5 calls out.
+    let calls = 0
+    const d = deps(
+      createStubProvider({
+        async transcribe() {
+          calls += 1
+          if (calls < 3) throw Object.assign(new Error('down'), { code: 'provider_down' })
+          return { transcript: 'rent in Hilo', confidence: 0.9 }
+        },
+      }),
+    )
+    const r = await handleTranscribe(req(AUDIO), d)
+    expect(r.status).toBe(200)
+    expect(calls).toBe(3)
+    expect(d.meter.snapshot().requests).toBe(1)
+  })
+
+  it('wait-out parity: an open breaker that lifts inside the wait budget is served', async () => {
+    const meter = new Meter({
+      ...defaultMeterConfig(),
+      breakerFailureThreshold: 1,
+      breakerCooldownMs: 30,
+    })
+    meter.recordFailure()
+    expect(meter.breakerState()).toBe('open')
+    const d = {
+      meter,
+      provider: createStubProvider({
+        async transcribe() {
+          return { transcript: 'ok', confidence: 0.9 }
+        },
+      }),
+      allowedModels: ['spark-test'],
+      waitOut: { breakerWaitMs: 5_000, pollMs: 1, retryDelaysMs: [1, 1] as number[] },
+    }
+    const r = await handleTranscribe(req(AUDIO), d)
+    expect(r.status).toBe(200)
+    expect(r.body.transcript).toBe('ok')
   })
 
   it('breaker: repeated provider failures open the breaker for later calls', async () => {

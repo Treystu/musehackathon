@@ -1,14 +1,13 @@
 /**
- * Shared proxy machinery for /api/muse/* (House).
- * Closed error taxonomy — raw provider bodies are never forwarded.
- * The counter store's logic core is src/core/ai/meter.ts (Meter class);
- * its persistence adapter is src/core/ai/meter-persistence.ts
- * (PersistentMeter over one durable record) with the Durable Object
- * binding in functions/api/muse/meter-do.ts (wrangler binding METER).
- * ProxyDeps.meter remains the synchronous Meter contract the
- * framework-free handlers call; at port time the handlers await the
- * DO-backed client (same op surface) and meter failures route through
- * mapMeterError — fail-closed, never an unmetered call.
+ * Legacy mirror of the shared proxy machinery for /api/muse/*.
+ * The routes import the live machinery from src/server/muse-proxy;
+ * this module remains for the MeterDurableObject re-export below
+ * (the worker bundle's binding needs it in this module graph) and
+ * for the taxonomy helpers pinned by the meter-do tests. It is kept
+ * semantically in step with the live gate: since 2026-11-02 the
+ * meter is accounting only, so preCallGate here carries no budget or
+ * cap refusal either. Closed error taxonomy — raw provider bodies
+ * are never forwarded.
  */
 import type { Meter } from '../../../src/core/ai/meter'
 import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
@@ -27,7 +26,8 @@ export function err(status: number, e: ProxyError, detail?: string): ProxyReply 
   return { status, body: detail ? { error: e, detail } : { error: e } }
 }
 
-/** Pre-call gates shared by every route: shutoff, breaker, model allowlist. */
+/** Pre-call gates: provider breaker and model allowlist. No budget
+ *  or cap check — spend state is reporting data, not admission data. */
 export function preCallGate(
   req: { method: string; body: unknown },
   deps: ProxyDeps,
@@ -40,16 +40,17 @@ export function preCallGate(
   if (typeof body.model === 'string' && !deps.allowedModels.includes(body.model)) {
     return err(400, 'not_allowlisted')
   }
-  if (deps.meter.snapshot().budgetExhausted) return err(429, 'budget_exhausted')
   if (deps.meter.breakerState() === 'open') return err(503, 'breaker_open')
   return null
 }
 
 /**
- * Map a meter persistence failure onto the closed taxonomy. A meter
- * that cannot be read or written fails closed as 503 breaker_open:
- * the AI surface degrades exactly as it does on an open breaker, and
- * no unmetered provider call is made. Anything else is provider_down.
+ * Map a meter persistence failure onto the closed taxonomy, for the
+ * read paths that must not fabricate totals (diagnostics): a meter
+ * that cannot be read answers 503 breaker_open. The request path
+ * does not use this mapping any more — its meter writes are
+ * best-effort accounting whose failure is invisible (2026-11-02).
+ * Anything else is provider_down.
  */
 export function mapMeterError(e: unknown): ProxyReply {
   if (e instanceof MeterUnavailableError) return err(503, 'breaker_open')

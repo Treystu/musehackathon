@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useHousingQuery } from '../core/useHousingQuery'
 import { createLiveProvider, META_API_BASE, MUSE_SPARK_MODEL } from '../core/ai/meta-client'
 import { getMetaKey } from '../core/ai/meta-key'
@@ -24,7 +24,7 @@ import { SweepTable } from './SweepTable'
 import { Comparison } from './Comparison'
 import { FundingSection } from './Funding'
 import { StateFilter } from './StateFilter'
-import { MapView } from './MapView'
+import { SessionMapView } from './map/SessionMapView'
 import { sortSweepRows } from '../core/sweep-sorting'
 import { scopePrefixesForStates, STATE_NAME_BY_CODE } from '../core/sweep/states'
 import { AskPanel, needsResearch } from './ai/AskPanel'
@@ -47,13 +47,13 @@ import {
 } from './ai/general-runner'
 import { createSpeechDriver, type SpeechDriver } from './ai/speech-driver'
 import { composeSpokenSummary, guardSpokenSentences } from './ai/spoken-answer'
-import { ThinkingIndicator } from './ai/ThinkingIndicator'
+import { StagedStatus } from './ai/StagedStatus'
+import { AskSessionStore } from './ai/session-store'
 import { researchAck } from './ai/ack'
 import {
   canRefine,
   dismissModal,
   expireModalForNewQuestion,
-  initialModalState,
   landModal,
   markRefined,
   proposeModal,
@@ -290,12 +290,33 @@ export default function App() {
    * pending line renders while the request is still in flight so
    * the wait is visible rather than silent.
    */
-  const [answerRequest, setAnswerRequest] = useState<{
-    id: number
-    intent: ValidatedIntent
-    queryText: string
-  } | null>(null)
-  const [answer, setAnswer] = useState<ComposedAnswer | null>(null)
+  /*
+   * The Ask session store (drive item 17): created once here, above
+   * every tab surface, and shared with AskPanel. The answer request,
+   * the composed answer, its terminal note, the general lane's state,
+   * and the decision-modal state all live in it (the declarations
+   * below are read/write views over its answer slice), so switching
+   * tabs — which unmounts the Explore subtree, AskPanel included —
+   * destroys nothing: an in-flight run's completion handlers close
+   * over the store, and its answer is waiting when the reader comes
+   * back. The store also persists the serializable session to
+   * sessionStorage, so an accidental reload restores the thread
+   * (session-store.ts states exactly what survives).
+   */
+  const [sessionStore] = useState(() => new AskSessionStore())
+  const getAnswerSnapshot = () => sessionStore.getSnapshot().answer
+  const answerState = useSyncExternalStore(
+    sessionStore.subscribe,
+    getAnswerSnapshot,
+    // Server snapshot (see AskPanel's note): a static render reads
+    // the session's current answer slice.
+    getAnswerSnapshot,
+  )
+  const answerRequest = answerState.request
+  const setAnswerRequest = (value: { id: number; intent: ValidatedIntent; queryText: string } | null) =>
+    sessionStore.setAnswerState({ request: value })
+  const answer = answerState.answer
+  const setAnswer = (value: ComposedAnswer | null) => sessionStore.setAnswerState({ answer: value })
   /**
    * Voice-out (plan C10, branch b — no Muse TTS exists on the Model
    * API roster, re-verified 2026-11-02): when the conversation is in
@@ -320,8 +341,12 @@ export default function App() {
       driver.speak(composeSpokenSummary(answer))
     }
   }, [answer, voiceMode])
-  const [answerNote, setAnswerNote] = useState<{ id: number; text: string } | null>(null)
+  const answerNote = answerState.note
+  const setAnswerNote = (value: { id: number; text: string } | null) =>
+    sessionStore.setAnswerState({ note: value })
   const answerRequestSeq = useRef(0)
+  /** The staged-status run token each answer request adopted (item 17). */
+  const answerStageTokens = useRef(new Map<number, number>())
   const answerLoadIds = useRef(new Set<number>())
   const answerComposedIds = useRef(new Set<number>())
   const answerInFlightIds = useRef(new Set<number>())
@@ -334,7 +359,13 @@ export default function App() {
    * unanswered (annex expiry (c)); a landed decision writes session
    * + URL state and refines the answer in place, once.
    */
-  const [modalState, setModalState] = useState<ModalState>(() => initialModalState())
+  const modalState = answerState.modal
+  const setModalState = (
+    updater: ModalState | ((state: ModalState) => ModalState),
+  ) =>
+    sessionStore.updateModal((state) =>
+      typeof updater === 'function' ? (updater as (s: ModalState) => ModalState)(state) : updater,
+    )
   const answerContextRef = useRef<{
     intent: ValidatedIntent
     queryText: string
@@ -349,13 +380,25 @@ export default function App() {
    * the SAME query text, immediately after the general handler —
    * must not cancel the general part it pairs with.
    */
-  const [generalAnswer, setGeneralAnswer] = useState<GeneralAnswerData | null>(null)
-  const [generalNote, setGeneralNote] = useState<string | null>(null)
+  const generalAnswer = answerState.generalAnswer
+  const setGeneralAnswer = (value: GeneralAnswerData | null) =>
+    sessionStore.setAnswerState({ generalAnswer: value })
+  const generalNote = answerState.generalNote
+  const setGeneralNote = (value: string | null) =>
+    sessionStore.setAnswerState({ generalNote: value })
   const generalSeq = useRef(0)
   const generalQueryRef = useRef<string | null>(null)
 
   const handleAnswerRequest = useCallback((intent: ValidatedIntent, queryText: string) => {
     const id = ++answerRequestSeq.current
+    // Adopt the run's staged-status clock (item 17): the parse began
+    // it at 'understanding' in the session store; the answer layer's
+    // first stage is screening the Census data (the scope load
+    // included). ensureStageRun also covers editor-committed re-runs,
+    // which arrive without a parse having begun a stage run.
+    const stageToken = sessionStore.ensureStageRun()
+    answerStageTokens.current.set(id, stageToken)
+    sessionStore.setStage(stageToken, 'screening')
     // A new question replaces the previous answer outright; a stale
     // card above fresh results would read as this question's answer.
     setAnswer(null)
@@ -463,22 +506,30 @@ export default function App() {
       const nextSearch = withDecisionsParam(window.location.search, decisions)
       window.history.replaceState(null, '', `${window.location.pathname}?${nextSearch}`)
       if (!canRefine(modalState, branch)) return
+      // A refinement is a fresh run of the pipeline (item 17): it
+      // gets its own stage clock, adopted and ended the same way.
+      const refineToken = sessionStore.beginStageRun('screening')
       void (async () => {
-        const refined = await refineAnswerForRequest({
-          intent: context.intent,
-          queryText: context.queryText,
-          rows: q.sweep,
-          resolved: context.resolved,
-          provider: HOUSE_PROVIDER,
-          research: needsResearch(context.queryText),
-          placeIndex: placeIndex ?? null,
-          provisional: answer,
-          branch,
-          option: optionId,
-        })
-        setAnswer(refined)
-        if (refined !== answer) {
-          setModalState((state) => markRefined(state, branch))
+        try {
+          const refined = await refineAnswerForRequest({
+            intent: context.intent,
+            queryText: context.queryText,
+            rows: q.sweep,
+            resolved: context.resolved,
+            provider: HOUSE_PROVIDER,
+            research: needsResearch(context.queryText),
+            placeIndex: placeIndex ?? null,
+            provisional: answer,
+            branch,
+            option: optionId,
+            onStage: (stage, subject) => sessionStore.setStage(refineToken, stage, subject ?? null),
+          })
+          setAnswer(refined)
+          if (refined !== answer) {
+            setModalState((state) => markRefined(state, branch))
+          }
+        } finally {
+          sessionStore.clearStage(refineToken)
         }
       })()
     },
@@ -537,6 +588,9 @@ export default function App() {
       if (!answerNotedIds.current.has(id)) {
         answerNotedIds.current.add(id)
         setAnswerNote({ id, text: ANSWER_UNRESOLVED_NOTE })
+        // Terminal: the run's stage display ends with its outcome.
+        const token = answerStageTokens.current.get(id)
+        if (token !== undefined) sessionStore.clearStage(token)
       }
       return
     }
@@ -565,6 +619,8 @@ export default function App() {
         if (!answerNotedIds.current.has(id)) {
           answerNotedIds.current.add(id)
           setAnswerNote({ id, text: ANSWER_LOAD_FAILED_NOTE })
+          const token = answerStageTokens.current.get(id)
+          if (token !== undefined) sessionStore.clearStage(token)
         }
         return
       }
@@ -580,7 +636,19 @@ export default function App() {
     }
     answerInFlightIds.current.add(id)
     answerContextRef.current = { intent, queryText, resolved }
-    void (async () => {
+    // The compose run is registered as session-owned in-flight work
+    // (item 17): it completes into the store whether or not the Ask
+    // surface is mounted when it lands. The stage token is re-adopted
+    // if an earlier terminal note (a load failure a later load cured)
+    // already ended the stage display.
+    let stageToken = answerStageTokens.current.get(id)
+    if (stageToken === undefined || sessionStore.stageToken() === null) {
+      stageToken = sessionStore.ensureStageRun()
+      answerStageTokens.current.set(id, stageToken)
+    }
+    const runToken = stageToken
+    sessionStore.setStage(runToken, 'screening')
+    const composeRun = (async () => {
       try {
         const composed = await composeAnswerForRequest({
           intent,
@@ -592,6 +660,7 @@ export default function App() {
           signal: new AbortController().signal,
           placeIndex: placeIndex ?? null,
           countyIndex: countyIndex ?? null,
+          onStage: (stage, subject) => sessionStore.setStage(runToken, stage, subject ?? null),
         })
         // Superseded while composing: the newer request owns the
         // surface and renders its own terminal state. Any other
@@ -627,8 +696,14 @@ export default function App() {
         setAnswerNote({ id, text: ANSWER_COMPOSE_FAILED_NOTE })
       } finally {
         answerInFlightIds.current.delete(id)
+        // Terminal (answer, note, or supersession): the stage
+        // display ends. Token-guarded — a superseded run cannot
+        // clear the newer run's stage.
+        sessionStore.clearStage(runToken)
       }
     })()
+    sessionStore.trackRun(`answer:${id}`, composeRun)
+    void composeRun
   }, [answerRequest, placeIndex, countyIndex, q.sweep, q.sweepStatus, q.sweepScope, q.applyScope])
 
   const askFigures = useMemo(
@@ -1382,44 +1457,28 @@ export default function App() {
           <>
             {searchPanel}
 
-            {q.sweepStatus === 'needs-key' ? (
-              <p className="mt-6 text-sm text-slate-700">
-                Add a free Census key above to load every ZIP code, then the map draws them.
-              </p>
-            ) : q.sweep.length === 0 ? (
-              <p className="mt-6 text-sm text-slate-700" role="status" aria-live="polite">
-                Loading the country-wide figures the map draws from…
-              </p>
-            ) : (
-              <>
-                <MapView
-                  rows={q.sweep}
-                  loading={(q.sweepProgress?.done ?? 0) < (q.sweepProgress?.total ?? 0)}
-                  selectedZctas={q.selectedZctas}
-                  explainProvider={HOUSE_PROVIDER}
-                  onSelect={(zctas) => {
-                    for (const zcta of zctas.slice(0, 6)) {
-                      const row = q.sweep.find((r) => r.zcta === zcta)
-                      if (row) void q.selectPlace({ name: row.name, zip: zcta })
-                    }
-                  }}
-                />
+            {/*
+              The Map tab is the session's results map (drive item
+              17 part c): the last answer's places and driving
+              metric, drawn by the item-13 ResultMap machinery at
+              full view width — not the detached country-wide sweep
+              surface that used to stand here, which showed a dataset
+              unrelated to the question the reader had just asked.
+              Before any answer (and for an answer that named no
+              places) SessionMapView renders the inviting empty
+              state; a new answer replaces the content, because the
+              view is a pure function of the session's current
+              answer. The manual comparison for places the reader
+              selected by hand stays below, unchanged.
+            */}
+            <SessionMapView answer={answer} questionText={answerRequest?.queryText ?? null} />
 
-                <Comparison
-                  drilldowns={q.drilldowns}
-                  onDeselect={q.deselect}
-                  placeLabel={placeLabel}
-                  explainProvider={HOUSE_PROVIDER}
-                />
-
-                {q.sweepFromCache && (
-                  <p className="mt-2 text-xs text-slate-500">
-                    Loaded from this browser&rsquo;s local cache. Figures come from the American Community
-                    Survey {VINTAGE_LABEL} and update annually; use Refresh in the cache panel to re-fetch.
-                  </p>
-                )}
-              </>
-            )}
+            <Comparison
+              drilldowns={q.drilldowns}
+              onDeselect={q.deselect}
+              placeLabel={placeLabel}
+              explainProvider={HOUSE_PROVIDER}
+            />
 
             {q.selected.length > 0 && <FundingSection />}
             {q.selected.length > 0 && (
@@ -1480,6 +1539,7 @@ export default function App() {
                     the product. */}
                 <img src="/favicon.svg" alt="" className="mx-auto mb-2 h-8 w-8" />
                 <AskPanel
+                  session={sessionStore}
                   provider={HOUSE_PROVIDER}
                   figures={askFigures}
                   onExecute={executeIntent}
@@ -1571,14 +1631,20 @@ export default function App() {
                   The answer path's working state is the conversational
                   frame (plan C6): the ack + thinking indicator replace
                   the stacked pending lines that used to render here.
+                  Past one second the staged line joins the frame
+                  (item 17): StagedStatus names the pipeline stage the
+                  run is actually in, from the session store the run
+                  itself advances.
                 */}
                 <p className="flex items-center gap-2 text-sm text-slate-500">
-                  <span>
-                    {needsResearch(answerRequest.queryText)
-                      ? researchAck('the stated criteria')
-                      : 'Let me look into that.'}
-                  </span>
-                  <ThinkingIndicator />
+                  <StagedStatus
+                    session={sessionStore}
+                    ack={
+                      needsResearch(answerRequest.queryText)
+                        ? researchAck('the stated criteria')
+                        : 'Let me look into that.'
+                    }
+                  />
                 </p>
               </div>
             ) : null}

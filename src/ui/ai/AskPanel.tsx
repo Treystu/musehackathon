@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useSyncExternalStore } from 'react'
 import { decideAskPath } from '../../core/ai/byo'
 import { hasMetaKey } from '../../core/ai/meta-key'
 import {
@@ -10,7 +10,6 @@ import type {
   IntentResult,
   MuseProvider,
   ResearchResult,
-  ResearchSource,
   TranscribeResult,
   ValidatedIntent,
 } from '../../core/ai/provider'
@@ -42,7 +41,8 @@ import { ClarificationPanel, type ClarificationCandidates } from './Clarificatio
 import { IntentEditor } from './IntentEditor'
 import { ExplainOnAsk } from './ExplainOnAsk'
 import { MicInput, type MicRecorder } from './MicInput'
-import { ThinkingIndicator } from './ThinkingIndicator'
+import { StagedStatus } from './StagedStatus'
+import { AskSessionStore, type PanelResearchState } from './session-store'
 import { pickAckOpener, researchAck } from './ack'
 import type { ExplanationState } from './ExplainBox'
 import type { FigureInput } from './FigureCard'
@@ -436,8 +436,18 @@ export function AskPanel({
   micRecorder,
   micStorage,
   parseRetryDelaysMs = PARSE_RETRY_DELAYS_MS,
+  session: sessionProp,
 }: {
   provider: MuseProvider
+  /**
+   * The session store this panel reads and writes (drive item 17):
+   * App creates one above the tab surfaces and passes it in, so the
+   * panel's state — and its in-flight runs — survive the panel being
+   * unmounted by a tab switch. Absent (standalone mounts, tests), the
+   * panel creates an equivalent store of its own; behavior inside
+   * the panel is identical either way.
+   */
+  session?: AskSessionStore
   /**
    * Meta-direct provider for the BYO retry after shared shutoff. Never the
    * metered proxy — a BYO-direct call bypasses the shared allowance
@@ -498,45 +508,50 @@ export function AskPanel({
   /** Wait-out schedule for retryable parse failures; tests inject ~0. */
   parseRetryDelaysMs?: readonly number[]
 }) {
-  const [text, setText] = useState('')
-  /**
-   * The conversational frame (plan C6): on submit, ONE acknowledgment
-   * line in the assistant's voice plus the thinking indicator is the
-   * whole working state — the stacked parse/research status lines
-   * fold into it. The opener rotates by question hash and never
-   * repeats the session's previous opener back-to-back; a research
-   * question gets the research variant naming its first criterion.
+  /*
+   * Session state (drive item 17): every field that used to live in
+   * useState/useRef here — the question text, the ack, the understood
+   * request, the notes, the busy flag, the standalone research, and
+   * the run counters in session.counters (research/execution
+   * supersession, the ack rotation, the last question text) — now
+   * lives in the session store, which App owns above the tab
+   * surfaces. The setters below write through to the store, so a run
+   * in flight when the reader switches tabs keeps writing into the
+   * session and its result is on screen when they return; nothing
+   * about navigation cancels or restarts it. The conversational
+   * frame's ack discipline is unchanged (plan C6): the opener
+   * rotates by question hash and never repeats the session's
+   * previous opener back-to-back; a research question gets the
+   * research variant naming its first criterion.
    */
-  const [ack, setAck] = useState('')
-  const lastAckOpener = useRef<string | null>(null)
-  const [intent, setIntent] = useState<ValidatedIntent | null>(null)
-  const [note, setNote] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [caughtError, setCaughtError] = useState<ProxyError | null>(null)
-  const [executionNote, setExecutionNote] = useState('')
-  const [coverageNote, setCoverageNote] = useState('')
-  const [research, setResearch] = useState<
-    | { status: 'idle' | 'loading' | 'unavailable' }
-    | { status: 'done'; prose: string; sources: ResearchSource[] }
-  >({ status: 'idle' })
-  const researchRun = useRef(0)
-  /**
-   * Which execution's promised note may still land. An execution
-   * that resolves geographies asynchronously (see the onExecute
-   * contract above) can settle after a newer question has already
-   * run; without this guard its stale note would overwrite the newer
-   * run's, the same supersession discipline researchRun applies to
-   * research.
-   */
-  const executionRun = useRef(0)
-  /**
-   * The reader's most recent question text. The answer layer's
-   * research query is the original question (the pipeline's contract),
-   * and editor or clarification commits re-run the understood request
-   * without re-asking it — they reuse this text rather than inventing
-   * a query from the intent.
-   */
-  const lastQueryText = useRef('')
+  const localStoreRef = useRef<AskSessionStore | null>(null)
+  if (localStoreRef.current === null) localStoreRef.current = new AskSessionStore(null)
+  const session = sessionProp ?? localStoreRef.current
+  // The third argument is the server snapshot: several surface pins
+  // render this panel with renderToStaticMarkup, and
+  // useSyncExternalStore throws there without one. The store is
+  // client session state, so the current snapshot IS the server
+  // snapshot — a static render reads whatever the session holds.
+  const getPanelSnapshot = () => session.getSnapshot().panel
+  const panel = useSyncExternalStore(session.subscribe, getPanelSnapshot, getPanelSnapshot)
+  const text = panel.text
+  const setText = (value: string) => session.setPanel({ text: value })
+  const ack = panel.ack
+  const setAck = (value: string) => session.setPanel({ ack: value })
+  const intent = panel.intent
+  const setIntent = (value: ValidatedIntent | null) => session.setPanel({ intent: value })
+  const note = panel.note
+  const setNote = (value: string) => session.setPanel({ note: value })
+  const busy = panel.busy
+  const setBusy = (value: boolean) => session.setPanel({ busy: value })
+  const caughtError = panel.caughtError
+  const setCaughtError = (value: ProxyError | null) => session.setPanel({ caughtError: value })
+  const executionNote = panel.executionNote
+  const setExecutionNote = (value: string) => session.setPanel({ executionNote: value })
+  const coverageNote = panel.coverageNote
+  const setCoverageNote = (value: string) => session.setPanel({ coverageNote: value })
+  const research = panel.research
+  const setResearch = (value: PanelResearchState) => session.setPanel({ research: value })
 
   /**
    * Grounded web findings for the parts of a question the Census data
@@ -546,7 +561,20 @@ export function AskPanel({
    * note takes over as the honest fallback.
    */
   function startResearch(queryText: string) {
-    const run = ++researchRun.current
+    const run = ++session.counters.researchRun
+    // The staged status names this stage while it runs standalone
+    // (item 17): the subject is the first decomposed criterion's
+    // label, from the reader's own words. When the answer pipeline
+    // owns the run instead, the pipeline's own research site names
+    // the stage and this path never fires.
+    const stageToken = session.stageToken()
+    if (stageToken !== null) {
+      session.setStage(
+        stageToken,
+        'researching',
+        decomposeResearchCriteria(queryText)[0]?.label ?? null,
+      )
+    }
     setResearch({ status: 'loading' })
     const signal = new AbortController().signal
     const attempt = async (): Promise<ResearchResult> => {
@@ -561,7 +589,7 @@ export function AskPanel({
     }
     void attempt().then(
       (result) => {
-        if (researchRun.current !== run) return
+        if (session.counters.researchRun !== run) return
         if (result.prose && result.sources.length > 0) {
           setResearch({ status: 'done', prose: result.prose, sources: result.sources })
           setCoverageNote('')
@@ -569,11 +597,16 @@ export function AskPanel({
           setResearch({ status: 'unavailable' })
           setCoverageNote(politicsCoverageNote(queryText))
         }
+        // The standalone research was this run's last outstanding
+        // piece: the stage display ends with it. Token-guarded, so a
+        // newer question's stage is never cleared by this settle.
+        if (stageToken !== null) session.clearStage(stageToken)
       },
       () => {
-        if (researchRun.current !== run) return
+        if (session.counters.researchRun !== run) return
         setResearch({ status: 'unavailable' })
         setCoverageNote(politicsCoverageNote(queryText))
+        if (stageToken !== null) session.clearStage(stageToken)
       },
     )
   }
@@ -595,7 +628,7 @@ export function AskPanel({
     // geography in the views, like any lookup.
     const placelessHandoff = isResearchFirstHandoff(next) && next.geographies.length === 0
     if (onExecute && !placelessHandoff) {
-      const run = ++executionRun.current
+      const run = ++session.counters.executionRun
       const said = onExecute(next)
       if (typeof said === 'string') {
         setExecutionNote(said)
@@ -610,7 +643,7 @@ export function AskPanel({
         setExecutionNote('')
         void (said as Promise<string | void>).then(
           (landed) => {
-            if (executionRun.current === run && typeof landed === 'string') setExecutionNote(landed)
+            if (session.counters.executionRun === run && typeof landed === 'string') setExecutionNote(landed)
           },
           () => {},
         )
@@ -618,7 +651,7 @@ export function AskPanel({
         setExecutionNote('')
       }
     }
-    const questionText = queryText ?? (lastQueryText.current || undefined)
+    const questionText = queryText ?? (session.counters.lastQueryText || undefined)
     if (onAnswerRequest && questionText && answerEligible(next)) {
       onAnswerRequest(next, questionText)
     }
@@ -778,22 +811,30 @@ export function AskPanel({
       setCaughtError(null)
       return
     }
+    // The run's stage clock starts at the parse (item 17): the stage
+    // state lives in the session store, so it — and the run it
+    // describes — continues across any tab switch from here. The
+    // finally below ends the stage only when this panel still owns
+    // it: a handed-off run's stage is adopted by the answer layer,
+    // and a standalone research run's stage ends when research
+    // settles (startResearch's completion).
+    const stageToken = session.beginStageRun('understanding')
     setBusy(true)
     if (needsResearch(queryText)) {
       const firstCriterion = researchFirstCriteria(queryText)[0] ??
         decomposeResearchCriteria(queryText)[0]
       setAck(
-        firstCriterion ? researchAck(firstCriterion.label) : pickAckOpener(queryText, lastAckOpener.current),
+        firstCriterion ? researchAck(firstCriterion.label) : pickAckOpener(queryText, session.counters.lastAckOpener),
       )
     } else {
-      const opener = pickAckOpener(queryText, lastAckOpener.current)
-      lastAckOpener.current = opener
+      const opener = pickAckOpener(queryText, session.counters.lastAckOpener)
+      session.counters.lastAckOpener = opener
       setAck(opener)
     }
     setNote('')
     setCoverageNote('')
     setCaughtError(null)
-    lastQueryText.current = queryText
+    session.counters.lastQueryText = queryText
     // Research answers a different part of the question (what the
     // Census data cannot cover). Without an answer layer wired, it
     // runs in parallel with the parse, as it always has. With one,
@@ -815,7 +856,7 @@ export function AskPanel({
         startResearch(queryText)
       }
     } else {
-      researchRun.current += 1
+      session.counters.researchRun += 1
       setResearch({ status: 'idle' })
     }
     const settleResearch = (parsed: ValidatedIntent | null) => {
@@ -908,6 +949,17 @@ export function AskPanel({
       )
     } finally {
       setBusy(false)
+      // End this run's stage unless it outlives the parse: a
+      // handed-off answer request (the store's current request is
+      // this question) keeps the stage for the answer layer, and a
+      // standalone research still in flight keeps it until research
+      // settles. Token-guarded either way — a newer question's
+      // stage is never this finally's to clear.
+      const snapshot = session.getSnapshot()
+      const handedOff = snapshot.answer.request?.queryText === queryText
+      if (!handedOff && snapshot.panel.research.status !== 'loading') {
+        session.clearStage(stageToken)
+      }
     }
   }
 
@@ -1057,8 +1109,10 @@ export function AskPanel({
       </div>
       {busy && (
         <p className="mt-3 flex items-center gap-2 text-sm text-slate-700">
-          <span>{ack}</span>
-          <ThinkingIndicator />
+          {/* The ack + thinking indicator, plus the staged line once
+              the run passes one second (item 17; StagedStatus owns
+              the threshold and the aria-live discipline). */}
+          <StagedStatus session={session} ack={ack} />
         </p>
       )}
       {errorNote && (

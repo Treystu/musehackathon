@@ -1663,6 +1663,21 @@ export interface AnswerPipelineInput {
   unresolvedGeographies?: readonly string[]
   /** Geography readings from the caller's resolution result, disclosed on the card. */
   geographyDisclosures?: readonly string[]
+  /**
+   * Stage observer for the reader-facing staged status (drive item
+   * 17, 2026-11-02): called at the moment a stage actually begins —
+   * 'screen' once the parse gate has passed and the deterministic
+   * screen is next, 'research' only at a research call site that is
+   * really about to run (never when the stage is skipped: no research
+   * query, no provider, or an empty screen), 'compose' before the
+   * compose stage, 'verify' before the fail-closed verify. The
+   * research subject is the first decomposed criterion's reader-facing
+   * label, or the intent's first geography when no criterion label
+   * exists — words from the reader's own question, never invented
+   * granularity. Optional and observation-only: it changes nothing
+   * the pipeline computes.
+   */
+  onStage?: (stage: 'screen' | 'research' | 'compose' | 'verify', subject?: string) => void
 }
 
 function emptyAnswerFields(): Pick<
@@ -1718,6 +1733,10 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     }
   }
 
+  // The parse gate passed: the deterministic screen is the stage now
+  // running (item 17 stage observer; see the input field's contract).
+  input.onStage?.('screen')
+
   // Decomposition: Census criteria from the intent, researched
   // criteria from the question text (or the caller's explicit list).
   const researchCriteria: ResearchCriterion[] =
@@ -1761,8 +1780,17 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     !!input.provider &&
     !!input.researchQuery
 
+  // The research stage's reader-facing subject, from the reader's own
+  // words: the first named (non-combined) decomposed criterion's label,
+  // else the combined criterion's label, else the first geography.
+  const researchSubject =
+    researchCriteria.find((c) => c.id !== 'combined')?.label ??
+    researchCriteria[0]?.label ??
+    input.intent.geographies[0]
+
   if (researchFirst) {
     // Stage order inverts: research -> extract -> resolve -> pull.
+    input.onStage?.('research', researchSubject)
     const research = await researchPerCriterion(
       input.provider!,
       input.intent.geographies,
@@ -1839,6 +1867,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       inScopeCount: input.rows.length,
       rows: cappedRows,
     }
+    input.onStage?.('compose')
     const composedRaw = composeAnswer({
       intent: input.intent,
       screen: pullScreen,
@@ -1860,6 +1889,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       ? { ...composedRaw, unresolvedGeographies: [...input.unresolvedGeographies] }
       : composedRaw
     if (composed.status === 'empty') return { ...composed, stage: 'verify' }
+    input.onStage?.('verify')
     const verdict = verifyAnswer(composed, cappedRows)
     if (!verdict.ok) {
       return { ...composed, status: 'withheld', stage: 'verify', failures: verdict.failures }
@@ -2022,6 +2052,10 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   let research: ResearchStageResult | null = null
   const candidateCapApplied = effectiveScreen.rows.length > SCREENED_RESEARCH_CANDIDATE_CAP
   if (input.researchQuery && input.provider && effectiveScreen.rows.length > 0) {
+    // Inside the condition, so the stage is named only when a
+    // research call really follows (item 17: never name a stage
+    // that did not run).
+    input.onStage?.('research', researchSubject)
     const capped = effectiveScreen.rows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
     research =
       researchCriteria.length > 0
@@ -2042,6 +2076,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     countyMeta || stateMeta
       ? new Map([...(countyMeta ?? new Map()), ...(stateMeta ?? new Map())])
       : undefined
+  input.onStage?.('compose')
   const composedRaw = composeAnswer({
     intent: input.intent,
     screen: effectiveScreen,
@@ -2075,6 +2110,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // Stage 5: verify, fail-closed. On the county path the figures are
   // checked against the aggregate rows compose read — the same
   // exact-equality gate, over the aggregated figures.
+  input.onStage?.('verify')
   const verdict = verifyAnswer(composed, effectiveScreen.rows)
   if (!verdict.ok) {
     return { ...composed, status: 'withheld', stage: 'verify', failures: verdict.failures }

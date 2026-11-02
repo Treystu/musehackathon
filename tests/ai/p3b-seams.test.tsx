@@ -239,6 +239,11 @@ beforeEach(() => {
   root = createRoot(container)
   log = { research: 0, intent: 0, census: 0 }
   localStorage.clear()
+  // Item 17: the Ask session persists to sessionStorage (the reload
+  // cure); a previous case's session would otherwise restore into
+  // this case's mount, the same hazard the localStorage clear
+  // already guards for its channel.
+  sessionStorage.clear()
   resetBudget(); _resetPacing(); resetPlaceIndexCache(); resetCountyIndexCache()
   ;(globalThis as Record<string, unknown>)[SHARED_APP_KEYS_GLOBAL] = { CENSUS_APP_KEY: 'fake-shared-key-for-tests' }
   installFetch()

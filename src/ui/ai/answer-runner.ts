@@ -50,6 +50,7 @@ import type { StateAggregateGeography } from '../../core/ai/answer'
 import { STATE_NAME_BY_CODE } from '../../core/sweep/states'
 import type { CountyIndex, CountyGroup } from '../../core/zcta-county-index'
 import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
+import type { StageId } from './session-store'
 import type { AreaRow } from '../../core/plugins/acs'
 import {
   splitStateSuffix,
@@ -767,6 +768,17 @@ export async function composeAnswerForRequest(input: {
    * run (the deterministic pipeline alone, exactly as before it).
    */
   stack?: ConversationalStackDeps | false
+  /**
+   * Staged-status observer (drive item 17): forwarded at each real
+   * stage boundary — the pipeline's own stages arrive through its
+   * onStage seam (screen/research/compose/verify, renamed to the
+   * reader-facing ids), and this runner adds the stages it owns:
+   * 'wonder-plan' only when the top bookend transport is actually
+   * called, 'jev' only when the Jev loop is actually invoked,
+   * 'wonder-verify' only when the bottom bookend transport is
+   * actually called. Observation-only, like the pipeline's seam.
+   */
+  onStage?: (stage: StageId, subject?: string | null) => void
 }): Promise<ComposedAnswer | null> {
   // Complete the resolution with the county crosswalk before the
   // unresolvable gate: the caller resolved with the place index
@@ -841,6 +853,19 @@ export async function composeAnswerForRequest(input: {
       countyAssignments: input.countyIndex
         ? input.countyIndex.assignmentsFor(rows.map((row) => row.zcta))
         : undefined,
+      onStage: input.onStage
+        ? (stage, subject) =>
+            input.onStage!(
+              stage === 'screen'
+                ? 'screening'
+                : stage === 'research'
+                  ? 'researching'
+                  : stage === 'compose'
+                    ? 'composing'
+                    : 'verifying',
+              subject ?? null,
+            )
+        : undefined,
     })
 
   // Branch evaluation at the screen -> research boundary (plan C7):
@@ -870,6 +895,7 @@ export async function composeAnswerForRequest(input: {
   let planObjections: string[] | undefined
   if (stack) {
     const started = performance.now()
+    input.onStage?.('wonder-plan')
     const verdict = await stack.planTransport(
       buildPlanPacket({
         question: input.queryText,
@@ -914,6 +940,7 @@ export async function composeAnswerForRequest(input: {
     if (criteria.length > 0) {
       const roundTimings: number[] = []
       const patchTimings: number[] = []
+      input.onStage?.('jev')
       const outcome = await runJevLoop(answer, {
         transport: stack.jevTransport,
         criteria,
@@ -992,6 +1019,7 @@ export async function composeAnswerForRequest(input: {
   // Bottom bookend (plan C5): after the loop settles, before display.
   if (stack && answer.status === 'verified') {
     const started = performance.now()
+    input.onStage?.('wonder-verify')
     const verdict = await stack.verifyTransport(
       buildVerifyPacket({
         summary: answer.summary,
@@ -1048,6 +1076,8 @@ export async function refineAnswerForRequest(input: {
   provisional: ComposedAnswer
   branch: BranchId
   option: string
+  /** Staged-status observer, forwarded to the refinement's compose (item 17). */
+  onStage?: (stage: StageId, subject?: string | null) => void
 }): Promise<ComposedAnswer> {
   writeSessionDecision(input.branch, input.option)
   const baseDecisions: DecisionsRecord =
@@ -1069,6 +1099,7 @@ export async function refineAnswerForRequest(input: {
         input.stack === false
           ? false
           : { ...(input.stack ?? {}), decisions: baseDecisions },
+      onStage: input.onStage,
     })
     if (!refined || refined.status !== 'verified') return input.provisional
     return { ...refined, refinementNote: refinementNote(input.branch, input.option) }

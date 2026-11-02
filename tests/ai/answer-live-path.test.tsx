@@ -216,6 +216,11 @@ beforeEach(() => {
   root = createRoot(container)
   log = { tigerweb: 0, census: 0, intent: 0, research: 0 }
   localStorage.clear()
+  // Item 17: the Ask session persists to sessionStorage (the reload
+  // cure); a previous case's session would otherwise restore into
+  // this case's mount, the same hazard the localStorage clear and
+  // the URL reset below already guard for their channels.
+  sessionStorage.clear()
   resetBudget()
   _resetPacing()
   resetPlaceIndexCache()

@@ -169,6 +169,11 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   localStorage.clear()
+  // Item 17: the Ask session persists to sessionStorage (the reload
+  // cure); a previous case's session would otherwise restore into
+  // this case's mount, the same hazard the localStorage clear
+  // already guards for its channel.
+  sessionStorage.clear()
   countyGate = null
   releaseCountyGate = null
   resetBudget(); _resetPacing(); resetPlaceIndexCache(); resetCountyIndexCache()

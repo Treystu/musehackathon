@@ -171,6 +171,11 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   localStorage.clear()
+  // Item 17: the Ask session persists to sessionStorage (the reload
+  // cure); a previous case's session would otherwise restore into
+  // this case's mount, the same hazard the localStorage clear and
+  // the URL reset below already guard for their channels.
+  sessionStorage.clear()
   // The comparison follows the selection into the URL; a previous
   // case's county members would otherwise restore into this case's
   // mount and stand in its comparison before it asks anything.

@@ -18,9 +18,15 @@ const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:4173'
 const TOUR = 'dialog'
 /** The permanent control in the header, present on every view at every time. */
 const HEADER_BUTTON = 'header button:has-text("How this works")'
-/** The first-visit notice's own control, which is gone once dismissed. */
-const NOTICE_BUTTON = 'main button:has-text("How this works")'
+/**
+ * The first-visit notice card that used to stand on every task surface.
+ * Owner phone review 2026-11-02 removed it: the shared-key fact now lives
+ * behind the Ask pill's wording-helper tip and on the Methodology view, so
+ * this selector must match nothing, on a first visit and on later ones.
+ */
 const NOTICE = 'main aside'
+/** The Ask pill's help tip, whose panel carries the Census-key fact. */
+const WORDING_TIP = 'button[aria-label="About the wording helper"]'
 
 let browser: Browser
 let context: BrowserContext
@@ -63,27 +69,32 @@ describe('e2e: first run', () => {
     expect(await page.locator('#place').inputValue()).toBe('78701')
   }, 60000)
 
-  it('offers a first-visit notice that says what works without a key', async () => {
+  it('stands no notice card on the task surface; the key fact sits behind the pill tip', async () => {
     await firstVisit()
-    const notice = page.locator(NOTICE)
-    await notice.waitFor({ state: 'visible', timeout: 20000 })
 
-    const text = await notice.innerText()
-    expect(text).toMatch(/works straight away, with no account/)
+    // Explain-nothing (owner phone review, 2026-11-02): no standing card.
+    // The fact the card used to carry — that the full 33,791-ZIP load runs
+    // on a Census key — is one tap away in the Ask pill's help tip instead.
+    expect(await page.locator(NOTICE).count()).toBe(0)
+
+    const tip = page.locator(WORDING_TIP)
+    await tip.click()
+    const panelId = await tip.getAttribute('aria-controls')
+    expect(panelId).toBeTruthy()
+    const panel = page.locator(`[id="${panelId}"]`)
+    await panel.waitFor({ state: 'visible', timeout: 20000 })
+
+    const text = await panel.innerText()
     expect(text).toMatch(/33,791/)
-    expect(text).toMatch(/free Census API key/)
+    expect(text).toMatch(/Census API key|shared Census key/)
 
-    // Named, so it is announced as a region rather than as loose text.
-    const labelled = await notice.evaluate((el: HTMLElement) => {
-      const id = el.getAttribute('aria-labelledby')
-      return !!id && !!document.getElementById(id)
-    })
-    expect(labelled).toBe(true)
+    // Unpin it again so later tests start from the plain surface.
+    await tip.click()
   }, 60000)
 
   it('opens a real modal dialog when asked', async () => {
     await firstVisit()
-    await page.locator(NOTICE_BUTTON).click()
+    await page.locator(HEADER_BUTTON).click()
 
     const dialog = page.locator(TOUR)
     await dialog.waitFor({ state: 'visible', timeout: 20000 })
@@ -101,8 +112,7 @@ describe('e2e: first run', () => {
     expect(labelled.describedBy).toBeTruthy()
     expect(labelled.step).toMatch(/Step 1 of 3/)
 
-    // Opening it retires the notice, so the reader is not offered the same thing
-    // twice after they have just read it.
+    // And no standing notice appears alongside it, on any visit.
     expect(await page.locator(NOTICE).count()).toBe(0)
   }, 60000)
 

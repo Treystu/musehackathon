@@ -165,11 +165,11 @@ export function SweepTable({
 
   function header(col: (typeof COLUMNS)[number]) {
     if (!col.sort) {
-      return <th scope="col" aria-sort={sortKey === null ? 'ascending' : undefined} className="px-3 py-2 text-left text-[0.8125rem] font-semibold text-slate-700">{col.label}</th>
+      return <th scope="col" aria-sort={sortKey === null ? 'ascending' : undefined} className="whitespace-nowrap px-3 py-2 text-left text-[0.8125rem] font-semibold text-slate-700">{col.label}</th>
     }
     const active = sortKey === col.sort
     return (
-      <th scope="col" className="px-3 py-2 text-right text-[0.8125rem] font-semibold text-slate-700" aria-sort={active ? (ascending ? 'ascending' : 'descending') : 'none'}>
+      <th scope="col" className="whitespace-nowrap px-3 py-2 text-right text-[0.8125rem] font-semibold text-slate-700" aria-sort={active ? (ascending ? 'ascending' : 'descending') : 'none'}>
         <button
           type="button"
           onClick={() => {
@@ -228,7 +228,7 @@ export function SweepTable({
         onScroll={(e) => setStart(Math.floor((e.target as HTMLDivElement).scrollTop / ROW_HEIGHT) - OVERSCAN)}
         className="mt-3 max-h-[560px] overflow-auto panel"
       >
-        <table className="w-full text-left text-sm">
+        <table className="w-full min-w-[760px] text-left text-sm">
           <caption className="px-3 py-2 text-left text-xs text-slate-600">
             US ZIP code tabulation areas, American Community Survey 5-year estimates. The table starts in
             ascending ZIP code order; figure columns can be sorted individually. It holds {formatMetricNumber(visible.length, 'count')}
@@ -275,7 +275,7 @@ export function SweepTable({
                     const value = r.metrics[c.sort!] ?? null
                     const marginText = fmtMargin(r.moes?.[c.sort!] ?? null)
                     return (
-                      <td key={c.key} className="px-3 py-1.5 text-right text-[0.8125rem] tabular-nums text-slate-700">
+                      <td key={c.key} className="whitespace-nowrap px-3 py-1.5 text-right text-[0.8125rem] tabular-nums text-slate-700">
                         {fmt(
                           value,
                           UNIT_OF[c.sort!] ?? 'count',

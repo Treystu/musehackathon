@@ -42,7 +42,7 @@ export const EMPTY_TRANSCRIPT_NOTE =
   'No speech was captured. The typed box above still works fully, or try speaking again.'
 
 export const RAW_TEXT_DISCLOSURE =
-  'Free-text Ask sends the words you type to the wording helper; this path cannot be answered from structured choices alone. The figures still come from CivicScope.'
+  'Free-text Ask sends the words you type to the wording helper. The figures still come from CivicScope.'
 
 /**
  * Coverage honesty for criteria this dataset does not contain
@@ -614,7 +614,7 @@ export function AskPanel({
           work.
         </p>
       )}
-      {(proxyError || note) && <p className="mt-2 text-sm text-slate-600">{manualFallbackNote()}</p>}
+      {proxyError && <p className="mt-2 text-sm text-slate-600">{manualFallbackNote()}</p>}
       <ByoOffer error={proxyError ?? caughtError} onOpenSettings={onOpenSettings} />
       <AgentHandoff censusFetcher={censusFetcher} metaFetcher={metaFetcher} />
       {intent && (

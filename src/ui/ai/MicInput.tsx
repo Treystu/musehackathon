@@ -13,7 +13,7 @@ import type { TranscribeResult } from '../../core/ai/provider'
  * helper only to become text; it is not stored (Q1 counts only).
  */
 export const AUDIO_TRANSIT_DISCLOSURE =
-  'Speaking sends your voice audio to the transcription helper to turn it into text. The audio is not stored; the words become your question in the box and run right away, after a check that any numbers heard match the request.'
+  'Speaking sends your voice audio to the transcription helper; the audio is not stored, and the words run as your question right away.'
 
 /** First-use consent copy. No recording can start until this is allowed. */
 export const MIC_CONSENT_COPY =

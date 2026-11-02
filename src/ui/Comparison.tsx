@@ -75,7 +75,7 @@ export function Comparison({
               explain causes or recommend an area.
             </p>
             <div className="mt-3 overflow-x-auto">
-              <table className="min-w-full border-collapse text-left text-sm">
+              <table className="w-full min-w-[540px] border-collapse text-left text-sm">
                 <caption className="sr-only">
                   Published measures available for all selected areas from the same source, table, and vintage.
                 </caption>

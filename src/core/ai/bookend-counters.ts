@@ -6,6 +6,15 @@
  * like the fallback meter, so a cold isolate starts at zero and the
  * diagnostics surface reports what this isolate has seen; the flat
  * diagnostics record gains them as one additive `hourglass` object.
+ *
+ * P7 (2026-11-02): the plan/verify routes now ALSO mirror every
+ * outcome into the meter store (accountTopBookend /
+ * accountBottomBookend in src/server/muse-proxy.ts), and
+ * diagnostics reports the meter's copy when it is readable -- that
+ * copy is durable and shared across isolates, which cures the
+ * undercount this in-isolate view has across cold isolates. This
+ * module remains as the fallback view for a deployment (or a read)
+ * with no readable meter store, and as the hermetic test surface.
  */
 
 export interface BookendCounters {

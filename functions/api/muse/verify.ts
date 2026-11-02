@@ -20,6 +20,7 @@ import { recordBottomBookend } from '../../../src/core/ai/bookend-counters'
 import {
   preCallGate,
   accountCall,
+  accountBottomBookend,
   accountError,
   err,
   type ProxyDeps,
@@ -87,6 +88,7 @@ export async function handleVerify(
   const started = Date.now()
   if (!deps.stageProvider) {
     recordBottomBookend('notRun')
+    accountBottomBookend(deps, 'notRun')
     return {
       status: 200,
       body: { wonder: 'not-run', outcome: 'degraded', model, packetTokens: packet.tokens, trimmed: packet.trimmed },
@@ -96,15 +98,21 @@ export async function handleVerify(
     const result = await withStageTimeout(VERIFY_TIMEOUT_MS, (signal) =>
       deps.stageProvider!.stageChat({ model, system: SYSTEM_PROMPT, user: packet.text }, signal),
     )
-    accountCall(deps, req.clientId, VERIFY_SETTLE_MICRO_USD, FLAT_TOKENS_IN, FLAT_TOKENS_OUT)
+    // P7: bucket by the provider-reported model, as in plan.ts.
+    accountCall(deps, req.clientId, VERIFY_SETTLE_MICRO_USD, FLAT_TOKENS_IN, FLAT_TOKENS_OUT, {
+      model: result.model ?? model,
+      route: 'verify',
+    })
     const verdict = parseVerifyVerdict(result.text)
     const latencyMs = Date.now() - started
     if (verdict.kind === 'verified') {
       recordBottomBookend('verified')
+      accountBottomBookend(deps, 'verified')
       return { status: 200, body: { wonder: 'verified', outcome: 'verified', concerns: [], model: result.model, latencyMs, packetTokens: packet.tokens, trimmed: packet.trimmed } }
     }
     if (verdict.kind === 'concerns' || verdict.kind === 'not_verified') {
       recordBottomBookend('concerns')
+      accountBottomBookend(deps, 'concerns')
       return {
         status: 200,
         body: {
@@ -119,10 +127,12 @@ export async function handleVerify(
       }
     }
     recordBottomBookend('notRun')
+    accountBottomBookend(deps, 'notRun')
     accountError(deps, 'shape_invalid')
     return { status: 200, body: { wonder: 'not-run', outcome: 'degraded', model: result.model, latencyMs, packetTokens: packet.tokens, trimmed: packet.trimmed } }
   } catch {
     recordBottomBookend('notRun')
+    accountBottomBookend(deps, 'notRun')
     accountError(deps, 'provider_down')
     return {
       status: 200,

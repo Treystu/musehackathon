@@ -23,6 +23,29 @@
  * Public by design: aggregate counters are the F7 operator surface and contain
  * nothing per-visitor. No CORS headers are served, and a foreign Origin is
  * refused outright.
+ *
+ * P7 (2026-11-02): two additive blocks extend the flat record, and
+ * the schema string stays civicscope.diagnostics.v1 because both are
+ * additive -- the client parser rebuilds the fields it knows and
+ * drops the rest, so a v1 reader keeps working unchanged.
+ *   - `usage`: the meter's per-model / per-route token splits, the
+ *     durable search count, and the true costs computed from them
+ *     (usage.ts). `usage.readable` is false when the split view
+ *     could not be read (for example the standalone meter worker
+ *     still runs a pre-P7 class with no usageSnapshot op): the
+ *     splits then read as zeros and are labelled unread, never
+ *     presented as measured zeros.
+ *   - `costs`: the two cost stories side by side, each with its
+ *     basis label -- the flat modelled accounting (spentMicroUsd,
+ *     unchanged semantics) and the true cost at roster prices.
+ * The `hourglass` field now reads the meter's durable mirror of the
+ * bookend outcomes when the split view is readable (the in-isolate
+ * counters undercount across isolates; see bookend-counters.ts);
+ * when it is not, it falls back to the in-isolate counters, which
+ * is the most that deployment can truthfully report.
+ * Everything here is read-path only: this handler computes costs
+ * from recorded counters and writes nothing, so the additions
+ * cannot gate, delay, or fail a user request.
  */
 import {
   DIAGNOSTICS_SCHEMA,
@@ -33,6 +56,12 @@ import { MUSE_SPARK_MODEL } from '../../../src/core/ai/meta-client'
 import { PROXY_ERRORS } from '../../../src/core/ai/proxy-errors'
 import { VALIDATOR_FAILURES } from '../../../src/core/ai/validator'
 import { bookendCountersSnapshot } from '../../../src/core/ai/bookend-counters'
+import {
+  computeTrueCosts,
+  sanitizeUsageSnapshot,
+  zeroUsageSnapshot,
+  type UsageSnapshot,
+} from '../../../src/core/ai/usage'
 import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
 import {
   meterFor,
@@ -90,6 +119,22 @@ export async function handleDiagnostics(context: PagesContext<MuseEnv>): Promise
     }
   }
 
+  // P7 split view, read separately from the flat totals on purpose:
+  // a split view that cannot be read (a pre-P7 meter class behind
+  // the binding) must not take the whole diagnostics record down
+  // with it, and must not be reported as measured zeros either --
+  // hence the readable flag beside zeroed splits. The sanitize pass
+  // rebuilds the view from the closed model/route keys only.
+  let usage: UsageSnapshot = zeroUsageSnapshot()
+  let usageReadable = true
+  try {
+    usage = sanitizeUsageSnapshot(await meter.usageSnapshot())
+  } catch (e) {
+    if (!(e instanceof MeterUnavailableError)) throw e
+    usageReadable = false
+  }
+  const trueCosts = computeTrueCosts(usage)
+
   return json(
     {
       schema: DIAGNOSTICS_SCHEMA,
@@ -104,10 +149,43 @@ export async function handleDiagnostics(context: PagesContext<MuseEnv>): Promise
       tokensOut: snapshot.tokensOut,
       budgetExhausted: snapshot.budgetExhausted,
       breaker,
-      // Hourglass bookend outcomes (C11): additive keys on the flat
-      // record, aggregate counts only, read from the same in-isolate
-      // counters the bookend routes record against.
-      hourglass: bookendCountersSnapshot(),
+      // The two cost stories, labelled (P7). modelledAccounting is
+      // the flat settle accounting that spentMicroUsd has always
+      // carried; trueCost prices the recorded split tokens at
+      // roster rates and adds web-search billing. Neither is a
+      // bill; both are reporting, and the bases say which is which.
+      costs: {
+        modelledAccounting: {
+          basis: 'flat modelled accounting: per-route flat settle constants, not prices',
+          spentMicroUsd: snapshot.spentMicroUsd,
+        },
+        trueCost: {
+          basis:
+            'true cost: split tokens at roster prices by model, plus web searches at $2.50 per 1000; a floor, because briefing and transcribe tokens carry no split',
+          tokenCostMicroUsd: trueCosts.tokenCostMicroUsd,
+          searchCostMicroUsd: trueCosts.searchCostMicroUsd,
+          trueCostMicroUsd: trueCosts.trueCostMicroUsd,
+          byModelCostMicroUsd: trueCosts.byModelCostMicroUsd,
+        },
+      },
+      // P7 usage splits: tokens and call counts by model and by
+      // route, the durable search count with its own cost line, and
+      // whether this view was actually read (see the note above).
+      usage: {
+        readable: usageReadable,
+        byModel: usage.byModel,
+        byRoute: usage.byRoute,
+        searches: usage.searches,
+        searchCostMicroUsd: trueCosts.searchCostMicroUsd,
+        tokenCostMicroUsd: trueCosts.tokenCostMicroUsd,
+        trueCostMicroUsd: trueCosts.trueCostMicroUsd,
+        byModelCostMicroUsd: trueCosts.byModelCostMicroUsd,
+      },
+      // Hourglass bookend outcomes (C11): aggregate counts only.
+      // P7: read from the meter's durable mirror when the split
+      // view is readable; the in-isolate counters are the fallback
+      // for a deployment whose meter cannot report them.
+      hourglass: usageReadable ? usage.hourglass : bookendCountersSnapshot(),
       errors,
       deployment: {
         pages: env.CF_PAGES === '1',

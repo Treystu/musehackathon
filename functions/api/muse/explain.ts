@@ -10,6 +10,7 @@
 import { MAX_EXPLAIN_VALUES, type ExplainRequest } from '../../../src/core/ai/provider'
 import { isKnownFigureKey } from '../../../src/core/ai/intent-schema'
 import { realValidator, type FigureForValidation } from '../../../src/core/ai/validator'
+import { MUSE_SPARK_MODEL } from '../../../src/core/ai/meta-client'
 import { preCallGate, mapProviderError, attemptCall, accountCall, accountError, accountFailure, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
@@ -86,7 +87,11 @@ export async function handleExplain(
     )
     // The provider answered: count the call at its flat cost. Best
     // effort — a failed accounting hop changes nothing the user sees.
-    accountCall(deps, req.clientId, ACTUAL_COST_MICRO, ACTUAL_TOKENS_IN, ACTUAL_TOKENS_OUT)
+    // P7 detail buckets the same tokens by model and route.
+    accountCall(deps, req.clientId, ACTUAL_COST_MICRO, ACTUAL_TOKENS_IN, ACTUAL_TOKENS_OUT, {
+      model: deps.model ?? MUSE_SPARK_MODEL,
+      route: 'explain',
+    })
 
     if (typeof result.prose !== 'string') {
       accountError(deps, 'provider_down')

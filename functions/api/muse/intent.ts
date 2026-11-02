@@ -11,6 +11,7 @@
  */
 import { validateIntent } from '../../../src/core/ai/intent-schema'
 import { resolveDomainClassification } from '../../../src/core/ai/general'
+import { MUSE_SPARK_MODEL } from '../../../src/core/ai/meta-client'
 import { preCallGate, mapProviderError, attemptCall, accountCall, accountError, accountFailure, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute, type MuseEnv, type PagesContext } from '../../../src/server/muse-adapter'
 
@@ -70,8 +71,13 @@ export async function handleIntent(
           }
         : check.intent
     // Counted only once the intent validates, as before — but as pure
-    // accounting: best-effort, and never a condition of serving.
-    accountCall(deps, req.clientId, FLAT_COST_MICRO, FLAT_TOKENS_IN, FLAT_TOKENS_OUT)
+    // accounting: best-effort, and never a condition of serving. The
+    // P7 detail buckets the same flat tokens by the deployment's
+    // configured model and this route, for the true-cost view.
+    accountCall(deps, req.clientId, FLAT_COST_MICRO, FLAT_TOKENS_IN, FLAT_TOKENS_OUT, {
+      model: deps.model ?? MUSE_SPARK_MODEL,
+      route: 'intent',
+    })
     return { status: 200, body: { intent } }
   } catch (e) {
     accountFailure(deps)

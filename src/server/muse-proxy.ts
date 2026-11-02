@@ -31,8 +31,10 @@ import type {
   Meter,
   MeterSnapshot,
 } from '../core/ai/meter'
+import type { BookendCounters } from '../core/ai/bookend-counters'
 import type { MuseProvider, StageChatProvider } from '../core/ai/provider'
 import type { ProxyError } from '../core/ai/proxy-errors'
+import type { UsageDetail, UsageSnapshot } from '../core/ai/usage'
 
 /**
  * The meter surface the handlers account against. Each op may answer
@@ -49,10 +51,18 @@ export interface MeterContract {
     actualMicroUsd: number,
     tin: number,
     tout: number,
+    detail?: UsageDetail,
   ): void | Promise<void>
   recordError(cls: string): void | Promise<void>
   recordFailure(now?: number): void | Promise<void>
+  /** P7: count completed web_search calls from one research reply. */
+  recordSearches(count: number): void | Promise<void>
+  /** P7: mirror one hourglass bookend outcome into the meter store. */
+  recordTopBookend(outcome: keyof BookendCounters['top']): void | Promise<void>
+  recordBottomBookend(outcome: keyof BookendCounters['bottom']): void | Promise<void>
   snapshot(): MeterSnapshot | Promise<MeterSnapshot>
+  /** P7 split view (usage.ts); diagnostics reads it on its read path. */
+  usageSnapshot(): UsageSnapshot | Promise<UsageSnapshot>
   breakerState(now?: number): BreakerState | Promise<BreakerState>
   configSnapshot():
     | ReturnType<Meter['configSnapshot']>
@@ -69,6 +79,15 @@ export interface ProxyDeps {
    * bookend that cannot call its stage model has not run.
    */
   stageProvider?: StageChatProvider
+  /**
+   * The deployment's configured runtime model (P7): the classic
+   * routes (intent/explain/research) serve under this model, so
+   * their settles are bucketed under it. Set by the adapter from the
+   * same env value the provider is constructed with; absent in
+   * hermetic deps, where routes fall back to the Spark default.
+   * Accounting metadata only -- never an admission input.
+   */
+  model?: string
   allowedModels: readonly string[]
   /** Wait-out timing; tests inject ~0. Defaults to DEFAULT_WAIT_OUT. */
   waitOut?: WaitOutConfig
@@ -146,15 +165,46 @@ export function account(deps: ProxyDeps, op: (meter: MeterContract) => void | Pr
   void safe
 }
 
-/** Count one completed provider call at its flat settle cost. */
+/**
+ * Count one completed provider call at its flat settle cost. The
+ * optional P7 detail buckets the same call by model and route in
+ * the meter's splits; omitting it (briefing, transcribe) counts the
+ * call in the global totals only.
+ */
 export function accountCall(
   deps: ProxyDeps,
   clientId: string,
   actualMicroUsd: number,
   tin: number,
   tout: number,
+  detail?: UsageDetail,
 ): void {
-  account(deps, (meter) => meter.recordCall(clientId, actualMicroUsd, tin, tout))
+  account(deps, (meter) => meter.recordCall(clientId, actualMicroUsd, tin, tout, detail))
+}
+
+/** Count completed web_search calls from one research reply (P7). */
+export function accountSearches(deps: ProxyDeps, count: number): void {
+  account(deps, (meter) => meter.recordSearches(count))
+}
+
+/**
+ * Mirror one hourglass bookend outcome into the meter store (P7),
+ * alongside the in-isolate counter the routes have always recorded:
+ * the meter copy is the durable, cross-isolate view diagnostics
+ * reports; the in-isolate copy remains the fallback view.
+ */
+export function accountTopBookend(
+  deps: ProxyDeps,
+  outcome: keyof BookendCounters['top'],
+): void {
+  account(deps, (meter) => meter.recordTopBookend(outcome))
+}
+
+export function accountBottomBookend(
+  deps: ProxyDeps,
+  outcome: keyof BookendCounters['bottom'],
+): void {
+  account(deps, (meter) => meter.recordBottomBookend(outcome))
 }
 
 /** Count one failure by closed error class (counts only, Q1). */

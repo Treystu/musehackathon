@@ -11,9 +11,21 @@
  * allowance. Accounting is best-effort only (2026-11-02): the meter
  * never admits or refuses a request. Counts only; no bodies are
  * stored (Q1).
+ *
+ * P7 (2026-11-02): the flat modelled settle above is unchanged, and
+ * the reply's search activity is now ALSO counted on its own line --
+ * the provider reports the web_search_call count from the Responses
+ * output (parseResearchResult in meta-client.ts, the issuance point:
+ * the Responses call naming the web_search tool), and this route
+ * records it in the meter's durable search counter so diagnostics
+ * can price searches separately in the true-cost view. A completed
+ * reply that reports no count is recorded as one search: the
+ * provider's citation gate means a returned result was grounded,
+ * and grounding here is a search.
  */
 import { findBannedConstruction } from '../../../src/core/ai/validator'
-import { preCallGate, mapProviderError, attemptCall, accountCall, accountError, accountFailure, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { MUSE_SPARK_MODEL } from '../../../src/core/ai/meta-client'
+import { preCallGate, mapProviderError, attemptCall, accountCall, accountSearches, accountError, accountFailure, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
 const ALLOWED_PATHS = new Set(['/api/muse/research'])
@@ -60,7 +72,20 @@ export async function handleResearch(
     )
     // The provider answered: count the call at its flat cost. Best
     // effort — a failed accounting hop changes nothing the user sees.
-    accountCall(deps, req.clientId, ACTUAL_COST_MICRO, ACTUAL_TOKENS_IN, ACTUAL_TOKENS_OUT)
+    // P7: the same tokens bucket by model and route, and the reply's
+    // searches count on their own line (they were billed whether or
+    // not the prose below survives the gates, so they count here,
+    // before them).
+    accountCall(deps, req.clientId, ACTUAL_COST_MICRO, ACTUAL_TOKENS_IN, ACTUAL_TOKENS_OUT, {
+      model: deps.model ?? MUSE_SPARK_MODEL,
+      route: 'research',
+    })
+    accountSearches(
+      deps,
+      typeof result.searchCalls === 'number' && result.searchCalls > 0
+        ? Math.trunc(result.searchCalls)
+        : 1,
+    )
     if (
       typeof result.prose !== 'string' ||
       !result.prose.trim() ||

@@ -437,8 +437,18 @@ export interface ResearchSourceLike {
   url: string
 }
 
-/** Parse a Responses API research reply into prose + deduped sources. */
-export function parseResearchResult(value: unknown): { prose: string; sources: ResearchSourceLike[] } {
+/**
+ * Parse a Responses API research reply into prose + deduped sources.
+ * Also counts the web_search_call items (P7): each one is a billed
+ * search ($2.50 per 1,000), and this parse is the only place the
+ * reply's search activity is visible -- the route's meter counting
+ * consumes the count from here, via the provider's ResearchResult.
+ */
+export function parseResearchResult(value: unknown): {
+  prose: string
+  sources: ResearchSourceLike[]
+  searchCalls: number
+} {
   const out: string[] = []
   const byUrl = new Map<string, ResearchSourceLike>()
   const addSource = (url: unknown, title: unknown) => {
@@ -475,7 +485,10 @@ export function parseResearchResult(value: unknown): { prose: string; sources: R
       }
     }
   }
-  return { prose: out.join('\n\n').trim(), sources: [...byUrl.values()] }
+  const searchCalls = items.filter(
+    (i) => (i as { type?: unknown } | null)?.type === 'web_search_call',
+  ).length
+  return { prose: out.join('\n\n').trim(), sources: [...byUrl.values()], searchCalls }
 }
 
 /** Usage is read by the proxy adapter to settle the meter against reality. */
@@ -699,7 +712,7 @@ export function createMetaDirectProvider(
         },
         signal,
       )
-      const { prose, sources } = parseResearchResult(reply)
+      const { prose, sources, searchCalls } = parseResearchResult(reply)
       // The citation gate: ungrounded prose is not a research result.
       if (!prose || sources.length === 0) throw new ProviderCallError('provider_down')
       // Claim-level prose refusal (P3 step 9): the banned-construction
@@ -710,7 +723,7 @@ export function createMetaDirectProvider(
       // sentence lands on the unavailable state.
       const filtered = filterBannedSentences(prose)
       if (!filtered.prose) throw new ProviderCallError('provider_down')
-      return { prose: filtered.prose, sources }
+      return { prose: filtered.prose, sources, searchCalls }
     },
 
     async general(req: GeneralRequest, signal: AbortSignal): Promise<GeneralResult> {

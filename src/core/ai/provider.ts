@@ -170,6 +170,16 @@ export interface ResearchSource {
 export interface ResearchResult {
   prose: string
   sources: ResearchSource[]
+  /**
+   * Completed web_search calls behind this result (P7): the count
+   * of web_search_call items in the Responses output, reported by
+   * the direct provider from the reply it parsed. Search bills
+   * separately from tokens, so the research route counts these in
+   * the meter's search counter. Optional because hermetic providers
+   * issue no searches; the route treats an unreported count on a
+   * completed reply as one (a grounded reply issued at least one).
+   */
+  searchCalls?: number
 }
 
 /**

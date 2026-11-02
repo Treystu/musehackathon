@@ -19,6 +19,7 @@ import { recordTopBookend } from '../../../src/core/ai/bookend-counters'
 import {
   preCallGate,
   accountCall,
+  accountTopBookend,
   accountError,
   err,
   type ProxyDeps,
@@ -129,6 +130,7 @@ export async function handlePlan(
   const started = Date.now()
   if (!deps.stageProvider) {
     recordTopBookend('degraded')
+    accountTopBookend(deps, 'degraded')
     return {
       status: 200,
       body: { outcome: 'degraded', model, packetTokens: packet.tokens, trimmed: packet.trimmed },
@@ -138,24 +140,34 @@ export async function handlePlan(
     const result = await withStageTimeout(PLAN_TIMEOUT_MS, (signal) =>
       deps.stageProvider!.stageChat({ model, system: SYSTEM_PROMPT, user: packet.text }, signal),
     )
-    accountCall(deps, req.clientId, PLAN_SETTLE_MICRO_USD, FLAT_TOKENS_IN, FLAT_TOKENS_OUT)
+    // P7: bucket by the model the provider reports for the call (the
+    // durable version of the packetTokens this reply already
+    // carries), falling back to the requested stage model.
+    accountCall(deps, req.clientId, PLAN_SETTLE_MICRO_USD, FLAT_TOKENS_IN, FLAT_TOKENS_OUT, {
+      model: result.model ?? model,
+      route: 'plan',
+    })
     const verdict = parsePlanVerdict(result.text)
     const latencyMs = Date.now() - started
     if (verdict.kind === 'sound') {
       recordTopBookend('sound')
+      accountTopBookend(deps, 'sound')
       return { status: 200, body: { outcome: 'sound', objections: [], model: result.model, latencyMs, packetTokens: packet.tokens, trimmed: packet.trimmed } }
     }
     if (verdict.kind === 'unsound') {
       recordTopBookend('unsound')
+      accountTopBookend(deps, 'unsound')
       return { status: 200, body: { outcome: 'unsound', objections: verdict.objections, model: result.model, latencyMs, packetTokens: packet.tokens, trimmed: packet.trimmed } }
     }
     recordTopBookend('degraded')
+    accountTopBookend(deps, 'degraded')
     accountError(deps, 'shape_invalid')
     return { status: 200, body: { outcome: 'degraded', model: result.model, latencyMs, packetTokens: packet.tokens, trimmed: packet.trimmed } }
   } catch {
     // Timeout, provider failure, or an unreachable Wonder id: the
     // bookend did not run, and the reply says exactly that.
     recordTopBookend('degraded')
+    accountTopBookend(deps, 'degraded')
     accountError(deps, 'provider_down')
     return {
       status: 200,

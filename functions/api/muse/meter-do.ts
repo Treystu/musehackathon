@@ -33,6 +33,7 @@ import {
   type MeterStorage,
   type PersistedMeterState,
 } from '../../../src/core/ai/meter-persistence'
+import type { UsageDetail, UsageSnapshot } from '../../../src/core/ai/usage'
 
 const STORAGE_KEY = 'meter/v1'
 export const METER_INSTANCE_NAME = 'judging-window-v1'
@@ -108,6 +109,41 @@ function asOptNumber(v: unknown): number | undefined {
   return v === undefined ? undefined : asNumber(v)
 }
 
+/**
+ * P7 settle detail (trailing arg): an object whose model/route, when
+ * present, are strings. Anything else is a shape error. The values
+ * themselves are not allowlist-checked here -- the Meter sanitizes
+ * against the closed unions on write, so an unlisted string is
+ * dropped from the splits there, not rejected here.
+ */
+function asOptUsageDetail(v: unknown): { model?: string; route?: string } | undefined {
+  if (v === undefined) return undefined
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+    throw new ShapeError('expected usage detail object arg')
+  }
+  const rec = v as Record<string, unknown>
+  if (rec.model !== undefined && typeof rec.model !== 'string') {
+    throw new ShapeError('expected string usage model')
+  }
+  if (rec.route !== undefined && typeof rec.route !== 'string') {
+    throw new ShapeError('expected string usage route')
+  }
+  return {
+    ...(typeof rec.model === 'string' ? { model: rec.model } : {}),
+    ...(typeof rec.route === 'string' ? { route: rec.route } : {}),
+  }
+}
+
+function asTopOutcome(v: unknown): 'sound' | 'unsound' | 'degraded' {
+  if (v === 'sound' || v === 'unsound' || v === 'degraded') return v
+  throw new ShapeError('expected top bookend outcome')
+}
+
+function asBottomOutcome(v: unknown): 'verified' | 'concerns' | 'notRun' {
+  if (v === 'verified' || v === 'concerns' || v === 'notRun') return v
+  throw new ShapeError('expected bottom bookend outcome')
+}
+
 function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -156,6 +192,7 @@ export class MeterDurableObject {
             asNumber(args[2]),
             asNumber(args[3]),
             asNumber(args[4]),
+            asOptUsageDetail(args[5]),
           )
           return json(200, { result: null })
         case 'recordCall':
@@ -164,8 +201,20 @@ export class MeterDurableObject {
             asNumber(args[1]),
             asNumber(args[2]),
             asNumber(args[3]),
+            asOptUsageDetail(args[4]),
           )
           return json(200, { result: null })
+        case 'recordSearches':
+          await this.meter.recordSearches(asNumber(args[0]))
+          return json(200, { result: null })
+        case 'recordTopBookend':
+          await this.meter.recordTopBookend(asTopOutcome(args[0]))
+          return json(200, { result: null })
+        case 'recordBottomBookend':
+          await this.meter.recordBottomBookend(asBottomOutcome(args[0]))
+          return json(200, { result: null })
+        case 'usageSnapshot':
+          return json(200, { result: await this.meter.usageSnapshot() })
         case 'release':
           await this.meter.release(asString(args[0]))
           return json(200, { result: null })
@@ -311,10 +360,15 @@ export class DurableMeterClient {
     actualMicroUsd: number,
     tin: number,
     tout: number,
+    detail?: UsageDetail,
   ): Promise<void> {
-    return this.call<null>('settle', [id, clientId, actualMicroUsd, tin, tout], false).then(
-      () => undefined,
-    )
+    // The detail rides as a trailing arg: a pre-P7 deployed class
+    // reads args[0..4] and ignores it, so the flat settle still lands
+    // there and only the splits wait for the redeploy (see the
+    // recordCall note below on the deployed-class skew).
+    const args: unknown[] = [id, clientId, actualMicroUsd, tin, tout]
+    if (detail !== undefined) args.push(detail)
+    return this.call<null>('settle', args, false).then(() => undefined)
   }
 
   /**
@@ -338,10 +392,36 @@ export class DurableMeterClient {
     actualMicroUsd: number,
     tin: number,
     tout: number,
+    detail?: UsageDetail,
   ): Promise<void> {
     const id = await this.reserve(clientId, actualMicroUsd, tin + tout)
     if (id === null) return
-    await this.settle(id, clientId, actualMicroUsd, tin, tout)
+    await this.settle(id, clientId, actualMicroUsd, tin, tout, detail)
+  }
+
+  /**
+   * P7 ops. These dispatch names exist only in the P7 class, so
+   * against the pre-P7 deployed standalone worker they fail with
+   * MeterUnavailableError -- which the accounting wrapper swallows
+   * (a lost split record, invisible to the user) and the diagnostics
+   * read path reports as usage readable: false rather than as
+   * fabricated zeros. They increment counters unconditionally, so,
+   * like settle, they never retry an ambiguous transport failure.
+   */
+  recordSearches(count: number): Promise<void> {
+    return this.call<null>('recordSearches', [count], false).then(() => undefined)
+  }
+
+  recordTopBookend(outcome: 'sound' | 'unsound' | 'degraded'): Promise<void> {
+    return this.call<null>('recordTopBookend', [outcome], false).then(() => undefined)
+  }
+
+  recordBottomBookend(outcome: 'verified' | 'concerns' | 'notRun'): Promise<void> {
+    return this.call<null>('recordBottomBookend', [outcome], false).then(() => undefined)
+  }
+
+  usageSnapshot(): Promise<UsageSnapshot> {
+    return this.call<UsageSnapshot>('usageSnapshot', [], true)
   }
 
   release(id: string): Promise<void> {

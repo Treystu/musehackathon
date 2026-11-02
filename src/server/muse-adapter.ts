@@ -134,6 +134,9 @@ export function depsFor(env: MuseEnv): ProxyDeps | null {
     meter: meterFor(env),
     provider,
     stageProvider: provider,
+    // P7 accounting metadata: the model the classic routes serve
+    // under (the same value the provider was constructed with).
+    model,
     // Per-call model selection (C1): a request may name any allowlisted
     // stage model; the configured model stays the default when a
     // request names none. The configured value is added when an

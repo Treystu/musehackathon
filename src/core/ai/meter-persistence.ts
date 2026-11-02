@@ -27,6 +27,14 @@ import {
   type MeterSnapshot,
   type MeterState,
 } from './meter'
+import {
+  sanitizeUsageSnapshot,
+  zeroHourglass,
+  type UsageBucket,
+  type UsageDetail,
+  type UsageSnapshot,
+} from './usage'
+import type { BookendCounters } from './bookend-counters'
 
 export const PERSISTED_METER_VERSION = 1
 
@@ -51,6 +59,18 @@ export interface PersistedMeterState {
     { clientId: string; estMicroUsd: number; expiresAt: number }
   >
   nextReservationId: number
+  /**
+   * P7 splits (usage.ts), additive under version 1: a record written
+   * before P7 carries none of these fields and loads with zero
+   * splits (its flat totals are untouched and remain the truth for
+   * the pre-P7 period); a record written after P7 carries all of
+   * them. Present-but-malformed values fail closed in the loader,
+   * exactly like every other field -- they are never silently zeroed.
+   */
+  usageByModel?: Record<string, UsageBucket>
+  usageByRoute?: Record<string, UsageBucket>
+  searches?: number
+  hourglass?: BookendCounters
 }
 
 /** Single-record storage behind the adapter (one key in the DO). */
@@ -91,6 +111,10 @@ export function emptyPersistedState(): PersistedMeterState {
     perClientSpent: {},
     reservations: {},
     nextReservationId: 0,
+    usageByModel: {},
+    usageByRoute: {},
+    searches: 0,
+    hourglass: zeroHourglass(),
   }
 }
 
@@ -125,7 +149,7 @@ function isPersistedMeterState(raw: unknown): raw is PersistedMeterState {
   }
   if (!isNumberRecord(s.errors) || !isNumberRecord(s.perClientSpent)) return false
   if (typeof s.reservations !== 'object' || s.reservations === null) return false
-  return Object.values(s.reservations).every((r) => {
+  if (!Object.values(s.reservations).every((r) => {
     if (typeof r !== 'object' || r === null) return false
     const rec = r as Record<string, unknown>
     return (
@@ -133,7 +157,43 @@ function isPersistedMeterState(raw: unknown): raw is PersistedMeterState {
       isFiniteNumber(rec.estMicroUsd) &&
       isFiniteNumber(rec.expiresAt)
     )
+  })) {
+    return false
+  }
+  // P7 fields are optional (pre-P7 records carry none), but a present
+  // field must be well-formed: a bucket with a non-finite count is
+  // corruption, not a zero.
+  if (s.usageByModel !== undefined && !isBucketRecord(s.usageByModel)) return false
+  if (s.usageByRoute !== undefined && !isBucketRecord(s.usageByRoute)) return false
+  if (s.searches !== undefined && !isFiniteNumber(s.searches)) return false
+  if (s.hourglass !== undefined && !isHourglassRecord(s.hourglass)) return false
+  return true
+}
+
+function isBucketRecord(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  return Object.values(v).every((b) => {
+    if (typeof b !== 'object' || b === null) return false
+    const rec = b as Record<string, unknown>
+    return (
+      isFiniteNumber(rec.calls) &&
+      isFiniteNumber(rec.tokensIn) &&
+      isFiniteNumber(rec.tokensOut)
+    )
   })
+}
+
+function isHourglassRecord(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const rec = v as Record<string, unknown>
+  const side = (x: unknown, keys: string[]): boolean =>
+    typeof x === 'object' &&
+    x !== null &&
+    keys.every((k) => isFiniteNumber((x as Record<string, unknown>)[k]))
+  return (
+    side(rec.top, ['sound', 'unsound', 'degraded']) &&
+    side(rec.bottom, ['verified', 'concerns', 'notRun'])
+  )
 }
 
 /**
@@ -150,7 +210,24 @@ const LOADERS: Record<number, (raw: unknown) => PersistedMeterState> = {
         'persisted meter record failed v1 shape validation',
       )
     }
-    return raw
+    // Normalize the P7 fields through the closed-vocabulary sanitize
+    // pass: a stored key outside the model/route unions (impossible
+    // through the Meter, which sanitizes on write) is dropped here
+    // rather than reaching diagnostics, and a pre-P7 record gains
+    // zero splits.
+    const usage = sanitizeUsageSnapshot({
+      byModel: raw.usageByModel,
+      byRoute: raw.usageByRoute,
+      searches: raw.searches,
+      hourglass: raw.hourglass,
+    })
+    return {
+      ...raw,
+      usageByModel: usage.byModel,
+      usageByRoute: usage.byRoute,
+      searches: usage.searches,
+      hourglass: usage.hourglass,
+    }
   },
 }
 
@@ -214,6 +291,16 @@ function toMeterState(p: PersistedMeterState): MeterState {
       ]),
     ),
     nextReservationId: p.nextReservationId,
+    usageByModel: Object.fromEntries(
+      Object.entries(p.usageByModel ?? {}).map(([k, v]) => [k, { ...v }]),
+    ),
+    usageByRoute: Object.fromEntries(
+      Object.entries(p.usageByRoute ?? {}).map(([k, v]) => [k, { ...v }]),
+    ),
+    searches: p.searches ?? 0,
+    hourglass: p.hourglass
+      ? { top: { ...p.hourglass.top }, bottom: { ...p.hourglass.bottom } }
+      : zeroHourglass(),
   }
 }
 
@@ -247,6 +334,17 @@ function toPersistedState(
       ]),
     ),
     nextReservationId: ms.nextReservationId,
+    usageByModel: Object.fromEntries(
+      Object.entries(ms.usageByModel).map(([k, v]) => [k, { ...v }]),
+    ),
+    usageByRoute: Object.fromEntries(
+      Object.entries(ms.usageByRoute).map(([k, v]) => [k, { ...v }]),
+    ),
+    searches: ms.searches,
+    hourglass: {
+      top: { ...ms.hourglass.top },
+      bottom: { ...ms.hourglass.bottom },
+    },
   }
 }
 
@@ -322,9 +420,10 @@ export class PersistentMeter {
     actualMicroUsd: number,
     tin: number,
     tout: number,
+    detail?: UsageDetail,
   ): Promise<void> {
     return this.apply((m) => {
-      m.settle(id, clientId, actualMicroUsd, tin, tout)
+      m.settle(id, clientId, actualMicroUsd, tin, tout, detail)
     })
   }
 
@@ -334,10 +433,37 @@ export class PersistentMeter {
     actualMicroUsd: number,
     tin: number,
     tout: number,
+    detail?: UsageDetail,
   ): Promise<void> {
     return this.apply((m) => {
-      m.recordCall(clientId, actualMicroUsd, tin, tout)
+      m.recordCall(clientId, actualMicroUsd, tin, tout, detail)
     })
+  }
+
+  /** P7: count completed web_search calls from one research reply. */
+  recordSearches(count: number): Promise<void> {
+    return this.apply((m) => {
+      m.recordSearches(count)
+    })
+  }
+
+  /** P7: mirror one top-bookend outcome into the durable record. */
+  recordTopBookend(outcome: keyof BookendCounters['top']): Promise<void> {
+    return this.apply((m) => {
+      m.recordTopBookend(outcome)
+    })
+  }
+
+  /** P7: mirror one bottom-bookend outcome into the durable record. */
+  recordBottomBookend(outcome: keyof BookendCounters['bottom']): Promise<void> {
+    return this.apply((m) => {
+      m.recordBottomBookend(outcome)
+    })
+  }
+
+  /** P7 split view, read through the same load cycle as snapshot(). */
+  usageSnapshot(): Promise<UsageSnapshot> {
+    return this.apply((m) => m.usageSnapshot())
   }
 
   release(id: string): Promise<void> {

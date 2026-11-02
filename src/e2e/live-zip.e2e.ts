@@ -98,6 +98,10 @@ describe('live site: shell integrity', () => {
   it('the Fair Housing notice is present on the data surface', async () => {
     await page.goto(BASE, { waitUntil: 'domcontentloaded' })
     await lookUp('78701')
+    // Since the explain-nothing reskin (2026-11-02) the notice text lives
+    // behind its HelpTip on the surface, so open the tip before reading
+    // rendered text.
+    await page.click('button[aria-label="How to read this data and fair housing contacts"]')
     const text = await page.locator('body').innerText()
     expect(text).toMatch(/not an overall ranking or a recommendation/i)
     expect(text).toMatch(/Fair Housing Assistance Program/i)

@@ -119,7 +119,10 @@ describe.skipIf(!KEY)('the map view', () => {
 
   it('carries the Fair Housing notice on the map surface', async () => {
     // A colour-coded housing map is exactly what the notice is for, so its
-    // presence cannot be limited to the table view.
+    // presence cannot be limited to the table view. Since the explain-nothing
+    // reskin (2026-11-02) the notice text lives behind its HelpTip on the
+    // surface, so open the tip before reading rendered text.
+    await page.click('button[aria-label="How to read this data and fair housing contacts"]')
     const body = await page.locator('body').innerText()
     expect(body).toMatch(/steering/i)
     expect(body).toMatch(/hud\.gov|Department of Housing/i)

@@ -131,6 +131,13 @@ describe('AnswerCard', () => {
       summary: '',
       droppedClaims: [],
       failures: ['figure mismatch for 96720 median_gross_rent'],
+      researchCriteria: [],
+      criterionEvidence: [],
+      candidateCap: 10,
+      candidateCapApplied: false,
+      unresolvedCandidates: [],
+      geographyLevel: 'place',
+      unsupportedGeography: null,
     }
     render(<AnswerCard answer={withheld} />)
     const text = container.textContent ?? ''

@@ -43,6 +43,50 @@
  */
 import { isFilterLegal, withRunnability } from './intent-schema'
 import type { ValidatedIntent } from './provider'
+import { STATE_NAME_BY_CODE } from '../sweep/states'
+
+/**
+ * The state a geography names, by code ("TX") or full name ("Texas"),
+ * or null. The bounded-superlative rescue and the answer runner share
+ * this one reading, so a geography the rescue calls resolvable is a
+ * geography the runner can actually resolve.
+ */
+export function stateCodeForGeography(text: string): string | null {
+  const trimmed = text.trim()
+  const code = trimmed.toUpperCase()
+  if (Object.prototype.hasOwnProperty.call(STATE_NAME_BY_CODE, code)) return code
+  const lower = trimmed.toLowerCase()
+  for (const [stateCode, name] of Object.entries(STATE_NAME_BY_CODE)) {
+    if (name.toLowerCase() === lower) return stateCode
+  }
+  return null
+}
+
+/**
+ * Whether a geography is resolvable enough for a bounded screen: a
+ * ZIP, a state (code or full name), or a "City, ST" place whose state
+ * suffix pins it. A bare place name ("Springfield") is NOT — which
+ * same-named place was meant is a real ambiguity, and it keeps its
+ * clarification.
+ */
+export function isBoundedScreenGeography(text: string): boolean {
+  const trimmed = text.trim()
+  if (/^\d{5}$/.test(trimmed)) return true
+  if (stateCodeForGeography(trimmed)) return true
+  const suffixed = /^(.+?),\s*([A-Za-z]{2})$/.exec(trimmed)
+  return !!suffixed && stateCodeForGeography(suffixed[2]!) !== null
+}
+
+/** The bounded-screen intent shape: a sweep over one named geography, sorted by its measure. */
+export function boundedScreenIntent(metricKey: string, geographies: string[]): ValidatedIntent {
+  return withRunnability({
+    mode: 'sweep_filter',
+    geographies: [...geographies],
+    metricKeys: [metricKey],
+    filters: [],
+    clarificationNeeded: true,
+  })
+}
 
 /** Ascending superlatives the rescue recognises, as whole phrases. */
 const ASCENDING_SUPERLATIVES: readonly string[] = [
@@ -203,9 +247,23 @@ export function rescueNationalScreen(
 ): ValidatedIntent | null {
   if (!intent.clarificationNeeded) return null
   if (intent.metricKeys.length > 0) return null
-  if (!intent.geographies.every(isCountryGeography)) return null
   if (typeof queryText !== 'string' || queryText.trim() === '') return null
   const metricKey = superlativeMeasure(queryText)
   if (metricKey === null || !isFilterLegal(metricKey)) return null
-  return nationalScreenIntent(metricKey)
+  if (intent.geographies.every(isCountryGeography)) {
+    return nationalScreenIntent(metricKey)
+  }
+  // Geography-bounded superlative (generalization item 4, 2026-11-02:
+  // the live-ask residual — "cheapest place to live in Texas" kept
+  // its clarification because the national screen never bypassed a
+  // named place). Country-level names in the list are not places and
+  // drop out; every remaining geography must be resolvable as a
+  // bounded screen geography, and the screen is then bounded by
+  // exactly those geographies. An unresolvable geography (a bare
+  // ambiguous place name, a county the shipped data cannot serve as
+  // a screen scope) keeps its clarification.
+  const realGeographies = intent.geographies.filter((g) => !isCountryGeography(g))
+  if (realGeographies.length === 0) return nationalScreenIntent(metricKey)
+  if (!realGeographies.every(isBoundedScreenGeography)) return null
+  return boundedScreenIntent(metricKey, realGeographies)
 }

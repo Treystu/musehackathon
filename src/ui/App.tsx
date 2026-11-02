@@ -27,6 +27,7 @@ import { MapView } from './MapView'
 import { sortSweepRows } from '../core/sweep-sorting'
 import { scopePrefixesForStates, STATE_NAME_BY_CODE } from '../core/sweep/states'
 import { AskPanel, needsResearch } from './ai/AskPanel'
+import { stateCodeForGeography } from '../core/ai/national-screen'
 import { AnswerCard } from './ai/AnswerCard'
 import {
   answerScopeCovered,
@@ -276,6 +277,7 @@ export default function App() {
           provider: HOUSE_PROVIDER,
           research: needsResearch(queryText),
           signal: new AbortController().signal,
+          placeIndex: placeIndex ?? null,
         })
         if (!cancelled && composed) {
           answerComposedIds.current.add(id)
@@ -437,6 +439,38 @@ export default function App() {
           }
         }
         if (Object.keys(next).length === 0) {
+          // Geography-bounded screen (2026-11-02, generalization
+          // item 4): a placed sweep with no bound is the bounded
+          // superlative's shape — the named geography is the scope
+          // and the sort is the request, the placed twin of the
+          // placeless branch above. State geographies scope through
+          // the state prefixes; a city geography's rows are the
+          // answer layer's (its resolver covers every ZIP in the
+          // city), and the table keeps its current scope with the
+          // note saying which geography the answer is bounded by.
+          const preset = PRESETS.find((item) => item.sort === intent.metricKeys[0])
+          if (preset) {
+            const namedStates: string[] = []
+            for (const geography of intent.geographies) {
+              const state =
+                asStateCode(geography) ??
+                splitStateSuffix(geography.trim().toLowerCase()).state ??
+                stateCodeForGeography(geography)
+              if (state && !namedStates.includes(state)) namedStates.push(state)
+            }
+            if (placeIndex && namedStates.length > 0) {
+              const prefixes = scopePrefixesForStates(placeIndex.places, namedStates)
+              const alreadyScoped =
+                prefixes.length === q.stateScope.length &&
+                prefixes.every((prefix) => q.stateScope.includes(prefix))
+              if (prefixes.length > 0 && !alreadyScoped) void q.applyScope(prefixes)
+            }
+            setFigureFilters({})
+            setSorting({ presetId: preset.id, sortKey: preset.sort, ascending: true })
+            setView('explore')
+            setMode('data')
+            return `Screening ${intent.geographies.join(', ')} by ${preset.label.toLowerCase()}, lowest first — the table below is sorted by that figure.`
+          }
           return 'This bound cannot be set on the screening table, which offers a maximum for rent, rent burden and home value and a minimum for households. Nothing was changed.'
         }
 

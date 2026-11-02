@@ -43,12 +43,16 @@ describe('canRun mode minimums (single owner)', () => {
     expect(withRunnability(compareTwo).clarificationNeeded).toBe(false)
   })
 
-  it('sweep_filter: 1 filter runnable, 0 filters not', () => {
+  it('sweep_filter: 1 filter runnable; 0 filters runs as the geography-bounded screen', () => {
     expect(canRun(sweepOne)).toBe(true)
-    expect(canRun({ ...sweepOne, filters: [] })).toBe(false)
+    // Bounded-screen exception (2026-11-02): a placed sweep with no
+    // bound is scoped to its named geography and sorted by its
+    // measure — the shape a bounded superlative ("cheapest place to
+    // live in Texas") runs as.
+    expect(canRun({ ...sweepOne, filters: [] })).toBe(true)
     expect(
       withRunnability({ ...sweepOne, filters: [] }).clarificationNeeded,
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('other modes: lookup needs 1 place + 1 measure; similarity needs the seed place, measure optional', () => {
@@ -114,12 +118,15 @@ describe('canRun mode minimums (single owner)', () => {
     expect(unfiltered.ok).toBe(true)
     if (unfiltered.ok) {
       expect(unfiltered.intent.filters).toHaveLength(0)
-      expect(canRun(unfiltered.intent)).toBe(false)
-      expect(unfiltered.intent.clarificationNeeded).toBe(true)
+      // Dropping the last filter leaves the bounded screen over the
+      // named geography, sorted by its measure (2026-11-02) — the
+      // intent stays runnable rather than returning to clarification.
+      expect(canRun(unfiltered.intent)).toBe(true)
+      expect(unfiltered.intent.clarificationNeeded).toBe(false)
     }
   })
 
-  it('sweep clarification resolves with a real filter, not without', () => {
+  it('sweep clarification resolves with a real filter, and without one as the bounded screen', () => {
     const sweepFilter = { metricKey: 'median_gross_rent', op: 'gt', value: 1000 } as const
     expect(
       canResolveClarification({
@@ -129,6 +136,8 @@ describe('canRun mode minimums (single owner)', () => {
         filters: [{ ...sweepFilter }],
       }),
     ).toBe(true)
+    // No filter + a named geography + a measure completes as the
+    // geography-bounded screen (2026-11-02), not a clarification.
     expect(
       canResolveClarification({
         mode: 'sweep_filter',
@@ -136,7 +145,7 @@ describe('canRun mode minimums (single owner)', () => {
         metricKeys: ['median_gross_rent'],
         filters: [],
       }),
-    ).toBe(false)
+    ).toBe(true)
     // resolveClarification threads the intent's own filters: a clarifying
     // sweep that already carries a filter resolves once place+measure land.
     const unclearSweep: ValidatedIntent = {
@@ -156,9 +165,17 @@ describe('canRun mode minimums (single owner)', () => {
       expect(resolved.intent.filters).toHaveLength(1)
     }
     const unclearNoFilter: ValidatedIntent = { ...unclearSweep, filters: [] }
-    expect(
-      resolveClarification(unclearNoFilter, { geographies: ['HI'], metricKeys: [] }).ok,
-    ).toBe(false)
+    // The same picks complete the no-filter sweep too: place +
+    // measure land it on the bounded screen over HI.
+    const resolvedNoFilter = resolveClarification(unclearNoFilter, {
+      geographies: ['HI'],
+      metricKeys: [],
+    })
+    expect(resolvedNoFilter.ok).toBe(true)
+    if (resolvedNoFilter.ok) {
+      expect(resolvedNoFilter.intent.clarificationNeeded).toBe(false)
+      expect(resolvedNoFilter.intent.geographies).toEqual(['HI'])
+    }
   })
 
   it('filter add/remove round-trips through clarification', () => {
@@ -180,7 +197,9 @@ describe('canRun mode minimums (single owner)', () => {
       expect(removed.ok).toBe(true)
       if (removed.ok) {
         expect(removed.intent.filters).toHaveLength(0)
-        expect(removed.intent.clarificationNeeded).toBe(true)
+        // Removal lands on the bounded screen (2026-11-02), which is
+        // runnable on place + measure alone.
+        expect(removed.intent.clarificationNeeded).toBe(false)
       }
     }
   })
@@ -200,9 +219,11 @@ describe('canRun mode minimums (single owner)', () => {
     )
     expect(enabled).toContain('Use these choices')
     expect(enabled).not.toContain('disabled')
+    // A sweep with no measure at all still cannot complete: there
+    // is no figure to bound or sort the screen by.
     const blocked = renderToStaticMarkup(
       <ClarificationPanel
-        intent={{ ...runnableSweep, filters: [] }}
+        intent={{ ...runnableSweep, metricKeys: [] }}
         candidates={{ geographies: [], metricKeys: [] }}
         onResolve={() => {}}
       />,

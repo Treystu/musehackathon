@@ -82,10 +82,10 @@ export function removeFilter(intent: ValidatedIntent, filter: IntentFilter): Int
       ),
   )
   const next = { ...intent, filters }
-  // Same contract as the other removals: restamp via the single owner so
-  // dropping the last filter takes a placed sweep back through
-  // clarification (a placeless sweep is the national screen and stays
-  // runnable on its measure alone).
+  // Same contract as the other removals: restamp via the single owner.
+  // Dropping the last filter leaves a sweep runnable on its measure
+  // alone — placeless as the national screen, placed as the
+  // geography-bounded screen (2026-11-02).
   return checked(withRunnability(next))
 }
 

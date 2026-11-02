@@ -97,6 +97,47 @@
  *     intent field at all: they reach research only as the caller's
  *     `researchQuery` text. The intent schema cannot carry them, and
  *     this module does not invent a field for them.
+ *
+ * CRITERIA DECOMPOSITION (generalization, owner directive 2026-11-02:
+ * arbitrary multi-criteria cross-referenced questions — "best schools
+ * AND fewest fast food restaurants"). The decomposition is explicit
+ * in the types below, not in the intent schema:
+ *   - Census-servable criteria travel as the intent's filters /
+ *     metricKeys / geographies, converted by screenCriteriaFromIntent.
+ *   - Externally-researched criteria travel as ResearchCriterion[]
+ *     on the pipeline input and on the answer, derived from the
+ *     reader's question text by decomposeResearchCriteria (a lexical
+ *     catalog over the words the reader used: schools, fast food,
+ *     restaurants, coffee, groceries, safety, amenities). Each
+ *     criterion gets its own research pass over the same provider
+ *     seam. When the catalog matches nothing, the question's outside
+ *     criteria are carried as ONE combined criterion — the parse
+ *     cannot separate what it has no field for, and this module says
+ *     so rather than pretending a split.
+ *   - Each stated criterion ends with a CriterionEvidence entry:
+ *     met (figures or cited claims shown), partially_measured (a
+ *     cited source speaks qualitatively to a count-seeking criterion
+ *     — "few fast-food outlets" stays qualitative and never becomes
+ *     a count), or not_measurable (no available source serves it).
+ *     A partially servable question therefore still answers, stating
+ *     what was established and what could not be.
+ *
+ * BOTH NARROWING DIRECTIONS:
+ *   - Screen-first: Census criteria exist — screen, then research
+ *     only the surviving subset, capped at
+ *     SCREENED_RESEARCH_CANDIDATE_CAP places; when the cap binds the
+ *     answer discloses it (candidateCapApplied) and the card renders
+ *     the disclosure as one quiet line.
+ *   - Research-first: the question carries ONLY external criteria
+ *     (no Census bound and no Census measure) plus optionally a
+ *     geography bound — research runs first, candidate place names
+ *     are extracted from the cited findings through the injectable
+ *     candidateExtractor seam, candidates resolve deterministically
+ *     (candidateResolver, or an exact row-name match), unresolvable
+ *     names are reported in unresolvedCandidates and never guessed,
+ *     and the screen then runs in pull mode over the candidate rows
+ *     to attach their Census figures. Compose joins both sides at
+ *     the geography the question asked.
  */
 import type { AreaRow } from '../plugins/acs'
 import type { MuseProvider, ResearchResult, ValidatedIntent } from './provider'
@@ -159,6 +200,61 @@ export interface AnswerSource {
   url: string
 }
 
+/**
+ * One externally-researched criterion, decomposed from the reader's
+ * question text (see the header: the intent schema has no field for
+ * these, so they travel beside the intent, never inside it).
+ */
+export interface ResearchCriterion {
+  /** Catalog id ('schools', 'fast_food', ...), or 'combined'. */
+  id: string
+  /** Reader-facing label, from the catalog or the question's own words. */
+  label: string
+  /** The question text this criterion was decomposed from. */
+  text: string
+  /**
+   * True when the criterion asks for a count or density ("fewest
+   * fast food restaurants"). A qualitative cited claim can only ever
+   * partially measure such a criterion — it is never upgraded to a
+   * count the source did not publish.
+   */
+  quantitative: boolean
+}
+
+export type CriterionEvidenceStatus = 'met' | 'partially_measured' | 'not_measurable'
+
+/** Per-criterion evidence: what serves each stated criterion, honestly labelled. */
+export interface CriterionEvidence {
+  criterion: string
+  kind: 'census' | 'research'
+  status: CriterionEvidenceStatus
+  /** One factual sentence; numeral-free so it never reads as a figure. */
+  detail: string
+  sourceUrls: string[]
+}
+
+/**
+ * The geography level an answer is composed at.
+ *
+ * COUNTY FINDING (measured 2026-11-02 against the shipped data):
+ * county-level answers are NOT derivable from what ships. The place
+ * index (public/map/zcta-places.json, decoded by
+ * src/core/zcta-place-index.ts) is ZCTA-level: it carries a county
+ * name only as the fallback record for the 4,983 ZCTAs with no
+ * incorporated place (kind 'K' in the generator,
+ * tools/gen-zcta-city-mapping.mjs) — for every other ZCTA the county
+ * was fetched at generation time (the Census 2020 ZCTA-to-county
+ * relationship file, tab20_zcta520_county20_natl.txt) and discarded
+ * in favour of the city. A county rollup therefore needs that
+ * crosswalk shipped as a build-time artefact (one county per ZCTA by
+ * largest land overlap, the generator's existing rule); until it is,
+ * 'county' is a level an answer can REQUEST and must report as
+ * unsupported (unsupportedGeography + a not_measurable evidence
+ * entry), never a level approximated from fallback names. This is
+ * the generalization phase's one open item.
+ */
+export type AnswerGeographyLevel = 'zcta' | 'place' | 'state' | 'county' | 'national'
+
 export interface ComposedAnswer {
   status: AnswerStatus
   stage: AnswerStage
@@ -172,7 +268,31 @@ export interface ComposedAnswer {
   summary: string
   droppedClaims: ResearchedClaim[]
   failures: string[]
+  /** The researched criteria decomposed from the question, in catalog order. */
+  researchCriteria: ResearchCriterion[]
+  /** One evidence entry per stated criterion (Census and researched). */
+  criterionEvidence: CriterionEvidence[]
+  /** The candidate cap that bounds a research pass (named constant below). */
+  candidateCap: number
+  /** True when the cap bound the candidate set a research pass saw. */
+  candidateCapApplied: boolean
+  /** Research-first candidate names that resolved to no ZCTA, dropped and counted here. */
+  unresolvedCandidates: string[]
+  geographyLevel: AnswerGeographyLevel
+  /** A requested geography level the shipped data cannot serve ('county'), or null. */
+  unsupportedGeography: string | null
 }
+
+/**
+ * How many candidate places one research pass may cover. Research is
+ * the metered, slow stage; the card itself shows at most this many
+ * places before deferring to the screening table (AnswerCard's
+ * ANSWER_CARD_PLACE_LIMIT is the same number, deliberately — a place
+ * the card cannot show should not spend a research pass). When a
+ * screen leaves more survivors than this, research covers the first
+ * cap-many in screen order and the answer discloses the cap.
+ */
+export const SCREENED_RESEARCH_CANDIDATE_CAP = 10
 
 /* ------------------------------------------------------------------ */
 /* Stage 2: screen                                                     */
@@ -272,9 +392,15 @@ export function screenRows(
   // missing figure is not the cheapest — and the ZCTA breaks ties so
   // the order is deterministic. Bounded screens keep their load
   // order; the card orders those by their first criterion.
+  // The same sort serves the geography-bounded superlative
+  // (generalization, 2026-11-02: "cheapest place to live in Texas"):
+  // the rows reaching this point are already narrowed to the named
+  // geography, and a bound-less sweep over them is the bounded
+  // screen — its sort is the request, exactly as placeless. The
+  // national-screen tests pinned the old placeless-only condition;
+  // the bounded case was the live-ask residual item 4 closes.
   if (
     intent.mode === 'sweep_filter' &&
-    intent.geographies.length === 0 &&
     criteria.length === 0 &&
     intent.metricKeys.length > 0
   ) {
@@ -330,6 +456,77 @@ export function figuresForRow(
 }
 
 /* ------------------------------------------------------------------ */
+/* Criteria decomposition                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The external-criterion catalog, in decomposition order. Patterns
+ * match the reader's own words; `keywords` are what a cited claim
+ * must mention for the criterion's evidence to count as served.
+ * Fast food precedes restaurants so "fast food restaurants" is one
+ * criterion, not two.
+ */
+const RESEARCH_CRITERION_CATALOG: readonly {
+  id: string
+  label: string
+  pattern: RegExp
+  keywords: readonly string[]
+}[] = [
+  { id: 'schools', label: 'School quality', pattern: /\bschools?\b|\beducation\b/i, keywords: ['school'] },
+  { id: 'fast_food', label: 'Fast food restaurants', pattern: /fast[-\s]?food/i, keywords: ['fast-food', 'fast food'] },
+  // The lookbehind keeps "fast food restaurants" to the fast-food
+  // criterion above: the same words are one criterion, not two.
+  { id: 'restaurants', label: 'Restaurants', pattern: /(?<!fast[-\s]food\s)\brestaurants?\b/i, keywords: ['restaurant'] },
+  { id: 'coffee', label: 'Coffee nearby', pattern: /\bstarbucks\b|\bcoffee shops?\b|\bcoffee\b/i, keywords: ['starbucks', 'coffee'] },
+  { id: 'groceries', label: 'Groceries', pattern: /\bgrocer(?:y|ies)\b|\bsupermarkets?\b/i, keywords: ['grocer', 'supermarket'] },
+  { id: 'safety', label: 'Safety', pattern: /\bsafety\b|\bcrime\b|\bsafe\b/i, keywords: ['safety', 'crime', 'safe'] },
+  { id: 'walkability', label: 'Walkability', pattern: /\bwalkable\b|\bwalkability\b/i, keywords: ['walkab'] },
+  { id: 'amenities', label: 'Amenities', pattern: /\bgyms?\b|\bnightlife\b|\bplaygrounds?\b|\bhospitals?\b|\btransit\b|\bairports?\b|\blibrar(?:y|ies)\b|\bparks?\b/i, keywords: ['gym', 'nightlife', 'playground', 'hospital', 'transit', 'airport', 'librar', 'park'] },
+]
+
+const COUNT_SEEKING_RE = /\bfewest\b|\bleast\b|\bnumber of\b|\bcount\b|\bdensity\b|\bhow many\b/i
+
+/**
+ * Decompose a question's outside-Census criteria. Every catalog
+ * criterion the words carry becomes its own criterion; when none
+ * matches, the outside criteria are carried as one combined
+ * criterion (the honest shape — see the header). An empty or absent
+ * query decomposes to nothing: no research was asked for.
+ */
+export function decomposeResearchCriteria(queryText: string | undefined): ResearchCriterion[] {
+  if (!queryText || queryText.trim() === '') return []
+  const quantitative = COUNT_SEEKING_RE.test(queryText)
+  const found: ResearchCriterion[] = []
+  for (const entry of RESEARCH_CRITERION_CATALOG) {
+    if (!entry.pattern.test(queryText)) continue
+    found.push({
+      id: entry.id,
+      label: entry.label,
+      text: queryText,
+      // Only a count/density criterion is quantitative, and only
+      // when the reader's words seek a count ("fewest", "number of").
+      quantitative: quantitative && (entry.id === 'fast_food' || entry.id === 'restaurants'),
+    })
+  }
+  if (found.length > 0) return found
+  return [{ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative }]
+}
+
+/** Whether the question asks for a county-level answer. */
+export function requestsCountyLevel(queryText: string | undefined, intent: ValidatedIntent): boolean {
+  if (queryText && /\bcounty\b|\bcounties\b/i.test(queryText)) return true
+  return intent.geographies.some((g) => /\bcounty\b/i.test(g))
+}
+
+/** The geography level an intent's geographies name, before any county request. */
+export function geographyLevelOfIntent(intent: ValidatedIntent): AnswerGeographyLevel {
+  if (intent.geographies.length === 0) return 'national'
+  if (intent.geographies.every((g) => /^\d{5}$/.test(g.trim()))) return 'zcta'
+  if (intent.geographies.every((g) => /^[A-Za-z]{2}$/.test(g.trim()))) return 'state'
+  return 'place'
+}
+
+/* ------------------------------------------------------------------ */
 /* Stage 3: research over the screened subset                          */
 /* ------------------------------------------------------------------ */
 
@@ -378,6 +575,196 @@ export async function researchScreened(
   }
 }
 
+/**
+ * One research pass per decomposed criterion, over the same places.
+ * The question text is the query for every pass (the question itself
+ * states every criterion; the passes are separated so each
+ * criterion's sources are collected under its own call, and a
+ * provider that answers criteria differently per call is honoured).
+ * Identical claim texts returned by more than one pass are kept
+ * once — the same finding cited twice is one finding.
+ */
+export async function researchPerCriterion(
+  provider: MuseProvider,
+  places: readonly string[],
+  criteria: readonly ResearchCriterion[],
+  researchQuery: string,
+  signal: AbortSignal,
+): Promise<ResearchStageResult> {
+  const sources: AnswerSource[] = []
+  const claims: ResearchedClaim[] = []
+  const proseParts: string[] = []
+  // One pass per criterion; the loop count is the contract, the
+  // query is the reader's whole question for every pass.
+  for (let pass = 0; pass < criteria.length; pass++) {
+    const result = await provider.research({ queryText: researchQuery, places: [...places] }, signal)
+    proseParts.push(result.prose)
+    for (const source of result.sources) {
+      if (!sources.some((s) => s.url === source.url)) {
+        sources.push({ title: source.title, url: source.url })
+      }
+    }
+    for (const claim of claimsFromResearch(result)) {
+      if (!claims.some((c) => c.text === claim.text)) claims.push(claim)
+    }
+  }
+  return { prose: proseParts.join('\n'), sources, claims }
+}
+
+/* ------------------------------------------------------------------ */
+/* Research-first candidate extraction                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The extraction seam: a parse-style call over the findings text
+ * whose output is then validated against the place index / rows.
+ * Injectable so tests can can it; the default is the deterministic
+ * pattern below, not a model.
+ */
+export type CandidateExtractor = (findings: {
+  prose: string
+  sources: readonly AnswerSource[]
+}) => Promise<string[]> | string[]
+
+/** One resolved candidate: a cited name pinned to the ZCTAs it covers. */
+export interface ResolvedCandidate {
+  name: string
+  zctas: string[]
+}
+
+/** The resolution seam: names in, ZCTA sets out; absent name = unresolvable. */
+export type CandidateResolver = (
+  names: readonly string[],
+) => Promise<ResolvedCandidate[]> | ResolvedCandidate[]
+
+const CANDIDATE_NAME_RE = /\b([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}), ([A-Z]{2})\b/g
+
+/**
+ * Default extraction: "Name, ST" mentions in the findings prose, in
+ * mention order, de-duplicated. Prose names without a state are not
+ * extracted — a bare name cannot be resolved without guessing which
+ * same-named place was meant, and guessing is what the validation
+ * step below exists to prevent.
+ */
+export function extractCandidateNamesFromProse(prose: string): string[] {
+  const names: string[] = []
+  for (const match of prose.matchAll(CANDIDATE_NAME_RE)) {
+    const name = `${match[1]}, ${match[2]}`
+    if (!names.includes(name)) names.push(name)
+  }
+  return names
+}
+
+/** Default resolution: an exact match against a loaded row's name. */
+export function resolveCandidatesAgainstRows(
+  names: readonly string[],
+  rows: readonly AreaRow[],
+): ResolvedCandidate[] {
+  const resolved: ResolvedCandidate[] = []
+  for (const name of names) {
+    const row = rows.find((r) => r.name.toLowerCase() === name.toLowerCase())
+    if (row) resolved.push({ name: row.name, zctas: [row.zcta] })
+  }
+  return resolved
+}
+
+/* ------------------------------------------------------------------ */
+/* Per-criterion evidence                                              */
+/* ------------------------------------------------------------------ */
+
+const NUMERAL_IN_CLAIM_RE =
+  /\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i
+
+function claimServesCriterion(claim: ResearchedClaim, criterion: ResearchCriterion): boolean {
+  if (criterion.id === 'combined') return true
+  const entry = RESEARCH_CRITERION_CATALOG.find((e) => e.id === criterion.id)
+  if (!entry) return claim.sourceUrls.length > 0
+  const lower = claim.text.toLowerCase()
+  return entry.keywords.some((keyword) => lower.includes(keyword))
+}
+
+/**
+ * Evidence per stated criterion, computed from what the answer
+ * actually carries — screened places for Census criteria, cited
+ * claims for researched ones. A count-seeking criterion served only
+ * by qualitative claims is partially_measured: the source is named
+ * through its URLs, and its wording stays qualitative.
+ */
+export function criterionEvidenceFor(input: {
+  criteria: readonly ScreenCriterion[]
+  droppedCriteria: readonly DroppedCriterion[]
+  researchCriteria: readonly ResearchCriterion[]
+  places: readonly AnswerPlace[]
+  claims: readonly ResearchedClaim[]
+  unsupportedGeography: string | null
+}): CriterionEvidence[] {
+  const evidence: CriterionEvidence[] = []
+  for (const criterion of input.criteria) {
+    evidence.push({
+      criterion: criterion.metricKey,
+      kind: 'census',
+      status: input.places.length > 0 ? 'met' : 'not_measurable',
+      detail:
+        input.places.length > 0
+          ? 'Measured from Census figures shown for each named place.'
+          : 'No named place carries a Census figure for this criterion.',
+      sourceUrls: [],
+    })
+  }
+  for (const dropped of input.droppedCriteria) {
+    evidence.push({
+      criterion: dropped.metricKey,
+      kind: 'census',
+      status: 'not_measurable',
+      detail: 'This bound cannot be expressed by the screening surface, so it was not applied.',
+      sourceUrls: [],
+    })
+  }
+  if (input.unsupportedGeography === 'county') {
+    evidence.push({
+      criterion: 'County-level geography',
+      kind: 'census',
+      status: 'not_measurable',
+      detail:
+        'County-level figures are not available from the shipped data, which is place and ZIP level; the places shown are at that level instead.',
+      sourceUrls: [],
+    })
+  }
+  for (const criterion of input.researchCriteria) {
+    const serving = input.claims.filter(
+      (claim) => claim.sourceUrls.length > 0 && claimServesCriterion(claim, criterion),
+    )
+    const sourceUrls = [...new Set(serving.flatMap((claim) => claim.sourceUrls))]
+    if (serving.length === 0) {
+      evidence.push({
+        criterion: criterion.label,
+        kind: 'research',
+        status: 'not_measurable',
+        detail: 'No cited source available here speaks to this criterion.',
+        sourceUrls: [],
+      })
+    } else if (criterion.quantitative && !serving.some((claim) => NUMERAL_IN_CLAIM_RE.test(claim.text))) {
+      evidence.push({
+        criterion: criterion.label,
+        kind: 'research',
+        status: 'partially_measured',
+        detail:
+          'A cited source speaks to this criterion in qualitative terms only, so no count is shown for it.',
+        sourceUrls,
+      })
+    } else {
+      evidence.push({
+        criterion: criterion.label,
+        kind: 'research',
+        status: 'met',
+        detail: 'Served by the cited sources shown with the places.',
+        sourceUrls,
+      })
+    }
+  }
+  return evidence
+}
+
 /* ------------------------------------------------------------------ */
 /* Stage 4: compose                                                    */
 /* ------------------------------------------------------------------ */
@@ -394,12 +781,30 @@ export function composeAnswer(input: {
   intent: ValidatedIntent
   screen: ScreenResult
   research?: ResearchStageResult | null
+  researchCriteria?: readonly ResearchCriterion[]
+  candidateCapApplied?: boolean
+  unresolvedCandidates?: readonly string[]
+  geographyLevel?: AnswerGeographyLevel
+  unsupportedGeography?: string | null
+  /** Research-first answers pull a headline Census figure even when the question named no measure. */
+  pullMode?: boolean
+  summaryOverride?: string
 }): ComposedAnswer {
   const { intent, screen } = input
+  // Pull mode (research-first): candidates arrived from research, so
+  // the figure pull needs a measure even when the question named
+  // none. The pulled measure is the product's headline cost figure
+  // (median gross rent, the same default the national screen uses);
+  // it is a display figure, never a criterion — criterionEvidence
+  // below carries no Census entry for it.
+  const figureIntent: ValidatedIntent =
+    input.pullMode && intent.metricKeys.length === 0
+      ? { ...intent, metricKeys: ['median_gross_rent'] }
+      : intent
   const places: AnswerPlace[] = screen.rows.map((row) => ({
     zcta: row.zcta,
     name: row.name,
-    figures: figuresForRow(row, intent, screen.criteria),
+    figures: figuresForRow(row, figureIntent, screen.criteria),
     claims: [],
   }))
 
@@ -425,10 +830,16 @@ export function composeAnswer(input: {
   // Status is provisional until verifyAnswer runs; runAnswerPipeline
   // is the entry point that stamps the final status.
   const summary =
-    screen.rows.length === 0
+    input.summaryOverride ??
+    (screen.rows.length === 0
       ? 'No place in the loaded data meets all of the stated Census criteria.'
-      : 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.'
+      : input.pullMode
+        ? 'The places named here were named by the cited research for the stated criteria, with Census figures shown for each place.'
+        : 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.')
 
+  const researchCriteria = input.researchCriteria ?? []
+  const unsupportedGeography = input.unsupportedGeography ?? null
+  const allClaims = [...places.flatMap((p) => p.claims), ...generalClaims]
   return {
     status,
     stage: 'compose',
@@ -442,6 +853,20 @@ export function composeAnswer(input: {
     summary,
     droppedClaims,
     failures: [],
+    researchCriteria: [...researchCriteria],
+    criterionEvidence: criterionEvidenceFor({
+      criteria: screen.criteria,
+      droppedCriteria: screen.droppedCriteria,
+      researchCriteria,
+      places,
+      claims: allClaims,
+      unsupportedGeography,
+    }),
+    candidateCap: SCREENED_RESEARCH_CANDIDATE_CAP,
+    candidateCapApplied: input.candidateCapApplied ?? false,
+    unresolvedCandidates: [...(input.unresolvedCandidates ?? [])],
+    geographyLevel: input.geographyLevel ?? geographyLevelOfIntent(intent),
+    unsupportedGeography,
   }
 }
 
@@ -508,6 +933,16 @@ export function verifyAnswer(
     if (banned) failures.push(`banned construction in claim (${banned}): ${claim.text}`)
   }
 
+  // Evidence honesty: a researched criterion marked served must cite
+  // only sources the answer carries — an evidence entry pointing at a
+  // source compose dropped is exactly the silent upgrade the
+  // evidence model exists to prevent.
+  for (const evidence of answer.criterionEvidence) {
+    if (!evidence.sourceUrls.every((url) => carriedUrls.has(url))) {
+      failures.push(`criterion evidence cites a source the answer does not carry: ${evidence.criterion}`)
+    }
+  }
+
   const validator = createValidator()
   const verdict = validator.validate(answer.summary, figures)
   if (!verdict.pass) {
@@ -534,12 +969,51 @@ export interface AnswerPipelineInput {
    * alone and says so through an empty claims/sources list).
    */
   researchQuery?: string
+  /**
+   * The reader's question text, for decomposition and geography-level
+   * detection (a county request must be reported even when the
+   * question carries no research stage). Defaults to researchQuery.
+   */
+  queryText?: string
   /** Provider for the research stage; required when researchQuery is. */
   provider?: MuseProvider
   signal?: AbortSignal
+  /**
+   * Explicit researched criteria from the caller, as texts. When
+   * absent, decomposeResearchCriteria derives them from
+   * researchQuery. Supplying them does not widen the intent schema —
+   * they travel beside the intent, like researchQuery always has.
+   */
+  researchCriteria?: readonly string[]
+  /** Research-first extraction seam; defaults to the deterministic prose pattern. */
+  candidateExtractor?: CandidateExtractor
+  /** Research-first resolution seam; defaults to exact row-name matching. */
+  candidateResolver?: CandidateResolver
+}
+
+function emptyAnswerFields(): Pick<
+  ComposedAnswer,
+  | 'researchCriteria'
+  | 'criterionEvidence'
+  | 'candidateCap'
+  | 'candidateCapApplied'
+  | 'unresolvedCandidates'
+  | 'geographyLevel'
+  | 'unsupportedGeography'
+> {
+  return {
+    researchCriteria: [],
+    criterionEvidence: [],
+    candidateCap: SCREENED_RESEARCH_CANDIDATE_CAP,
+    candidateCapApplied: false,
+    unresolvedCandidates: [],
+    geographyLevel: 'national',
+    unsupportedGeography: null,
+  }
 }
 
 export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<ComposedAnswer> {
+  const signal = input.signal ?? new AbortController().signal
   // Stage 1: parse gate. The intent arrived from the intent route,
   // but the gate is cheap and fail-closed, and the screen must never
   // run on a proxy-key filter the route somehow let through.
@@ -558,26 +1032,129 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       summary: '',
       droppedClaims: [],
       failures: [`intent gate: ${gate.detail}`],
+      ...emptyAnswerFields(),
     }
+  }
+
+  // Decomposition: Census criteria from the intent, researched
+  // criteria from the question text (or the caller's explicit list).
+  const researchCriteria: ResearchCriterion[] =
+    input.researchCriteria && input.researchCriteria.length > 0
+      ? input.researchCriteria.flatMap((text) => decomposeResearchCriteria(text))
+      : decomposeResearchCriteria(input.researchQuery)
+  const countyRequested = requestsCountyLevel(input.queryText ?? input.researchQuery, input.intent)
+  const unsupportedGeography = countyRequested ? 'county' : null
+  const geographyLevel: AnswerGeographyLevel = countyRequested
+    ? 'county'
+    : geographyLevelOfIntent(input.intent)
+
+  // Research-first condition: ONLY external criteria — no Census
+  // bound and no Census measure — plus optionally a geography bound
+  // (the intent's geographies, which bound the research request and
+  // the figure pull, never the extraction).
+  const screenProbe = screenCriteriaFromIntent(input.intent)
+  const researchFirst =
+    researchCriteria.length > 0 &&
+    screenProbe.criteria.length === 0 &&
+    input.intent.metricKeys.length === 0 &&
+    !!input.provider &&
+    !!input.researchQuery
+
+  if (researchFirst) {
+    // Stage order inverts: research -> extract -> resolve -> pull.
+    const research = await researchPerCriterion(
+      input.provider!,
+      input.intent.geographies,
+      researchCriteria,
+      input.researchQuery!,
+      signal,
+    )
+    const extractor = input.candidateExtractor ?? (({ prose }) => extractCandidateNamesFromProse(prose))
+    const extracted = await extractor({ prose: research.prose, sources: research.sources })
+    const resolver = input.candidateResolver ?? ((names) => resolveCandidatesAgainstRows(names, input.rows))
+    const resolved = await resolver(extracted)
+    // Resolution is by name, exactly as extracted: a resolver either
+    // returns the extracted name with its ZCTAs or it does not, and
+    // a name it does not return is reported, never repaired.
+    const resolvedNames = new Set(resolved.map((r) => r.name.toLowerCase()))
+    const resolvedZctas = new Set(resolved.flatMap((r) => r.zctas))
+    const unresolvedCandidates = extracted.filter(
+      (name) => !resolvedNames.has(name.toLowerCase()),
+    )
+    const candidateRows = input.rows.filter((row) => resolvedZctas.has(row.zcta))
+    // Extraction order is the research order; rows arrive in load
+    // order, so re-order by the resolved candidate sequence.
+    const order = new Map<string, number>()
+    resolved.forEach((candidate, i) => candidate.zctas.forEach((z) => order.set(z, i)))
+    candidateRows.sort((a, b) => (order.get(a.zcta) ?? 0) - (order.get(b.zcta) ?? 0))
+    const candidateCapApplied = candidateRows.length > SCREENED_RESEARCH_CANDIDATE_CAP
+    const cappedRows = candidateRows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
+    const baseScreen = screenRows(input.intent, input.rows, input.geographyZctas)
+    const pullScreen: ScreenResult = {
+      criteria: [],
+      droppedCriteria: baseScreen.droppedCriteria,
+      unresolvedGeographies: baseScreen.unresolvedGeographies,
+      inScopeCount: input.rows.length,
+      rows: cappedRows,
+    }
+    const composed = composeAnswer({
+      intent: input.intent,
+      screen: pullScreen,
+      research,
+      researchCriteria,
+      candidateCapApplied,
+      unresolvedCandidates,
+      geographyLevel,
+      unsupportedGeography,
+      pullMode: true,
+      summaryOverride:
+        cappedRows.length === 0
+          ? 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
+          : undefined,
+    })
+    if (composed.status === 'empty') return { ...composed, stage: 'verify' }
+    const verdict = verifyAnswer(composed, cappedRows)
+    if (!verdict.ok) {
+      return { ...composed, status: 'withheld', stage: 'verify', failures: verdict.failures }
+    }
+    return { ...composed, status: 'verified', stage: 'verify' }
   }
 
   // Stage 2: deterministic Census screen.
   const screen = screenRows(input.intent, input.rows, input.geographyZctas)
 
-  // Stage 3: research over the screened subset only. An empty screen
-  // researches nothing — there is no subset to research.
+  // Stage 3: research over the screened subset only, one pass per
+  // decomposed criterion, capped at SCREENED_RESEARCH_CANDIDATE_CAP
+  // places. An empty screen researches nothing — there is no subset
+  // to research. A question with a research query but no catalog
+  // criterion still decomposes to the one combined criterion, so the
+  // legacy single-pass shape is the one-criterion case of this loop.
   let research: ResearchStageResult | null = null
+  const candidateCapApplied = screen.rows.length > SCREENED_RESEARCH_CANDIDATE_CAP
   if (input.researchQuery && input.provider && screen.rows.length > 0) {
-    research = await researchScreened(
-      input.provider,
-      screen.rows,
-      input.researchQuery,
-      input.signal ?? new AbortController().signal,
-    )
+    const capped = screen.rows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
+    research =
+      researchCriteria.length > 0
+        ? await researchPerCriterion(
+            input.provider,
+            capped.map((row) => row.name),
+            researchCriteria,
+            input.researchQuery,
+            signal,
+          )
+        : await researchScreened(input.provider, capped, input.researchQuery, signal)
   }
 
   // Stage 4: compose.
-  const composed = composeAnswer({ intent: input.intent, screen, research })
+  const composed = composeAnswer({
+    intent: input.intent,
+    screen,
+    research,
+    researchCriteria: input.researchQuery ? researchCriteria : [],
+    candidateCapApplied: research ? candidateCapApplied : false,
+    geographyLevel,
+    unsupportedGeography,
+  })
   if (composed.status === 'empty') return { ...composed, stage: 'verify' }
 
   // Stage 5: verify, fail-closed.

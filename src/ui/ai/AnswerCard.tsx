@@ -87,6 +87,57 @@ export function droppedClaimsLine(answer: ComposedAnswer): string | null {
     : `${count.format(answer.droppedClaims.length)} researched claims were dropped because they carried no source.`
 }
 
+/**
+ * One quiet line when the candidate cap bound a research pass: the
+ * cap is a named constant in the pipeline, and when it binds the
+ * answer says so rather than letting the researched subset read as
+ * the whole screened set.
+ */
+export function candidateCapLine(answer: ComposedAnswer): string | null {
+  if (!answer.candidateCapApplied) return null
+  return `Research covered the first ${count.format(answer.candidateCap)} candidate places; any further places were not researched.`
+}
+
+/** One quiet line for research-first candidates that resolved to no ZCTA. */
+export function unresolvedCandidatesLine(answer: ComposedAnswer): string | null {
+  if (answer.unresolvedCandidates.length === 0) return null
+  const list = answer.unresolvedCandidates.join(', ')
+  return answer.unresolvedCandidates.length === 1
+    ? `Research named ${list}, which could not be matched to Census data, so it was not used.`
+    : `Research named ${list}, which could not be matched to Census data, so they were not used.`
+}
+
+/** One quiet line for a requested geography level the shipped data cannot serve. */
+export function unsupportedGeographyLine(answer: ComposedAnswer): string | null {
+  if (!answer.unsupportedGeography) return null
+  return 'County-level figures are not available from the shipped data, so the places shown are at place and ZIP level.'
+}
+
+const EVIDENCE_STATUS_LABELS: Readonly<Record<string, string>> = {
+  met: 'measured',
+  partially_measured: 'partially measured',
+  not_measurable: 'not measurable from available sources',
+}
+
+/** The per-criterion evidence list: each stated criterion with its status beside it. */
+function CriterionEvidenceList({ answer }: { answer: ComposedAnswer }) {
+  if (answer.criterionEvidence.length === 0) return null
+  return (
+    <div className="mt-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Criteria</h3>
+      <ul className="mt-1 space-y-1">
+        {answer.criterionEvidence.map((evidence, i) => (
+          <li key={i} className="text-sm text-slate-700">
+            <span className="font-medium text-slate-900">{evidence.criterion}</span>
+            {' — '}
+            {EVIDENCE_STATUS_LABELS[evidence.status] ?? evidence.status}. {evidence.detail}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function ClaimSources({ claim, answer }: { claim: ResearchedClaim; answer: ComposedAnswer }) {
   const links = claim.sourceUrls
     .map((url) => answer.sources.find((s) => s.url === url))
@@ -178,6 +229,9 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
   const droppedLine = droppedCriteriaLine(answer)
   const unresolvedLine = unresolvedGeographiesLine(answer)
   const droppedClaims = droppedClaimsLine(answer)
+  const capLine = candidateCapLine(answer)
+  const unresolvedCandidates = unresolvedCandidatesLine(answer)
+  const unsupportedLine = unsupportedGeographyLine(answer)
 
   return (
     <section
@@ -220,9 +274,10 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
             its figure are the statement, so the sentence is skipped
             rather than claiming criteria that were never stated.
           */}
-          {answer.criteria.length > 0 && (
+          {(answer.criteria.length > 0 || answer.researchCriteria.length > 0) && (
             <p className="mt-2 text-base leading-relaxed text-slate-800">{answer.summary}</p>
           )}
+          <CriterionEvidenceList answer={answer} />
           {orderedPlaces(answer)
             .slice(0, ANSWER_CARD_PLACE_LIMIT)
             .map((place) => (
@@ -244,6 +299,21 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
         </>
       )}
 
+      {capLine && (
+        <p role="note" className="mt-3 text-xs text-slate-500">
+          {capLine}
+        </p>
+      )}
+      {unresolvedCandidates && (
+        <p role="note" className="mt-1 text-xs text-slate-500">
+          {unresolvedCandidates}
+        </p>
+      )}
+      {unsupportedLine && (
+        <p role="note" className="mt-1 text-xs text-slate-500">
+          {unsupportedLine}
+        </p>
+      )}
       {droppedLine && (
         <p role="note" className="mt-3 text-xs text-slate-500">
           {droppedLine}

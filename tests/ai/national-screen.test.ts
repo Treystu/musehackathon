@@ -118,10 +118,14 @@ describe('canRun minimums after the national-screen exception', () => {
     ).toBe(true)
   })
 
-  it('still requires a bound for a placed sweep and a place for every other mode', () => {
+  it('runs a placed sweep with no bound as the geography-bounded screen, and still requires a place for every other mode', () => {
+    // Bounded-screen exception (2026-11-02): the placed twin of the
+    // placeless screen — scope is the named geography, sort is the
+    // request. This is what makes "cheapest place to live in Texas"
+    // answer-eligible instead of clarifying.
     expect(
       canRun(intent({ mode: 'sweep_filter', geographies: ['CO'], metricKeys: ['median_gross_rent'] })),
-    ).toBe(false)
+    ).toBe(true)
     expect(canRun(intent({ mode: 'lookup', metricKeys: ['median_gross_rent'] }))).toBe(false)
     expect(canRun(intent({ mode: 'similarity', metricKeys: ['median_gross_rent'] }))).toBe(false)
     expect(
@@ -163,14 +167,17 @@ describe('rescueNationalScreen', () => {
     expect(rescued?.metricKeys).toEqual(['median_gross_rent'])
     expect(rescued?.clarificationNeeded).toBe(false)
     expect(rescued && canRun(rescued)).toBe(true)
-    // A real geography in the parse keeps its clarification: the
-    // default is a national screen, never a bypass of a named place.
-    expect(
-      rescueNationalScreen(
-        intent({ geographies: ['Texas'] }),
-        'cheapest place to live in Texas',
-      ),
-    ).toBeNull()
+    // A resolvable geography in the parse bounds the screen instead
+    // (generalization item 4): the same question in Texas rescues to
+    // the Texas-bounded screen, not the national one.
+    const bounded = rescueNationalScreen(
+      intent({ geographies: ['Texas'] }),
+      'cheapest place to live in Texas',
+    )
+    expect(bounded?.mode).toBe('sweep_filter')
+    expect(bounded?.geographies).toEqual(['Texas'])
+    expect(bounded?.metricKeys).toEqual(['median_gross_rent'])
+    expect(bounded && canRun(bounded)).toBe(true)
   })
 
   it('rescues a reply whose only geographies are country-level names', () => {
@@ -186,16 +193,23 @@ describe('rescueNationalScreen', () => {
       expect(rescued?.geographies).toEqual([])
       expect(rescued?.metricKeys).toEqual(['median_gross_rent'])
     }
-    // A real place anywhere in the list keeps the clarification.
-    expect(
-      rescueNationalScreen(intent({ geographies: ['America', 'Texas'] }), 'cheapest rent in America'),
-    ).toBeNull()
-    expect(
-      rescueNationalScreen(intent({ geographies: ['Texas'] }), 'cheapest rent in Texas'),
-    ).toBeNull()
+    // A resolvable real geography bounds the screen; country names
+    // in the list drop out rather than widening it back to national.
+    const bounded = rescueNationalScreen(
+      intent({ geographies: ['America', 'Texas'] }),
+      'cheapest rent in America',
+    )
+    expect(bounded?.geographies).toEqual(['Texas'])
+    expect(bounded?.metricKeys).toEqual(['median_gross_rent'])
+    const texasOnly = rescueNationalScreen(
+      intent({ geographies: ['Texas'] }),
+      'cheapest rent in Texas',
+    )
+    expect(texasOnly?.geographies).toEqual(['Texas'])
+    expect(texasOnly?.clarificationNeeded).toBe(false)
   })
 
-  it('does not touch a reply that names a place, a measure, or runs already', () => {
+  it('does not touch a reply that names an unresolvable place, a measure, or runs already', () => {
     expect(
       rescueNationalScreen(intent({ geographies: ['Springfield'] }), 'cheapest rent in Springfield'),
     ).toBeNull()

@@ -72,8 +72,11 @@ export function isKnownFigureKey(key: string): boolean {
  * sweep_filter is the national screen — its scope is the whole country
  * and its sort is the request ("cheapest rent in America"), so it runs
  * with zero geographies and zero filters as long as it names a
- * filter-legal measure. Every other mode still needs a place, and a
- * placed sweep still needs its bound. Second exception, same day:
+ * filter-legal measure. Every other mode still needs a place.
+ * Third exception (2026-11-02): a placed sweep with no filter is the
+ * geography-bounded screen — its scope is the named geography and
+ * its sort is the request — so it likewise runs on a filter-legal
+ * measure alone. Second exception, same day:
  * similarity consumes only its seed place (the view scores its own
  * dimensions), so it runs with zero measures; a named measure must
  * still be filter-legal.
@@ -92,13 +95,17 @@ export function canRun(intent: ValidatedIntent): boolean {
   if (intent.mode === 'sweep_filter' || intent.mode === 'similarity') {
     if (!intent.metricKeys.every(isFilterLegal)) return false
   }
-  if (
-    intent.mode === 'sweep_filter' &&
-    intent.filters.length === 0 &&
-    intent.geographies.length > 0
-  ) {
-    return false
-  }
+  // Bounded-screen exception (2026-11-02, generalization item 4): a
+  // placed sweep with no filter is a geography-bounded screen whose
+  // sort is the request — the same shape as the placeless national
+  // screen, narrowed to the named geography ("cheapest place to live
+  // in Texas"). It runs on its filter-legal measure alone (checked
+  // above for sweep modes). The earlier rule required a bound for a
+  // placed sweep; that rule is what kept a cost superlative with a
+  // named geography in clarification even though the bounded screen
+  // answers it exactly. A placed sweep with no measure still cannot
+  // run (the measure check above), and every other mode still needs
+  // its place.
   return true
 }
 

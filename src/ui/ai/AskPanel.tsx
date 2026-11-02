@@ -432,7 +432,9 @@ export function AskPanel({
     if (rescued) {
       const label = NATIONAL_SCREEN_LABELS[rescued.metricKeys[0]!] ?? 'that measure'
       setNote(
-        `No place was named, so this screens the whole country by ${label}, lowest first. The understood request is below.`,
+        rescued.geographies.length === 0
+          ? `No place was named, so this screens the whole country by ${label}, lowest first. The understood request is below.`
+          : `This screens ${rescued.geographies.join(', ')} by ${label}, lowest first. The understood request is below.`,
       )
     } else if (parsed.clarificationNeeded) {
       setNote('More detail is needed before anything runs. Check the understood request below.')

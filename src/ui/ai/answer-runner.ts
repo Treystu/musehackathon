@@ -1,4 +1,9 @@
-import { runAnswerPipeline, type ComposedAnswer } from '../../core/ai/answer'
+import {
+  runAnswerPipeline,
+  type ComposedAnswer,
+  type ResolvedCandidate,
+} from '../../core/ai/answer'
+import { stateCodeForGeography } from '../../core/ai/national-screen'
 import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
 import type { AreaRow } from '../../core/plugins/acs'
 import {
@@ -53,7 +58,9 @@ export function resolveAnswerGeographies(
     if (!placeIndex) continue
     if (!singleZipPerPlace) {
       const state =
-        asStateCode(geography) ?? splitStateSuffix(trimmed.toLowerCase()).state
+        asStateCode(geography) ??
+        splitStateSuffix(trimmed.toLowerCase()).state ??
+        stateCodeForGeography(geography)
       if (state) {
         for (const place of placeIndex.places) {
           if (place.state === state) {
@@ -79,6 +86,28 @@ export function resolveAnswerGeographies(
     scopePrefixes,
     unresolvable: intent.geographies.length > 0 && zctas.size === 0,
   }
+}
+
+/**
+ * Research-first candidate resolution through the place index: an
+ * extracted name resolves to every ZCTA of the place the index
+ * matches for it (a city record preferred over a county fallback,
+ * the same preference as geography resolution above). A name with
+ * no index hit resolves to nothing — it is reported by the pipeline
+ * in unresolvedCandidates, never guessed.
+ */
+export function resolveCandidatesWithIndex(
+  names: readonly string[],
+  placeIndex: PlaceIndex | null,
+): ResolvedCandidate[] {
+  if (!placeIndex) return []
+  const resolved: ResolvedCandidate[] = []
+  for (const name of names) {
+    const hits = placeIndex.search(name, 8)
+    const hit = hits.find((h) => h.isCity) ?? hits[0]
+    if (hit) resolved.push({ name, zctas: [...hit.zips] })
+  }
+  return resolved
 }
 
 /**
@@ -122,6 +151,8 @@ export async function composeAnswerForRequest(input: {
   /** Whether this question carries criteria Census cannot serve (AskPanel's needsResearch). */
   research: boolean
   signal?: AbortSignal
+  /** Place index for research-first candidate resolution; absent = row-name resolution only. */
+  placeIndex?: PlaceIndex | null
 }): Promise<ComposedAnswer | null> {
   if (input.resolved.unresolvable) return null
   const answer = await runAnswerPipeline({
@@ -129,8 +160,12 @@ export async function composeAnswerForRequest(input: {
     rows: input.rows,
     geographyZctas: input.resolved.zctas.size > 0 ? input.resolved.zctas : undefined,
     researchQuery: input.research ? input.queryText : undefined,
+    queryText: input.queryText,
     provider: input.provider,
     signal: input.signal,
+    candidateResolver: input.placeIndex
+      ? (names) => resolveCandidatesWithIndex(names, input.placeIndex ?? null)
+      : undefined,
   })
   return answer.status === 'blocked' ? null : answer
 }

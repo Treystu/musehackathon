@@ -128,9 +128,12 @@
  *     SCREENED_RESEARCH_CANDIDATE_CAP places; when the cap binds the
  *     answer discloses it (candidateCapApplied) and the card renders
  *     the disclosure as one quiet line.
- *   - Research-first: the question carries ONLY external criteria
- *     (no Census bound and no Census measure) plus optionally a
- *     geography bound — research runs first, candidate place names
+ *   - Research-first: the question carries external criteria and
+ *     no Census bound, plus optionally a geography bound — and,
+ *     since P3b cure 1, a retained Census measure when no geography
+ *     bounds the screen (the measure is pulled onto the named
+ *     places, never used to re-screen them). Research runs first,
+ *     candidate place names
  *     are extracted from the cited findings through the injectable
  *     candidateExtractor seam, candidates resolve deterministically
  *     (candidateResolver, or an exact row-name match), unresolvable
@@ -643,13 +646,26 @@ export function figuresForRow(
 /* ------------------------------------------------------------------ */
 
 /**
+ * A stated salary: a dollar figure beside a salary-context word, in
+ * either order (P3b cure 3, battery A4). Shared by the decomposition
+ * catalog's salary entry and AskPanel's needsResearch arm, so the
+ * two layers can never drift into seeing different salaries — the
+ * drift between layers is the seam family this battery keeps
+ * finding. A bare income measure ("median household income") and a
+ * bound on another measure ("home value under $250,000") carry no
+ * salary-context word beside the figure and never match.
+ */
+export const SALARY_FIGURE_RE =
+  /\$\s?\d[\d,]*(?:\.\d+)?\s?k?\b[^.!?]{0,30}?\b(?:salary|income|a year|per year|annually)\b|\b(?:salary|income)\b[^.!?]{0,30}?\$\s?\d/i
+
+/**
  * The external-criterion catalog, in decomposition order. Patterns
  * match the reader's own words; `keywords` are what a cited claim
  * must mention for the criterion's evidence to count as served.
  * Fast food precedes restaurants so "fast food restaurants" is one
  * criterion, not two.
  */
-const RESEARCH_CRITERION_CATALOG: readonly {
+export const RESEARCH_CRITERION_CATALOG: readonly {
   id: string
   label: string
   pattern: RegExp
@@ -685,6 +701,25 @@ const RESEARCH_CRITERION_CATALOG: readonly {
   // entries never take a research pass — the metric serves them.
   { id: 'internet', label: 'Internet access', pattern: /\binternet\b|\bbroadband\b/i, keywords: [], decomposedMetricKey: 'no_internet_access' },
   { id: 'cost_of_living', label: 'Cost of living', pattern: /\bcost of living\b/i, keywords: [], decomposedMetricKey: 'median_gross_rent' },
+  // Salary accounting (P3b cure 3, battery A4): a stated salary had
+  // no entry here, no arm in needsResearch, and no completion path
+  // for a lookup parse, so it vanished and the question dead-ended
+  // in clarification. The pattern (SALARY_FIGURE_RE, shared with
+  // the needsResearch arm in AskPanel) requires a stated dollar
+  // figure beside a salary-context word, so a home-value bound
+  // ("under $250,000") or a bare income measure never matches. The
+  // criterion is research-class, so the question hands off and
+  // researches like any other outside-Census criterion; the
+  // ACCOUNTING is special-cased in criterionEvidenceFor, which
+  // records it with the reader's figure and the rent anchor
+  // derived from it visible (see salaryAnchorFor there) instead of
+  // letting a cited guide's prose label it measured.
+  {
+    id: 'salary',
+    label: 'Affordability on the stated income',
+    pattern: SALARY_FIGURE_RE,
+    keywords: [],
+  },
 ]
 
 const COUNT_SEEKING_RE = /\bfewest\b|\bleast\b|\bnumber of\b|\bcount\b|\bdensity\b|\bhow many\b/i
@@ -998,6 +1033,26 @@ function claimServesCriterion(claim: ResearchedClaim, criterion: ResearchCriteri
  * by qualitative claims is partially_measured: the source is named
  * through its URLs, and its wording stays qualitative.
  */
+/**
+ * The affordability anchor derived from a stated salary (P3b cure
+ * 3, battery A4): 30 percent of the stated annual figure — the
+ * standard affordability share — expressed as a monthly rent anchor.
+ * The anchor is arithmetic on the reader's own figure, named as
+ * derived wherever it is shown; it is never a Census measure and it
+ * never becomes a screen bound the reader did not state. Returns
+ * null when the text carries no parseable dollar figure.
+ */
+export function salaryAnchorFor(text: string | undefined): { salary: string; anchor: string } | null {
+  if (!text) return null
+  const match = /\$\s?([\d,]+(?:\.\d+)?)\s?(k)?\b/i.exec(text)
+  if (!match) return null
+  const amount = Number(match[1]!.replace(/,/g, '')) * (match[2] ? 1000 : 1)
+  if (!Number.isFinite(amount) || amount <= 0) return null
+  const format = (value: number) =>
+    `$${Math.round(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+  return { salary: format(amount), anchor: format((amount * 0.3) / 12) }
+}
+
 export function criterionEvidenceFor(input: {
   criteria: readonly ScreenCriterion[]
   droppedCriteria: readonly DroppedCriterion[]
@@ -1071,21 +1126,67 @@ export function criterionEvidenceFor(input: {
     // when none does. The direction is stated in the detail: for
     // no_internet_access a lower figure is better access; the figure
     // itself is the assessment, never a prose claim about it.
+    // Salary (P3b cure 3, battery A4): the criterion is ACCOUNTED,
+    // never silently dropped — the reader's figure and the rent
+    // anchor derived from it are both visible in the detail. The
+    // status stays not_measurable: no Census figure converts a
+    // stated income into an affordability verdict, and a cited
+    // guide calling a place "lower-cost" does not measure the
+    // reader's salary either, so the research-claims path below
+    // never labels it met. The anchor exists so the rent figure on
+    // each shown place can be read against the reader's own number.
+    if (criterion.id === 'salary') {
+      const derived = salaryAnchorFor(criterion.text)
+      evidence.push({
+        criterion: criterion.label,
+        kind: 'research',
+        status: 'not_measurable',
+        detail: derived
+          ? `The stated salary of ${derived.salary} a year is recorded here with a rent anchor of ${derived.anchor} a month — 30 percent of the stated salary, the standard affordability share — derived from the reader's own figure, not from Census data. No Census figure converts a stated income into an affordability verdict, so the salary itself is not measured; the rent figures on each place can be read against the anchor.`
+          : 'A stated income is recorded here, but its figure could not be read, so no affordability anchor is derived from it and the income itself is not measured.',
+        sourceUrls: [],
+      })
+      continue
+    }
     if (criterion.decomposedMetricKey) {
       const key = criterion.decomposedMetricKey
       const carrying = input.places.filter((p) => p.figures.some((f) => f.key === key)).length
+      // Internet access (P3b cure 2, battery C5): figure presence
+      // alone labelled every shown place "met" — including a place
+      // where 4,000 of 8,000 households have no internet access,
+      // under a summary claiming all stated criteria were met. When
+      // a place carries both figures, the share decides: more than
+      // a quarter of households without internet access does not
+      // meet a good-internet-access criterion. A place without a
+      // households figure cannot be share-assessed and keeps the
+      // presence reading, exactly as before this cure.
+      const failingInternet =
+        key === 'no_internet_access'
+          ? input.places.filter((place) => {
+              const noInternet = place.figures.find((f) => f.key === key)?.value
+              const households = place.figures.find((f) => f.key === 'households')?.value
+              return (
+                noInternet !== undefined &&
+                households !== undefined &&
+                households > 0 &&
+                noInternet / households > 0.25
+              )
+            }).length
+          : 0
       evidence.push({
         criterion: criterion.label,
         kind: 'census',
         status:
-          input.places.length > 0 && carrying === input.places.length
+          input.places.length > 0 && carrying === input.places.length && failingInternet === 0
             ? 'met'
             : carrying > 0
               ? 'partially_measured'
               : 'not_measurable',
         detail:
           key === 'no_internet_access'
-            ? 'Assessed from the Census figure for households with no internet access shown for each place; a lower figure means better internet access.'
+            ? failingInternet > 0
+              ? 'Assessed from the Census figures shown for each place: a place where more than a quarter of households have no internet access does not meet a good internet access criterion, and at least one shown place is above that share, so the criterion is not met for every shown place.'
+              : 'Assessed from the Census figure for households with no internet access shown for each place; a lower figure means better internet access.'
             : 'Assessed from the Census cost figures shown for each place, read on median gross rent as the headline cost measure.',
         sourceUrls: [],
       })
@@ -1147,12 +1248,18 @@ export function criterionEvidenceFor(input: {
     /\b(?:salary|income|a year|per year|live well|afford)\b/i.test(input.queryText) &&
     !evidence.some((e) => e.criterion === 'Affordability on the stated income')
   ) {
+    // Same accounting as the catalog salary entry above (P3b cure
+    // 3): the figure and its derived anchor are visible, so a
+    // caller that supplied its own criterion list cannot strand
+    // the salary in the older, figure-free wording.
+    const derived = salaryAnchorFor(input.queryText)
     evidence.push({
       criterion: 'Affordability on the stated income',
       kind: 'research',
       status: 'not_measurable',
-      detail:
-        'No figure here converts a stated income into an affordability reading, so that part of the question is not measured.',
+      detail: derived
+        ? `The stated salary of ${derived.salary} a year is recorded here with a rent anchor of ${derived.anchor} a month — 30 percent of the stated salary, the standard affordability share — derived from the reader's own figure, not from Census data. No Census figure converts a stated income into an affordability verdict, so the salary itself is not measured; the rent figures on each place can be read against the anchor.`
+        : 'No figure here converts a stated income into an affordability reading, so that part of the question is not measured.',
       sourceUrls: [],
     })
   }
@@ -1212,9 +1319,19 @@ export function composeAnswer(input: {
   // Decomposed criteria (P3 step 3) pull their metric's figure onto
   // every place, so the criterion is assessed on the card from data,
   // exactly like a stated Census measure.
-  const decomposedKeys = (input.researchCriteria ?? [])
-    .map((c) => c.decomposedMetricKey)
-    .filter((k): k is string => !!k)
+  const decomposedKeys = [
+    ...new Set(
+      (input.researchCriteria ?? [])
+        .map((c) => c.decomposedMetricKey)
+        .filter((k): k is string => !!k)
+        // The no-internet figure is a count of households; without
+        // the households figure beside it the share — the reading
+        // the internet criterion is assessed on (criterionEvidenceFor,
+        // P3b cure 2) — cannot be computed, so the denominator is
+        // pulled onto every place the numerator is pulled onto.
+        .flatMap((k) => (k === 'no_internet_access' ? [k, 'households'] : [k])),
+    ),
+  ]
   const figureIntent: ValidatedIntent =
     input.pullMode && intent.metricKeys.length === 0
       ? { ...intent, metricKeys: [...new Set(['median_gross_rent', ...decomposedKeys])] }
@@ -1574,15 +1691,34 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     ? 'county'
     : geographyLevelOfIntent(input.intent)
 
-  // Research-first condition: ONLY external criteria — no Census
-  // bound and no Census measure — plus optionally a geography bound
-  // (the intent's geographies, which bound the research request and
-  // the figure pull, never the extraction).
+  // Research-first condition: external criteria and no Census bound,
+  // plus optionally a geography bound (the intent's geographies,
+  // which bound the research request and the figure pull, never the
+  // extraction). A retained Census measure no longer excludes the
+  // path by itself (P3b cure 1, battery A3 — mode
+  // retained_measure_research_first_reexclusion: P3 removed the
+  // mixed-intent exclusion at the panel handoff, and this condition
+  // re-imposed it one layer down, so a retirement question with a
+  // retained home-value measure fell to a 51-place nationwide
+  // screen-first dump and the research-named places never appeared).
+  // The retained measure is USED on this path: figureIntent in
+  // composeAnswer pulls it onto every research-named place. The
+  // widening is bounded to the shape that was actually broken — a
+  // retained measure rides along only when the intent carries no
+  // geographies (a geography-bounded screen-first answer is a real
+  // screen, not a dump) and at least one NAMED catalog criterion is
+  // researched (the combined carry alone does not widen: a placeless
+  // superlative with a retained measure is the national screen's
+  // shape, battery B1, and stays screen-first).
   const screenProbe = screenCriteriaFromIntent(input.intent)
+  const namedResearchCriterion = researchCriteria.some(
+    (c) => !c.decomposedMetricKey && c.id !== 'combined',
+  )
   const researchFirst =
     researchCriteria.some((c) => !c.decomposedMetricKey) &&
     screenProbe.criteria.length === 0 &&
-    input.intent.metricKeys.length === 0 &&
+    (input.intent.metricKeys.length === 0 ||
+      (input.intent.geographies.length === 0 && namedResearchCriterion)) &&
     !!input.provider &&
     !!input.researchQuery
 
@@ -1871,7 +2007,16 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     intent: input.intent,
     screen: effectiveScreen,
     research,
-    researchCriteria: input.researchQuery ? researchCriteria : [],
+    // The decomposed criteria ride to compose whenever the caller
+    // supplied them, research query or not (P3b cure 2, battery
+    // C5): this line used to gate them on input.researchQuery, so
+    // a criterion the runner had decomposed and passed in was
+    // dropped here — the App-seam gate's twin, one layer down —
+    // whenever the lexical research trigger had not fired and no
+    // research query existed. Decomposed Census criteria are
+    // assessed from figures at compose; they never needed the
+    // research stage to be accounted.
+    researchCriteria,
     candidateCapApplied: research ? candidateCapApplied : false,
     geographyLevel,
     unsupportedGeography: effectiveUnsupportedGeography,

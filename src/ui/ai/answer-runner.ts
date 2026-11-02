@@ -564,6 +564,35 @@ function defaultStack(deps: ConversationalStackDeps | undefined): Required<
   }
 }
 
+/**
+ * Whether criterion decomposition reaches the pipeline for this
+ * question (P3b cure 2, battery C5). Shipped, the runner passed
+ * decomposition only when AskPanel's lexical needsResearch regex
+ * fired, and that regex has no internet/broadband arm — so P3's
+ * internet decomposition existed in the pipeline and in its unit
+ * test (which calls the pipeline directly) but was unreachable at
+ * the App seam, and the criterion never appeared on the card.
+ * Decision: the gate fires decomposition from the PARSED CRITERIA —
+ * any named catalog criterion in the reader's words (an entry of
+ * decomposeResearchCriteria other than the combined carry) reaches
+ * the pipeline whether or not the lexical trigger fired.
+ * needsResearch keeps its own job unchanged: it decides the
+ * research CALL (researchQuery / provider passes), so a decomposed
+ * Census criterion (internet, cost of living, salary) is assessed
+ * from figures with no web pass, and a research-class criterion the
+ * trigger missed is at least ACCOUNTED on the card (labelled not
+ * measurable when no research served it) instead of vanishing.
+ * The correspondence pin (tests/ai/p3b-seams.test.ts) enumerates
+ * the decomposition catalog and asserts every entry reaches the
+ * pipeline through this gate, so a future catalog entry cannot
+ * ship unreachable the way internet did.
+ */
+export function decompositionReachesPipeline(queryText: string, research: boolean): boolean {
+  return (
+    research || decomposeResearchCriteria(queryText).some((criterion) => criterion.id !== 'combined')
+  )
+}
+
 /** The loop's criterion list: Census measures first, then researched criteria. */
 function loopCriteriaFor(
   intent: ValidatedIntent,
@@ -776,7 +805,9 @@ export async function composeAnswerForRequest(input: {
       // catalog would otherwise decompose into criteria the reader
       // never stated (measured in-suite: a patch re-run gained a
       // spurious 'amenities' criterion from the word 'transit').
-      researchCriteria: input.research ? [input.queryText] : undefined,
+      researchCriteria: decompositionReachesPipeline(input.queryText, input.research)
+        ? [input.queryText]
+        : undefined,
       queryText: input.queryText,
       provider: input.provider,
       signal: input.signal,

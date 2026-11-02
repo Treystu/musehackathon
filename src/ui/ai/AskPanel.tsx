@@ -16,6 +16,7 @@ import type {
 } from '../../core/ai/provider'
 import { diagnostics } from '../../core/ai/diagnostics'
 import {
+  SALARY_FIGURE_RE,
   decomposeResearchCriteria,
   type ResearchCriterion,
 } from '../../core/ai/answer'
@@ -100,7 +101,16 @@ const OUTSIDE_KNOWLEDGE_RE =
   /\b(schools?|starbucks|coffee shops?|grocer(?:y|ies)|gyms?|nightlife|walkable|walkability|restaurants?|playgrounds?|hospitals?|clinics?|doctors?|airports?|transit|commute|saf\w*|crime|dangerous|families|kids|children|liberals?|conservatives?|republicans?|democrats?|democratic|political|politics|voter|voting|red state|blue state|farmers?\s+markets?|warm|climate|news|current events|headlines?)\b/i
 
 export function needsResearch(queryText: string | undefined): boolean {
-  return !!queryText && OUTSIDE_KNOWLEDGE_RE.test(queryText)
+  if (!queryText) return false
+  if (OUTSIDE_KNOWLEDGE_RE.test(queryText)) return true
+  // Salary arm (P3b cure 3, battery A4): a stated salary is an
+  // outside-Census criterion with a decomposition entry, but this
+  // word list had no arm for it, so the research call — and with it
+  // the research-first handoff's pipeline path — never fired and
+  // the question dead-ended in clarification. The arm is the
+  // catalog's own SALARY_FIGURE_RE (a figure beside a salary word),
+  // not a second hand-maintained pattern that could drift from it.
+  return SALARY_FIGURE_RE.test(queryText)
 }
 
 /**

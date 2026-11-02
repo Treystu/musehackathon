@@ -246,6 +246,44 @@ export function superlativeMeasure(text: string): string | null {
   return costDefaultMeasure(lower)
 }
 
+/**
+ * The 50 states' full names, from the one state table (territories
+ * and the district excluded — the recovery below is a US-state
+ * bound, and a territory name in the reader's words keeps the
+ * existing placeless behaviour).
+ */
+const FIFTY_STATE_NAMES: readonly string[] = Object.entries(STATE_NAME_BY_CODE)
+  .filter(([code]) => !['AS', 'DC', 'GU', 'MP', 'PR', 'VI'].includes(code))
+  .map(([, name]) => name)
+
+/**
+ * The US state the reader's own words name, or null (P3b cure 4,
+ * battery D6 — candidate mode
+ * geography_dropped_by_parse_rescue_widening). When the model parse
+ * returns EMPTY geographies for "¿Dónde es más barato vivir en
+ * California?", the placeless branch of the rescue below widened
+ * the screen to the whole nation (Corbin, KY led a California
+ * question) and nothing disclosed the widening. The deterministic
+ * layer now recovers a geography present only in the reader's
+ * words: a full state name matched as written against the static
+ * 50-state list, on the rescue's normalised text (longest names
+ * first, so "West Virginia" wins over "Virginia"). This is not a
+ * translator — "California" is spelled identically in Spanish,
+ * which is the measured shape; no other language handling is
+ * implied. No state named = null, and the placeless behaviour
+ * stands (a genuinely placeless superlative is a national screen,
+ * battery B1).
+ */
+export function stateNamedInWords(text: string | undefined): string | null {
+  if (!text || text.trim() === '') return null
+  const padded = ` ${normalizeRescueText(text)} `
+  const byLength = [...FIFTY_STATE_NAMES].sort((a, b) => b.length - a.length)
+  for (const name of byLength) {
+    if (padded.includes(` ${name.toLowerCase()} `)) return name
+  }
+  return null
+}
+
 /** The one national-screen intent shape, stamped by the runnability owner. */
 export function nationalScreenIntent(metricKey: string): ValidatedIntent {
   return withRunnability({
@@ -328,9 +366,6 @@ export function rescueNationalScreen(
   }
   const metricKey = superlativeMeasure(queryText)
   if (metricKey === null || !isFilterLegal(metricKey)) return null
-  if (intent.geographies.every(isCountryGeography)) {
-    return nationalScreenIntent(metricKey)
-  }
   // Geography-bounded superlative (generalization item 4, 2026-11-02:
   // the live-ask residual — "cheapest place to live in Texas" kept
   // its clarification because the national screen never bypassed a
@@ -341,7 +376,19 @@ export function rescueNationalScreen(
   // ambiguous place name, a county the shipped data cannot serve as
   // a screen scope) keeps its clarification.
   const realGeographies = intent.geographies.filter((g) => !isCountryGeography(g))
-  if (realGeographies.length === 0) return nationalScreenIntent(metricKey)
+  if (realGeographies.length === 0) {
+    // Geography recovery (P3b cure 4, battery D6): the parse dropped
+    // every geography, but the reader's words may still name the
+    // bound. A state named in the words bounds the screen to that
+    // state instead of widening it to the nation; the panel's
+    // rescued note ("This screens California by ...") and the
+    // understood-request geography chip disclose the recovered
+    // bound on the card's own surfaces. No state in the words = the
+    // placeless national screen, as before.
+    const recovered = stateNamedInWords(queryText)
+    if (recovered) return boundedScreenIntent(metricKey, [recovered])
+    return nationalScreenIntent(metricKey)
+  }
   if (!realGeographies.every(isBoundedScreenGeography)) return null
   return boundedScreenIntent(metricKey, realGeographies)
 }

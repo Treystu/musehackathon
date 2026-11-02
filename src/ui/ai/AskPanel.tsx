@@ -24,6 +24,7 @@ import {
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../core/ai/proxy-errors'
 import { AgentHandoff } from './AgentHandoff'
+import { HelpTip } from './HelpTip'
 import { ByoOffer } from './ByoOffer'
 import { ClarificationPanel, type ClarificationCandidates } from './ClarificationPanel'
 import { IntentEditor } from './IntentEditor'
@@ -156,7 +157,7 @@ const PARSE_RETRY_DELAYS_MS: readonly number[] = [5000, 12000, 25000]
 
 export function Disclosure() {
   return (
-    <p role="note" className="house-disclosure mt-4">
+    <p role="note" className="house-disclosure">
       {DISCLOSURE_TEXT}
     </p>
   )
@@ -494,20 +495,13 @@ export function AskPanel({
       >
         Ask <span className="font-medium text-[rgb(var(--accent))]">CivicScope</span>
       </h2>
-      {/* The welcome leads, per the owner's direction (2026-11-01): the
-          AI greets and offers starting points instead of presenting a
-          blank form. The wording invites the factors a person actually
-          weighs; the examples stay inside the intent envelope the app
-          can run (compare / lookup / filtered sweep over the housing
-          figures), so a tapped example succeeds rather than stranding
-          the reader in a clarification. */}
-      <p className="mx-auto mt-3 max-w-xl text-center text-base text-slate-600">
-        Tell me what area you are in, or what area you want to check out, and
-        what matters to you — schools, cost of living, rent, home prices — and
-        I can research the areas in the federal data and show you the figures
-        for your options.
-      </p>
-      <div className="mt-4 flex flex-wrap justify-center gap-2" aria-label="Example questions">
+      {/* No welcome prose (owner rule, 2026-11-02: explain nothing —
+          the surface is heading, examples, and the question box; the
+          examples themselves carry the invitation, and each one stays
+          inside the intent envelope the app can run, so a tapped
+          example succeeds rather than stranding the reader in a
+          clarification). */}
+      <div className="mt-5 flex flex-wrap justify-center gap-2" aria-label="Example questions">
         {EXAMPLE_PROMPTS.map((example) => (
           <button
             key={example}
@@ -531,12 +525,16 @@ export function AskPanel({
           The question box is the page's hero (redesign, 2026-11-01): one
           rounded field with a soft shadow, the way a search box sits on a
           search page — the input is borderless inside it and the Ask
-          button is a pill at its right edge. The visible label became
-          screen-reader-only; the box itself, the welcome above it and the
-          examples carry the invitation. The raw-text disclosure stays
-          directly under the box it describes.
+          button is a pill at its right edge. The visible label is
+          screen-reader-only. The standing disclosures no longer sit
+          under the box (owner rule, 2026-11-02: explain nothing): the
+          circled question mark inside the pill opens them on hover or
+          tap, verbatim, in a small panel. The raw-text note keeps its
+          id and its exact text inside that panel — the input's
+          aria-describedby still resolves, and the conformity pin on
+          the note's presence still holds.
         */}
-        <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1.5 pl-5 pr-1.5 shadow-[0_1px_6px_rgba(32,33,36,0.14)] transition-shadow focus-within:shadow-[0_2px_12px_rgba(32,33,36,0.22)] hover:shadow-[0_2px_10px_rgba(32,33,36,0.18)]">
+        <div className="relative flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1.5 pl-5 pr-1.5 shadow-[0_1px_6px_rgba(32,33,36,0.14)] transition-shadow focus-within:shadow-[0_2px_12px_rgba(32,33,36,0.22)] hover:shadow-[0_2px_10px_rgba(32,33,36,0.18)]">
           <input
             id="ask-input"
             aria-describedby="ask-raw-text-note"
@@ -546,13 +544,18 @@ export function AskPanel({
             placeholder="Ask in plain language"
             className="min-w-0 flex-1 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-500"
           />
+          <HelpTip label="About the wording helper" align="right">
+            <p id="ask-raw-text-note" role="note">
+              {RAW_TEXT_DISCLOSURE}
+            </p>
+            <div className="mt-2">
+              <Disclosure />
+            </div>
+          </HelpTip>
           <button type="submit" disabled={busy} className="btn-primary shrink-0">
             Ask
           </button>
         </div>
-        <p id="ask-raw-text-note" role="note" className="house-raw-text-disclosure mt-2 pl-5">
-          {RAW_TEXT_DISCLOSURE}
-        </p>
       </form>
       <div className="mt-3 flex justify-center">
         <MicInput
@@ -574,19 +577,32 @@ export function AskPanel({
           {coverageNote}
         </p>
       )}
-      {research.status === 'loading' && (
+      {/*
+        One status line at a time (owner screenshot, 2026-11-02: the
+        retry note and the web-unavailable note stacked into two
+        competing lines). The research outcome lines are sequenced
+        behind the parse: while the parse is running, retrying, or
+        has failed, its status is the one line shown; the research
+        line appears once the parse has settled. (A clarification
+        note from a settled parse is content, not a competing
+        status, and the politics fallback pairs with the research
+        line by design — see research-panel tests.)
+      */}
+      {research.status === 'loading' && !busy && !caughtError && !proxyError && (
         <p role="status" className="mt-2 text-sm text-slate-600">
           Looking up what the Census data does not cover…
         </p>
       )}
       {research.status === 'done' && (
         <section aria-label="From the web" className="mt-4 border-t border-slate-200 pt-3">
-          <h3 className="text-sm font-semibold text-slate-800">From the web</h3>
-          <p className="mt-1 text-xs text-slate-500">
-            Web findings via Muse search, with sources. These are not Census figures; the
-            Census figures for this question are computed separately and shown with their
-            own sources.
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-sm font-semibold text-slate-800">From the web</h3>
+            <HelpTip label="About web findings">
+              Web findings via Muse search, with sources. These are not Census figures; the
+              Census figures for this question are computed separately and shown with their
+              own sources.
+            </HelpTip>
+          </div>
           {research.prose.split(/\n\n+/).map((para, i) => (
             <p key={i} className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-700">
               {para}
@@ -608,13 +624,15 @@ export function AskPanel({
           </ul>
         </section>
       )}
-      {research.status === 'unavailable' && (
+      {research.status === 'unavailable' && !busy && !caughtError && !proxyError && (
         <p role="note" className="mt-2 text-sm text-slate-600">
           Web findings are unavailable right now. The Census figures for this question still
           work.
         </p>
       )}
-      {proxyError && <p className="mt-2 text-sm text-slate-600">{manualFallbackNote()}</p>}
+      {proxyError && (
+        <p className="mt-2 text-sm text-slate-600">{manualFallbackNote()}</p>
+      )}
       <ByoOffer error={proxyError ?? caughtError} onOpenSettings={onOpenSettings} />
       <AgentHandoff censusFetcher={censusFetcher} metaFetcher={metaFetcher} />
       {intent && (
@@ -646,7 +664,9 @@ export function AskPanel({
           )}
         </>
       )}
-      <Disclosure />
+      {/* The figures/wording disclosure used to close the panel as a
+          standing paragraph; it now lives in the question box's help
+          panel above (owner rule, 2026-11-02: explain nothing). */}
     </section>
   )
 }

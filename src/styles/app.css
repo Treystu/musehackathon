@@ -422,4 +422,14 @@
   details[open] > .disclosure-summary::before {
     content: "▾";
   }
+
+  /* The quiet variant: a collapsed block that is a footnote, not a
+     panel heading (the agent-setup entry on the Ask surface,
+     2026-11-02). Same 44px-class target family, footnote weight. */
+  .disclosure-summary--quiet {
+    min-height: 36px;
+    font-size: var(--text-small);
+    font-weight: 500;
+    color: rgb(var(--slate-600));
+  }
 }

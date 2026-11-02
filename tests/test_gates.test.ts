@@ -386,6 +386,47 @@ describe('gate: phone layout of the data surfaces', () => {
 })
 
 /**
+ * The Ask surface declutter (owner rule, 2026-11-02: explain nothing).
+ *
+ * The standing disclosures are conformity-pinned texts, so they cannot
+ * be deleted — but standing visible under the question box they made
+ * the surface read as documentation instead of a search page. These
+ * pin the resolution: the texts live verbatim inside HelpTip panels
+ * (in the DOM, hidden until hover/tap), and no explanatory prose
+ * stands on the surface itself.
+ */
+describe('gate: ask surface explains nothing standing', () => {
+  it('carries the pinned disclosures inside help tips, not standing paragraphs', () => {
+    const ask = codeOnly(read('src/ui/ai/AskPanel.tsx'))
+    expect(ask, 'the raw-text note must sit inside the pill help tip').toMatch(
+      /<HelpTip label="About the wording helper"[\s\S]*?id="ask-raw-text-note"/,
+    )
+    expect(ask, 'the welcome paragraph must stay gone').not.toMatch(
+      /Tell me what area you are in/,
+    )
+    const mic = codeOnly(read('src/ui/ai/MicInput.tsx'))
+    expect(mic, 'the audio disclosure must sit inside a help tip').toMatch(
+      /<HelpTip label="About voice input"[\s\S]*?id="ask-audio-note"/,
+    )
+  })
+
+  it('sequences the research outcome lines behind the parse status', () => {
+    const ask = codeOnly(read('src/ui/ai/AskPanel.tsx'))
+    expect(ask, 'unavailable line must wait for a settled parse').toMatch(
+      /research\.status === 'unavailable' && !busy && !caughtError && !proxyError/,
+    )
+  })
+
+  it('keeps the agent-setup entry at footnote weight on the ask surface', () => {
+    const handoff = codeOnly(read('src/ui/ai/AgentHandoff.tsx'))
+    expect(handoff).toMatch(/disclosure-summary--quiet/)
+    expect(handoff, 'the setup section must not read as a panel').not.toMatch(
+      /border-t border-slate-200/,
+    )
+  })
+})
+
+/**
  * The map's colour scale and the legibility of what it draws.
  *
  * These pin three defects that were invisible in output-only assertions.

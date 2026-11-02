@@ -821,12 +821,17 @@ export default function App() {
               door and the default; the manual apparatus lives under
               Explore the data. Labels avoid colliding with the Ask
               submit button ("Ask") and the mic ("Speak a question").
+              Restyled as quiet underline tabs (2026-11-02): the header
+              nav is the one filled pill control on the page, and a
+              second identical segmented pill read as a competing
+              navigation system; the underline marks the secondary
+              level of the hierarchy instead.
             */}
-            <div className="anim-rise mb-10 flex justify-center">
+            <div className="anim-rise mb-8 flex justify-center">
               <div
                 role="group"
                 aria-label="Choose how to work"
-                className="inline-flex rounded-full bg-slate-100 p-1 text-sm"
+                className="inline-flex gap-6 border-b border-slate-200 text-sm"
               >
                 {(
                   [
@@ -839,10 +844,10 @@ export default function App() {
                     type="button"
                     onClick={() => setMode(id)}
                     aria-pressed={mode === id}
-                    className={`min-h-[44px] rounded-full px-4 py-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 ${
+                    className={`-mb-px min-h-[44px] border-b-2 px-1 py-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 ${
                       mode === id
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
+                        ? 'border-[rgb(var(--accent))] text-slate-900'
+                        : 'border-transparent text-slate-500 hover:text-slate-900'
                     }`}
                   >
                     {label}
@@ -1218,18 +1223,17 @@ export default function App() {
       </main>
 
       <footer className="mt-12 border-t border-slate-200 bg-white">
-        <div className="mx-auto max-w-7xl px-6 py-6 text-xs text-slate-600">
+        {/* Small print, compressed to one block (2026-11-02): the
+            three standing statements keep their sentences verbatim —
+            the Census non-endorsement sentence in particular — but
+            read as footer fine print, not as three body paragraphs. */}
+        <div className="mx-auto max-w-7xl px-6 py-4 text-[11px] leading-relaxed text-slate-500">
           <p>
             CivicScope is free, open, and carries no advertising. It does not sell, broker, or refer listings
-            and does not accept payment for placement in any result.
-          </p>
-          <p className="mt-2">
-            Data is fetched directly from its publishers by your browser. We operate no server that records
-            your searches, and we hold no copy of the data.
-          </p>
-          <p className="mt-2">
-            This product uses the Census Bureau Data API but is not endorsed or certified by the Census
-            Bureau. Geocoding by OpenStreetMap contributors (ODbL).
+            and does not accept payment for placement in any result. Data is fetched directly from its
+            publishers by your browser. We operate no server that records your searches, and we hold no copy
+            of the data. This product uses the Census Bureau Data API but is not endorsed or certified by
+            the Census Bureau. Geocoding by OpenStreetMap contributors (ODbL).
           </p>
         </div>
       </footer>

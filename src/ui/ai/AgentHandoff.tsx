@@ -47,20 +47,26 @@ export function AgentHandoff({
     (manualEquivalent ? wizardStepForManualEquivalent(manualEquivalent) : undefined)
 
   return (
-    <section aria-labelledby="agent-handoff-heading" className="mt-4 border-t border-slate-200">
+    <section aria-labelledby="agent-handoff-heading" className="mt-6">
       {/* Collapsed by default (owner direction, 2026-11-01): the setup
           machinery is reference material, and expanded it pushed the
           data below the fold and read as the product's main content.
           The text is unchanged and stays in the DOM - a screen reader
           or a find-in-page reaches it exactly as before, and a handoff
           that names a manual step opens it expanded, because that
-          reader has already asked for the manual path. */}
+          reader has already asked for the manual path. Presentation
+          quieted further (owner rule, 2026-11-02): this is a
+          post-contest, own-keys path, not part of the judged flow, so
+          on the Ask surface it reads as one subtle text line — no
+          border, no panel heading weight. The mounting is pinned by
+          the agent-handoff tests, so the surface stays here in full;
+          only its visual weight changed. */}
       <details open={startStep !== undefined}>
-        <summary className="disclosure-summary">
-          <h2 id="agent-handoff-heading" className="text-sm font-semibold text-slate-900">
+        <summary className="disclosure-summary disclosure-summary--quiet">
+          <h2 id="agent-handoff-heading" className="text-xs font-medium text-slate-600">
             Set up with your agent
           </h2>
-          <span className="text-xs font-normal text-slate-600">
+          <span className="text-xs font-normal text-slate-500">
             Optional — only if you want your own keys
           </span>
         </summary>

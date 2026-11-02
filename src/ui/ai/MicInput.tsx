@@ -6,11 +6,15 @@ import {
   type MicStorage,
 } from '../../core/ai/mic'
 import type { TranscribeResult } from '../../core/ai/provider'
+import { HelpTip } from './HelpTip'
 
 /**
- * Audio-transit disclosure, shown on the mic surface at all times and
- * referenced by the Speak control. Audio goes to the transcription
- * helper only to become text; it is not stored (Q1 counts only).
+ * Audio-transit disclosure. It used to stand on the mic surface at
+ * all times; under the explain-nothing rule (owner, 2026-11-02) it
+ * lives behind the mic row's help tip and in the first-use consent
+ * copy — the two places a reader reaches for it — verbatim. Audio
+ * goes to the transcription helper only to become text; it is not
+ * stored (Q1 counts only).
  */
 export const AUDIO_TRANSIT_DISCLOSURE =
   'Speaking sends your voice audio to the transcription helper; the audio is not stored, and the words run as your question right away.'
@@ -247,10 +251,14 @@ export function MicInput({
   if (activeRecorder === null) {
     return (
       <section aria-label="Voice input">
-        <p id="ask-audio-note" role="note" className="house-audio-disclosure">
-          {AUDIO_TRANSIT_DISCLOSURE}
-        </p>
-        <p className="mt-2 text-sm text-slate-700">{MIC_UNAVAILABLE_NOTE}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm text-slate-700">{MIC_UNAVAILABLE_NOTE}</p>
+          <HelpTip label="About voice input" align="right">
+            <p id="ask-audio-note" role="note">
+              {AUDIO_TRANSIT_DISCLOSURE}
+            </p>
+          </HelpTip>
+        </div>
       </section>
     )
   }
@@ -299,10 +307,7 @@ export function MicInput({
 
   return (
     <section aria-label="Voice input">
-      <p id="ask-audio-note" role="note" className="house-audio-disclosure">
-        {AUDIO_TRANSIT_DISCLOSURE}
-      </p>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {phase === 'recording' ? (
           <button type="button" onClick={() => void finish()} className="btn-primary">
             Stop recording
@@ -310,14 +315,22 @@ export function MicInput({
         ) : (
           <button
             type="button"
-            aria-describedby="ask-audio-note"
             disabled={phase === 'working'}
             onClick={() => void begin()}
-            className="btn-secondary"
+            className="btn-secondary inline-flex items-center gap-1.5"
           >
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
+              <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z" />
+              <path d="M17.5 11.5a5.5 5.5 0 0 1-11 0H4.6a7.4 7.4 0 0 0 6.4 7.3v2.2h2v-2.2a7.4 7.4 0 0 0 6.4-7.3h-1.9Z" />
+            </svg>
             Speak a question
           </button>
         )}
+        <HelpTip label="About voice input" align="right">
+          <p id="ask-audio-note" role="note">
+            {AUDIO_TRANSIT_DISCLOSURE}
+          </p>
+        </HelpTip>
         {consented && phase === 'idle' && !asking && (
           <button type="button" onClick={forget} className="btn-quiet">
             Forget voice consent

@@ -236,6 +236,15 @@ export function TourNotice({ onOpen, onDismiss }: { onOpen: () => void; onDismis
   // as a contradiction (seen live 2026-11-01). With no key at all the
   // original sentence is the accurate one.
   const keySource = getCensusKeySource()
+  // Dismiss must mean dismiss: the dialog path records "seen" in
+  // finish(), but the notice's own Dismiss button only closed the
+  // in-memory state in App, so the notice returned on the next visit.
+  // Record it here, in the component that owns the button, using the
+  // same localStorage flag the dialog path writes.
+  function dismiss() {
+    rememberTour()
+    onDismiss()
+  }
   const loadSentence =
     keySource === 'shared'
       ? "Loading all 33,791 at once works here too: this site runs on the project's shared Census key, and adding your own key is optional."
@@ -263,7 +272,7 @@ export function TourNotice({ onOpen, onDismiss }: { onOpen: () => void; onDismis
         </button>
         <button
           type="button"
-          onClick={onDismiss}
+          onClick={dismiss}
           className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
         >
           Dismiss

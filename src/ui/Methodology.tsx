@@ -72,9 +72,10 @@ export function Methodology() {
           </li>
           <li>No accounts, analytics, advertising, third-party scripts, or cookies.</li>
           <li>
-            The assistant&rsquo;s shared allowance is counted by one aggregate counter on this site — totals
-            only (requests, tokens, modelled spend, error classes), never searches, keys, question text, or
-            content.
+            The assistant&rsquo;s calls are counted by one aggregate counter on this site, for budget
+            accounting only — totals only (requests, tokens, modelled spend, error classes), never searches,
+            keys, question text, or content. The counter reports; it does not stop, gate, delay, or limit
+            requests.
           </li>
         </ul>
       </section>
@@ -124,9 +125,38 @@ export function Methodology() {
             asked, including the shapes it must refuse — against the live model, and a release is accepted
             only when the recorded scores clear their bars. Changes to this layer are additionally scored
             before they ship by Jev, a typed judgement model, under the gate policy in the source
-            repository. Questions are routed through the Muse models API by a metered proxy that counts
-            every call against a published budget at flat per-call rates; the figures themselves never
+            repository. Questions are routed through the Muse models API by a proxy whose meter counts
+            every call at flat per-call rates for budget accounting only; the figures themselves never
             come from the model.
+          </p>
+        </div>
+      </section>
+
+      {/*
+        The meter section (owner directive, 2026-11-02): the meter's
+        posture changed from a binding budget to accounting only, and
+        this page is the single prose home for that claim — task
+        surfaces carry no standing explanation. The wording must never
+        re-acquire a shutoff claim: a planned figure is a reporting
+        line, not a limit, and there is no per-client cap in this
+        deployment.
+      */}
+      <section aria-labelledby="meter-heading">
+        <h2 id="meter-heading" className="section-title">
+          The meter counts; it does not gate
+        </h2>
+        <div className="mt-2 space-y-3 text-sm leading-relaxed text-slate-700">
+          <p>
+            Every assistant call through this site&rsquo;s proxy is counted and reported for budget
+            accounting: requests, tokens, and modelled spend at flat per-call rates, kept as aggregate
+            totals only. In this deployment the meter is accounting only — it does not stop, gate, delay,
+            or limit any request, and there is no per-client cap.
+          </p>
+          <p>
+            The budget figures in the project&rsquo;s planning documents describe what the project planned
+            to spend, not a shutoff. When a counted total passes a planned figure, the count is reported
+            and requests continue; a call can still fail for an ordinary reason — the provider being
+            unreachable, for example — but the meter is never the reason.
           </p>
         </div>
       </section>

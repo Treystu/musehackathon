@@ -157,12 +157,18 @@ export function KeyPrompt({
           void submit()
         }}
       >
-        <label htmlFor="census-key" className="block font-medium text-slate-900">
+        {/*
+          The id is census-key-prompt, not census-key: CensusKeySettings
+          already owns census-key, and both surfaces can be in the DOM
+          at once (the wizard's keys step and this prompt), where a
+          duplicate id silently retargets the other surface's label.
+        */}
+        <label htmlFor="census-key-prompt" className="block font-medium text-slate-900">
           Already have a key? Paste it here
         </label>
         <div className="mt-1 flex flex-wrap gap-2">
           <input
-            id="census-key"
+            id="census-key-prompt"
             ref={inputRef}
             type="text"
             value={value}

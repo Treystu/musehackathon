@@ -53,6 +53,11 @@ export function ClarificationPanel({
     )
   }
 
+  // The empty-Places copy is one quiet honest line (2026-11-02): the
+  // old text told the reader to "add a place above", pointing at a
+  // control this panel does not contain. The panel's own forward
+  // paths are the measure picks below and the choices already made,
+  // so the empty state names only those.
   function resolve() {
     const result = resolveClarification(intent, { geographies, metricKeys })
     if (result.ok) {
@@ -94,8 +99,8 @@ export function ClarificationPanel({
       ) : (
         <p className="mt-2 text-sm text-slate-700">
           {intent.geographies.length === 0
-            ? 'No candidate places were supplied. Add a place above, or pick a measure below to screen the whole country by it.'
-            : 'No candidate places were supplied. Add a place above, then use the current choices.'}
+            ? 'No candidate places for this request — pick a measure below to screen the whole country by it.'
+            : 'No candidate places for this request — use the measures below and the choices already made.'}
         </p>
       )}
       {metrics.length > 0 ? (

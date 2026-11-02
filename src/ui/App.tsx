@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useHousingQuery } from '../core/useHousingQuery'
 import { createLiveProvider, META_API_BASE, MUSE_SPARK_MODEL } from '../core/ai/meta-client'
 import { getMetaKey } from '../core/ai/meta-key'
+import type { CensusKeyFetcher } from '../core/ai/census-key'
+import { validateCensusKey as validateCensusKeyLive } from '../core/censusKey'
 import { DISPLAYABLE_KEYS } from '../core/ai/intent-schema'
 import type { ValidatedIntent } from '../core/ai/provider'
 import { asStateCode, loadPlaceIndex, splitStateSuffix, type PlaceIndex, type PlaceSuggestion } from '../core/zcta-place-index'
@@ -63,6 +65,24 @@ const DEFAULT_PRESET = PRESETS[0]!
 const HOUSE_PROVIDER = createLiveProvider({
   direct: { baseUrl: META_API_BASE, model: MUSE_SPARK_MODEL, getApiKey: getMetaKey },
 })
+
+/**
+ * The live Census key probe the setup surfaces re-validate with.
+ *
+ * Until 2026-11-02 the App passed no probe, so the confirmation list
+ * in the setup surface could never reach 'confirmed' in production —
+ * a stored key stopped at 'stored' no matter how valid it was. The
+ * probe already existed in the data layer: core/censusKey's validator
+ * makes one tiny Census request and parses the body, which is the
+ * only usable signal (that API answers HTTP 200 with an HTML error
+ * page for a bad key). This adapts its verdict to the fetcher shape
+ * the AI key modules expect. No equivalent probe is passed for a
+ * personal key — see the note in ai/KeyConfirmation.tsx.
+ */
+const CENSUS_PROBE_FETCHER: CensusKeyFetcher = async (key) => {
+  const verdict = await validateCensusKeyLive(key, new AbortController().signal)
+  return { ok: verdict.ok, bodyValid: verdict.ok }
+}
 
 type ScreeningSort = {
   presetId: string
@@ -199,6 +219,33 @@ export default function App() {
     () => Object.values(q.drilldowns).map((detail) => detail.label || detail.zcta),
     [q.drilldowns],
   )
+  /**
+   * Clarification candidates for Ask, from the current selection.
+   *
+   * This used to pass an empty list unconditionally, so the
+   * clarification panel's Places list could never populate. The
+   * geographies App can truthfully offer at this render point are the
+   * places the reader has already opened: each carries a name (or a
+   * place-index label, "Austin, TX") that execution resolves through
+   * the same machinery as a typed place. The loaded place index
+   * cannot supply candidates here — it is the whole country's list,
+   * and App never sees the Ask query text (AskPanel owns it), so any
+   * slice of it would present unrelated places as if they were
+   * candidates for this question. With no selection, the list is
+   * honestly empty and the panel's empty state says so.
+   */
+  const clarificationGeographies = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const place of q.selected) {
+      const label = (place.zip ? placeLabel(place.zip) : null) ?? place.name
+      if (label && !seen.has(label)) {
+        seen.add(label)
+        out.push(label)
+      }
+    }
+    return out
+  }, [q.selected, placeLabel])
   /**
    * Pack re-verification re-reads the figure from the data layer's
    * current drilldown state at generation time — not from the snapshot
@@ -866,7 +913,11 @@ export default function App() {
                   provider={HOUSE_PROVIDER}
                   figures={askFigures}
                   onExecute={executeIntent}
-                  clarificationCandidates={{ geographies: [], metricKeys: [...DISPLAYABLE_KEYS] }}
+                  censusFetcher={CENSUS_PROBE_FETCHER}
+                  clarificationCandidates={{
+                    geographies: clarificationGeographies,
+                    metricKeys: [...DISPLAYABLE_KEYS],
+                  }}
                 />
               </div>
             )}
@@ -930,7 +981,10 @@ export default function App() {
                   onApply={() => void q.applyScope(q.stateScope)}
                   totalChunks={q.totalChunks}
                   scopeChunks={q.scopeChunks}
-                  busy={false}
+                  // The real load state, not a constant: with busy
+                  // hardcoded false the filter's loading label and
+                  // disabled state could never engage (2026-11-02).
+                  busy={q.sweepStatus === 'loading'}
                 />
               </div>
             )}

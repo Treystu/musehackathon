@@ -31,6 +31,17 @@ import { getCensusKeySource } from '../../core/censusKey'
  * (Live 2026-11-01: the App wires no probe, and a plainly fake key
  * displayed 'confirmed by the app in this browser'. The status now
  * names what actually happened; the key is checked when it is used.)
+ *
+ * Probe wiring (2026-11-02): App now passes a real Census probe — the
+ * body-checked validator in src/core/censusKey.ts, which parses the
+ * Census reply because that API answers HTTP 200 with an HTML error
+ * page for a bad key — so the Census line can reach 'confirmed' in
+ * production. No equivalent lightweight probe exists in the codebase
+ * for a personal (Meta) key: the only Meta call shapes are full model
+ * completions, and spending a visitor's own tokens on a completion
+ * just to check their key, on every mount, would be a worse fault
+ * than the gap. The personal-key line therefore still stops at
+ * 'stored' by design, and its copy says exactly that.
  */
 export type KeyCheckState = 'absent' | 'checking' | 'confirmed' | 'rejected' | 'stored'
 

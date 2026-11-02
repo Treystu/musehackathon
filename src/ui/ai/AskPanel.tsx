@@ -176,25 +176,43 @@ export function AskPanel({
 
   function accept(result: IntentResult, spokenTranscript?: string, queryText?: string) {
     const check = validateIntent(result.intent)
-    if (!check.ok) {
-      // Count the class only. The model's output and the reader's words are
-      // deliberately not recorded anywhere.
-      diagnostics.recordIntentFailure('schema_invalid')
-      setNote('That request cannot be run as asked. Try the manual search below.')
-      return
-    }
-    // One answer: the flag is stamped by its single owner, so the gate
-    // below and ExplainOnAsk read the same runnability.
-    let parsed = withRunnability(check.intent)
     // National-screen rescue: a placeless superlative ("cheapest rent in
     // America") clarifies with neither a place nor a measure, and the
     // clarification's only forward path was adding a place — which
     // defeats the question. When the reader's own words carry the
     // reading deterministically, present the country-wide screen as the
     // understood request instead; the note below discloses the reading
-    // before anything runs. See core/ai/national-screen.ts.
-    const rescued = rescueNationalScreen(parsed, queryText)
-    if (rescued) parsed = rescued
+    // before anything runs. See core/ai/national-screen.ts. The rescue
+    // reads only the reader's words, so it also covers a reply whose
+    // shape failed validation — a malformed reply cannot widen it.
+    let parsed: ValidatedIntent
+    let rescued: ValidatedIntent | null = null
+    if (!check.ok) {
+      // Count the class only. The model's output and the reader's words are
+      // deliberately not recorded anywhere.
+      diagnostics.recordIntentFailure('schema_invalid')
+      rescued = rescueNationalScreen(
+        {
+          mode: 'lookup',
+          geographies: [],
+          metricKeys: [],
+          filters: [],
+          clarificationNeeded: true,
+        },
+        queryText,
+      )
+      if (!rescued) {
+        setNote('That request cannot be run as asked. Try the manual search below.')
+        return
+      }
+      parsed = rescued
+    } else {
+      // One answer: the flag is stamped by its single owner, so the gate
+      // below and ExplainOnAsk read the same runnability.
+      parsed = withRunnability(check.intent)
+      rescued = rescueNationalScreen(parsed, queryText)
+      if (rescued) parsed = rescued
+    }
     // Spoken-number validation (mic path): every numeral heard must
     // match a number in the understood request. A mismatch fails
     // closed, the same way failed prose is withheld: the understood

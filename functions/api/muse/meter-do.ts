@@ -187,39 +187,107 @@ export class MeterDurableObject {
   }
 }
 
+export interface DurableMeterClientOptions {
+  /** Injectable retry delays for hermetic tests; production uses the default. */
+  retryDelaysMs?: readonly number[]
+}
+
+/**
+ * Retry delays for transient Durable Object stub failures. Measured
+ * basis (2026-11-02, hourly burndown rounds 0-2): hosted-browser
+ * captures repeatedly showed helper calls failing with breaker_open
+ * while route probes seconds apart succeeded and the meter's
+ * cumulative error map never moved — the signature of the
+ * meter-unavailable fail-closed path below, not of a genuine breaker
+ * trip (which needs 5 recorded failures) or a provider flap. The
+ * class is intermittent per-call DO unavailability as seen from the
+ * worker isolates; two short retries (200 ms, 600 ms — far inside
+ * the routes' existing 40 s breaker wait-out) cover a transient
+ * stub failure without stacking waits.
+ */
+const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [200, 600]
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 /**
  * Client adapter used by the proxy routes at port time: the Meter op
  * surface over a DO stub. Any failure — unreachable stub, non-200, or
  * the DO's own fail-closed 503 — surfaces as MeterUnavailableError so
  * the proxy maps it to 503 breaker_open and makes no provider call.
+ *
+ * Failures are retried within the bounds above, on a per-op safety
+ * split. A DO-answered 503 is proof the op never persisted (the
+ * object answers 503 only from its MeterUnavailableError catch,
+ * thrown during load/save before the record is written), so any op
+ * may retry it. A transport failure (the stub fetch throws, or the
+ * response body is unreadable) is ambiguous — the op may have
+ * persisted — so only ops whose duplicate application is safe retry
+ * it: the reads (their persisted effect is the expired-reservation
+ * sweep), release (a delete), and reserve (a duplicate only holds
+ * its estimate against the cap until the adapter's 120 s TTL sweep;
+ * it is never charged). settle, recordError and recordFailure
+ * increment counters unconditionally, so they never retry an
+ * ambiguous failure: a double settle would double-count spend.
  */
 export class DurableMeterClient {
-  constructor(private readonly stub: DurableObjectStubLike) {}
+  private readonly retryDelaysMs: readonly number[]
 
-  private async call<T>(op: string, args: unknown[]): Promise<T> {
-    let res: Response
-    try {
-      res = await this.stub.fetch('https://meter-do/', {
-        method: 'POST',
-        body: JSON.stringify({ op, args }),
-      })
-    } catch (e) {
-      throw new MeterUnavailableError('storage', 'meter DO unreachable', {
-        cause: e,
-      })
+  constructor(
+    private readonly stub: DurableObjectStubLike,
+    opts: DurableMeterClientOptions = {},
+  ) {
+    this.retryDelaysMs = opts.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
+  }
+
+  private async call<T>(
+    op: string,
+    args: unknown[],
+    retryAmbiguous: boolean,
+  ): Promise<T> {
+    const delays = this.retryDelaysMs
+    for (let attempt = 0; ; attempt++) {
+      let res: Response
+      try {
+        res = await this.stub.fetch('https://meter-do/', {
+          method: 'POST',
+          body: JSON.stringify({ op, args }),
+        })
+      } catch (e) {
+        if (retryAmbiguous && attempt < delays.length) {
+          await sleep(delays[attempt]!)
+          continue
+        }
+        throw new MeterUnavailableError('storage', 'meter DO unreachable', {
+          cause: e,
+        })
+      }
+      if (res.status === 503 && attempt < delays.length) {
+        await sleep(delays[attempt]!)
+        continue
+      }
+      if (res.status !== 200) {
+        throw new MeterUnavailableError(
+          'storage',
+          `meter DO op ${op} failed with status ${res.status}`,
+        )
+      }
+      try {
+        const body = (await res.json()) as { result: T }
+        return body.result
+      } catch (e) {
+        if (retryAmbiguous && attempt < delays.length) {
+          await sleep(delays[attempt]!)
+          continue
+        }
+        throw new MeterUnavailableError('storage', 'meter DO unreachable', {
+          cause: e,
+        })
+      }
     }
-    if (res.status !== 200) {
-      throw new MeterUnavailableError(
-        'storage',
-        `meter DO op ${op} failed with status ${res.status}`,
-      )
-    }
-    const body = (await res.json()) as { result: T }
-    return body.result
   }
 
   reserve(clientId: string, estMicroUsd: number, estTokens: number): Promise<string | null> {
-    return this.call<string | null>('reserve', [clientId, estMicroUsd, estTokens])
+    return this.call<string | null>('reserve', [clientId, estMicroUsd, estTokens], true)
   }
 
   settle(
@@ -229,35 +297,35 @@ export class DurableMeterClient {
     tin: number,
     tout: number,
   ): Promise<void> {
-    return this.call<null>('settle', [id, clientId, actualMicroUsd, tin, tout]).then(
+    return this.call<null>('settle', [id, clientId, actualMicroUsd, tin, tout], false).then(
       () => undefined,
     )
   }
 
   release(id: string): Promise<void> {
-    return this.call<null>('release', [id]).then(() => undefined)
+    return this.call<null>('release', [id], true).then(() => undefined)
   }
 
   recordError(cls: string): Promise<void> {
-    return this.call<null>('recordError', [cls]).then(() => undefined)
+    return this.call<null>('recordError', [cls], false).then(() => undefined)
   }
 
   recordFailure(now?: number): Promise<void> {
-    return this.call<null>('recordFailure', now === undefined ? [] : [now]).then(
+    return this.call<null>('recordFailure', now === undefined ? [] : [now], false).then(
       () => undefined,
     )
   }
 
   snapshot(): Promise<MeterSnapshot> {
-    return this.call<MeterSnapshot>('snapshot', [])
+    return this.call<MeterSnapshot>('snapshot', [], true)
   }
 
   breakerState(now?: number): Promise<BreakerState> {
-    return this.call<BreakerState>('breakerState', now === undefined ? [] : [now])
+    return this.call<BreakerState>('breakerState', now === undefined ? [] : [now], true)
   }
 
   configSnapshot(): Promise<ReturnType<Meter['configSnapshot']>> {
-    return this.call<ReturnType<Meter['configSnapshot']>>('configSnapshot', [])
+    return this.call<ReturnType<Meter['configSnapshot']>>('configSnapshot', [], true)
   }
 }
 

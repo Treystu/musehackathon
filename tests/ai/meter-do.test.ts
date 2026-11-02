@@ -161,6 +161,83 @@ describe('durable meter client', () => {
   })
 })
 
+describe('durable meter client retry (transient DO unavailability)', () => {
+  const NO_WAIT = { retryDelaysMs: [0, 0] }
+
+  function flaky(
+    doObj: MeterDurableObject,
+    plan: Array<'throw' | 's503' | 'ok'>,
+  ): { stub: DurableObjectStubLike; attempts: () => number } {
+    let n = 0
+    return {
+      stub: {
+        fetch: (input, init) => {
+          const step = plan[Math.min(n, plan.length - 1)]!
+          n += 1
+          if (step === 'throw') return Promise.reject(new Error('no route'))
+          if (step === 's503') return Promise.resolve(new Response('{}', { status: 503 }))
+          return doObj.fetch(new Request(input, init))
+        },
+      },
+      attempts: () => n,
+    }
+  }
+
+  it('retries a read after a transport failure and answers', async () => {
+    const { state } = fakeState()
+    const { stub, attempts } = flaky(new MeterDurableObject(state), ['throw', 'ok'])
+    const snap = await new DurableMeterClient(stub, NO_WAIT).snapshot()
+    expect(snap.requests).toBe(0)
+    expect(attempts()).toBe(2)
+  })
+
+  it('retries a reserve after a DO-answered 503 and reserves exactly once', async () => {
+    const { state } = fakeState()
+    const { stub } = flaky(new MeterDurableObject(state), ['s503', 'ok'])
+    const client = new DurableMeterClient(stub, NO_WAIT)
+    expect(await client.reserve('c1', 1000, 100)).toBe('r1')
+    expect((await client.snapshot()).requests).toBe(0)
+  })
+
+  it('still fails closed after the retries are spent', async () => {
+    const { stub, attempts } = flaky(new MeterDurableObject(fakeState().state), [
+      'throw',
+      'throw',
+      'throw',
+      'ok',
+    ])
+    await expect(new DurableMeterClient(stub, NO_WAIT).snapshot()).rejects.toBeInstanceOf(
+      MeterUnavailableError,
+    )
+    expect(attempts()).toBe(3)
+  })
+
+  it('retries settle on a DO-answered 503 (op provably never persisted) exactly once', async () => {
+    const { state } = fakeState()
+    const doObj = new MeterDurableObject(state)
+    const direct = new DurableMeterClient(stubFor(doObj))
+    const id = await direct.reserve('c1', 1000, 100)
+    const { stub } = flaky(doObj, ['s503', 'ok'])
+    await new DurableMeterClient(stub, NO_WAIT).settle(id as string, 'c1', 900, 10, 5)
+    const snap = await direct.snapshot()
+    expect(snap.requests).toBe(1)
+    expect(snap.spentMicroUsd).toBe(900)
+  })
+
+  it('never retries settle on an ambiguous transport failure (no double count)', async () => {
+    const { state } = fakeState()
+    const doObj = new MeterDurableObject(state)
+    const direct = new DurableMeterClient(stubFor(doObj))
+    const id = await direct.reserve('c1', 1000, 100)
+    const { stub, attempts } = flaky(doObj, ['throw', 'ok'])
+    await expect(
+      new DurableMeterClient(stub, NO_WAIT).settle(id as string, 'c1', 900, 10, 5),
+    ).rejects.toBeInstanceOf(MeterUnavailableError)
+    expect(attempts()).toBe(1)
+    expect((await direct.snapshot()).requests).toBe(0)
+  })
+})
+
 describe('mapMeterError', () => {
   it('maps meter unavailability to 503 breaker_open on the closed taxonomy', () => {
     const mapped = mapMeterError(

@@ -164,7 +164,7 @@ export async function runJevLoop<TAnswer>(
     const started = performance.now()
     try {
       const reply = await deps.transport({
-        set: 'loop',
+        set: 'J-LOOP',
         state: loopStateFor({
           answerText: deps.textOf(answer),
           criteria: deps.criteria,

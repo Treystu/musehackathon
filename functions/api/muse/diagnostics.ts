@@ -32,6 +32,7 @@ import {
 import { MUSE_SPARK_MODEL } from '../../../src/core/ai/meta-client'
 import { PROXY_ERRORS } from '../../../src/core/ai/proxy-errors'
 import { VALIDATOR_FAILURES } from '../../../src/core/ai/validator'
+import { bookendCountersSnapshot } from '../../../src/core/ai/bookend-counters'
 import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
 import {
   meterFor,
@@ -103,6 +104,10 @@ export async function handleDiagnostics(context: PagesContext<MuseEnv>): Promise
       tokensOut: snapshot.tokensOut,
       budgetExhausted: snapshot.budgetExhausted,
       breaker,
+      // Hourglass bookend outcomes (C11): additive keys on the flat
+      // record, aggregate counts only, read from the same in-isolate
+      // counters the bookend routes record against.
+      hourglass: bookendCountersSnapshot(),
       errors,
       deployment: {
         pages: env.CF_PAGES === '1',

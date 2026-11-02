@@ -29,6 +29,9 @@ import type {
   MuseProvider,
   ResearchRequest,
   ResearchResult,
+  StageChatProvider,
+  StageChatRequest,
+  StageChatResult,
   TranscribeRequest,
   TranscribeResult,
 } from './provider'
@@ -43,6 +46,31 @@ export const META_API_BASE = 'https://api.meta.ai/v1'
  * Muse Wonder is offline-only and never reachable from this client.
  */
 export const MUSE_SPARK_MODEL = 'muse-spark-1.3'
+
+/**
+ * Candidate direct-API id for Muse Wonder, the hourglass bookend
+ * model (conversational stack C1, 2026-11-02). Recorded as a preview
+ * roster id in the October homework; the in-build probe through a
+ * Preview deployment could not confirm it (the Preview deployment
+ * never served and the production key cannot be copied into the
+ * Preview env, because Cloudflare never returns secret values), so
+ * this id is a candidate, not a verified roster entry. The bookend
+ * routes treat a failed call under this id as a degradation, never
+ * as a verdict, so an unreachable Wonder cannot fabricate a result.
+ */
+export const MUSE_WONDER_MODEL = 'muse-wonder-1.0'
+
+/**
+ * Every model id a proxy request may name (C1 per-call selection).
+ * The gate in muse-proxy rejects any other model string before a
+ * provider call is made; the deployment's configured model is added
+ * by the adapter when it differs from these.
+ */
+export const PROXY_ALLOWED_MODELS: readonly string[] = [
+  MUSE_SPARK_MODEL,
+  MUSE_WONDER_MODEL,
+  'muse-voice-transcribe-1.0',
+]
 
 /** Ceiling mirrored from the proxy's intent parser, so the two cannot drift. */
 export const MAX_INTENT_QUERY_CHARS = 500
@@ -400,7 +428,9 @@ export function readUsage(body: unknown): { prompt: number; completion: number }
  * the hybrid: the proxy's server side (one shared key, no recursion through
  * /api/muse) and the browser's BYO fallback (the visitor's own key).
  */
-export function createMetaDirectProvider(options: MetaDirectOptions): MuseProvider {
+export function createMetaDirectProvider(
+  options: MetaDirectOptions,
+): MuseProvider & StageChatProvider {
   const doFetch: FetchLike = options.fetchImpl ?? ((...args) => fetch(...args))
   const endpoint = `${options.baseUrl.replace(/\/$/, '')}/chat/completions`
 
@@ -502,6 +532,31 @@ export function createMetaDirectProvider(options: MetaDirectOptions): MuseProvid
   }
 
   return {
+    /**
+     * Stage-scoped completion (C1). The request's model field rides
+     * the completion body, where completeOnce spreads the body after
+     * the provider default, so a named stage model wins for this
+     * call only and the provider's configured model is unchanged
+     * for every other stage.
+     */
+    async stageChat(req: StageChatRequest, signal: AbortSignal): Promise<StageChatResult> {
+      const reply = await complete(
+        {
+          ...(req.model ? { model: req.model } : {}),
+          messages: [
+            { role: 'system', content: req.system },
+            { role: 'user', content: req.user },
+          ],
+          temperature: 0,
+        },
+        signal,
+      )
+      const text = contentOf(reply)
+      if (!text) throw new ProviderCallError('provider_down')
+      const reported = (reply as { model?: unknown } | null)?.model
+      return { text: text.trim(), model: typeof reported === 'string' ? reported : (req.model ?? options.model) }
+    },
+
     async intent(req, signal): Promise<IntentResult> {
       if (req.queryText && req.queryText.length > MAX_INTENT_QUERY_CHARS) {
         throw new ProviderCallError('shape_invalid')

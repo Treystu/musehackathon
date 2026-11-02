@@ -166,6 +166,45 @@ export interface MuseProvider {
   research(req: ResearchRequest, signal: AbortSignal): Promise<ResearchResult>
 }
 
+/**
+ * One stage-scoped chat completion with a per-call model selection
+ * (conversational stack C1, 2026-11-02). The hourglass bookends are
+ * single-purpose stages that do not fit the intent/explain/briefing
+ * shapes: they take a system instruction plus one condensed packet
+ * and return raw text the caller parses under a closed verdict
+ * schema. Kept as a separate interface so the replay and golden
+ * providers, which implement MuseProvider as object literals, are
+ * not forced to grow a stage they can never serve honestly.
+ */
+export interface StageChatRequest {
+  /** Stage model for this call; absent means the provider default. */
+  model?: string
+  system: string
+  user: string
+}
+
+export interface StageChatResult {
+  text: string
+  /** The model id the provider reports for the call, when it does. */
+  model: string
+}
+
+export interface StageChatProvider {
+  stageChat(req: StageChatRequest, signal: AbortSignal): Promise<StageChatResult>
+}
+
+/** Hermetic stage fake: answers only what the handler supplies. */
+export function createStubStageProvider(
+  handler: Partial<StageChatProvider> = {},
+): StageChatProvider {
+  return {
+    async stageChat() {
+      return { text: '', model: 'stub' }
+    },
+    ...handler,
+  }
+}
+
 /** Hermetic fake for local tests. Never calls a network or a live model. */
 export function createStubProvider(
   handler: Partial<MuseProvider> = {},

@@ -92,8 +92,8 @@ function loopAnswers(noul: number, score = 2): Record<string, JevAnswer> {
     'criterion:median_gross_rent': { type: 'noul', probability: noul },
     'criterion:schools': { type: 'noul', probability: noul },
     'criterion:coffee': { type: 'noul', probability: noul },
-    relevance: { type: 'score', expected: score, distribution: [0, 0, 1] },
-    completeness: { type: 'score', expected: score, distribution: [0, 0, 1] },
+    relevance: { type: 'score', expected: score, distribution: { '0': 0, '1': 0, '2': 1 } },
+    completeness: { type: 'score', expected: score, distribution: { '0': 0, '1': 0, '2': 1 } },
   }
 }
 
@@ -506,11 +506,11 @@ describe('runner conversational stack', () => {
         decisions: {},
         jevTransport: async ({ set }) => {
           order.push(`jev:${set}`)
-          if (set === 'loop') return { answers: loopAnswers(0.95) }
+          if (set === 'J-LOOP') return { answers: loopAnswers(0.95) }
           return {
             answers: {
               'branch-exists': { type: 'noul', probability: 0.1 },
-              'branch-which': { type: 'choice', selection: 'none-of-these', distribution: [0, 0, 0, 1] },
+              'branch-which': { type: 'choice', selected: 'none-of-these', distribution: { transport: 0, 'school-level': 0, 'budget-anchor': 0, 'none-of-these': 1 } },
             } as Record<string, JevAnswer>,
           }
         },
@@ -562,11 +562,11 @@ describe('runner conversational stack', () => {
         decisions: {},
         ...NO_BOOKENDS,
         jevTransport: async ({ set }) => {
-          if (set === 'branch') {
+          if (set === 'J-BRANCH') {
             return {
               answers: {
                 'branch-exists': { type: 'noul', probability: 0.1 },
-                'branch-which': { type: 'choice', selection: 'none-of-these', distribution: [0, 0, 0, 1] },
+                'branch-which': { type: 'choice', selected: 'none-of-these', distribution: { transport: 0, 'school-level': 0, 'budget-anchor': 0, 'none-of-these': 1 } },
               } as Record<string, JevAnswer>,
             }
           }
@@ -585,11 +585,11 @@ describe('runner conversational stack', () => {
   it('branch boundary: fires at 0.75 with the specific Starbucks phrasing; not at 0.74', async () => {
     const transportFor = (fire: number): JevTransport =>
       async ({ set, state }) => {
-        if (set === 'branch') {
+        if (set === 'J-BRANCH') {
           return {
             answers: {
               'branch-exists': { type: 'noul', probability: fire },
-              'branch-which': { type: 'choice', selection: 'transport', distribution: [0.9, 0, 0, 0.1] },
+              'branch-which': { type: 'choice', selected: 'transport', distribution: { transport: 0.9, 'school-level': 0, 'budget-anchor': 0, 'none-of-these': 0.1 } },
             } as Record<string, JevAnswer>,
           }
         }
@@ -646,11 +646,11 @@ describe('runner conversational stack', () => {
       decisions: {},
       closedBranches: new Set(),
       jevTransport: async ({ set }) => {
-        if (set === 'branch') {
+        if (set === 'J-BRANCH') {
           return {
             answers: {
               'branch-exists': { type: 'noul', probability: 0.9 },
-              'branch-which': { type: 'choice', selection: 'transport', distribution: [1, 0, 0, 0] },
+              'branch-which': { type: 'choice', selected: 'transport', distribution: { transport: 1, 'school-level': 0, 'budget-anchor': 0, 'none-of-these': 0 } },
             } as Record<string, JevAnswer>,
           }
         }

@@ -22,7 +22,7 @@
   Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://tigerweb.geo.census.gov https://api.census.gov https://data.cdc.gov https://nces.ed.gov https://educationdata.urban.org https://photon.komoot.io https://data.ny.gov https://data.cityofnewyork.us https://geodata.epa.gov https://api.meta.ai; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://tigerweb.geo.census.gov https://api.census.gov https://data.cdc.gov https://nces.ed.gov https://educationdata.urban.org https://photon.komoot.io https://data.ny.gov https://data.cityofnewyork.us https://geodata.epa.gov https://api.meta.ai https://api.typesafe.ai; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable

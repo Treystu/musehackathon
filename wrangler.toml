@@ -70,6 +70,12 @@ bindings = [
 # - MUSE_MODEL     : OPTIONAL plain variable. Leave unset to run the
 #                    default model; diagnostics report modelIsDefault true
 #                    either way. Set only to pin it explicitly.
+# - TYPESAFE_API_KEY: <redacted>
+#                    Jev evaluation route (/api/muse/jev) only. Absent
+#                    means that route answers its typed unavailable and
+#                    its consumers degrade; nothing else is affected.
+#                    Set in Production at ship time by the owner or the
+#                    coordinating lane, never committed here.
 #
 # [vars]
 # MUSE_MODEL = "muse-spark-1.3"

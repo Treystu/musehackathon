@@ -27,6 +27,7 @@ import {
   createMetaDirectProvider,
   META_API_BASE,
   MUSE_SPARK_MODEL,
+  PROXY_ALLOWED_MODELS,
 } from '../core/ai/meta-client'
 import type { MeterContract, ProxyDeps, ProxyReply } from './muse-proxy'
 
@@ -40,6 +41,12 @@ export interface MuseEnv {
   MUSE_BUDGET_CAP_MICRO_USD?: string
   /** Read for diagnostics reporting only; never enforced (2026-11-02). */
   MUSE_PER_CLIENT_CAP_MICRO_USD?: string
+  /**
+   * TypeSafe System One key for the Jev evaluation route (C3). Read
+   * only by that route, which is an independent failure domain: its
+   * absence degrades Jev consumers and touches nothing else.
+   */
+  TYPESAFE_API_KEY?: string
   /**
    * Meter Durable Object binding (wrangler.toml, portal deployment).
    * Present means the meter is the durable DO-backed client; absent
@@ -113,16 +120,27 @@ export function depsFor(env: MuseEnv): ProxyDeps | null {
   const key = env.MUSE_API_KEY
   if (!key) return null
   const model = env.MUSE_MODEL || MUSE_SPARK_MODEL
+  // Direct provider: the server proxy must not call itself. The browser's
+  // hybrid client is a separate factory in the same module. The same
+  // instance serves stage-scoped calls (C1): its stageChat carries a
+  // per-call model, so the bookend stages can name the Wonder
+  // candidate without changing this provider's configured model.
+  const provider = createMetaDirectProvider({
+    baseUrl: env.MUSE_BASE_URL || META_API_BASE,
+    model,
+    getApiKey: () => key,
+  })
   return {
     meter: meterFor(env),
-    // Direct provider: the server proxy must not call itself. The browser's
-    // hybrid client is a separate factory in the same module.
-    provider: createMetaDirectProvider({
-      baseUrl: env.MUSE_BASE_URL || META_API_BASE,
-      model,
-      getApiKey: () => key,
-    }),
-    allowedModels: [model],
+    provider,
+    stageProvider: provider,
+    // Per-call model selection (C1): a request may name any allowlisted
+    // stage model; the configured model stays the default when a
+    // request names none. The configured value is added when an
+    // operator pin differs from the shipped allowlist.
+    allowedModels: PROXY_ALLOWED_MODELS.includes(model)
+      ? [...PROXY_ALLOWED_MODELS]
+      : [model, ...PROXY_ALLOWED_MODELS],
   }
 }
 

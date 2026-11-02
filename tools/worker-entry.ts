@@ -32,8 +32,11 @@ import * as briefingRoute from '../functions/api/muse/briefing'
 import * as diagnosticsRoute from '../functions/api/muse/diagnostics'
 import * as explainRoute from '../functions/api/muse/explain'
 import * as intentRoute from '../functions/api/muse/intent'
+import * as jevRoute from '../functions/api/muse/jev'
+import * as planRoute from '../functions/api/muse/plan'
 import * as researchRoute from '../functions/api/muse/research'
 import * as transcribeRoute from '../functions/api/muse/transcribe'
+import * as verifyRoute from '../functions/api/muse/verify'
 import { onRequest as censusInjector } from '../functions/_middleware'
 import type { CensusInjectorEnv } from '../functions/_middleware'
 import type { MuseEnv, PagesContext } from '../src/server/muse-adapter'
@@ -67,8 +70,11 @@ const ROUTES: ReadonlyMap<string, RouteModule> = new Map<string, RouteModule>([
   ['/api/muse/diagnostics', diagnosticsRoute],
   ['/api/muse/explain', explainRoute],
   ['/api/muse/intent', intentRoute],
+  ['/api/muse/jev', jevRoute],
+  ['/api/muse/plan', planRoute],
   ['/api/muse/research', researchRoute],
   ['/api/muse/transcribe', transcribeRoute],
+  ['/api/muse/verify', verifyRoute],
 ])
 
 /** Pages export suffix per method: onRequest + Get/Post/Put/... */

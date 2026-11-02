@@ -31,7 +31,7 @@ import type {
   Meter,
   MeterSnapshot,
 } from '../core/ai/meter'
-import type { MuseProvider } from '../core/ai/provider'
+import type { MuseProvider, StageChatProvider } from '../core/ai/provider'
 import type { ProxyError } from '../core/ai/proxy-errors'
 
 /**
@@ -62,6 +62,13 @@ export interface MeterContract {
 export interface ProxyDeps {
   meter: MeterContract
   provider: MuseProvider
+  /**
+   * Stage-scoped completions with per-call model selection (C1).
+   * Optional: a deployment without it serves the classic routes and
+   * the bookend routes answer their typed degradation, because a
+   * bookend that cannot call its stage model has not run.
+   */
+  stageProvider?: StageChatProvider
   allowedModels: readonly string[]
   /** Wait-out timing; tests inject ~0. Defaults to DEFAULT_WAIT_OUT. */
   waitOut?: WaitOutConfig

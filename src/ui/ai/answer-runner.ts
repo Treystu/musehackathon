@@ -299,7 +299,7 @@ export async function evaluateDecisionProposal(input: {
   let branchReply
   try {
     branchReply = await input.jevTransport({
-      set: 'branch',
+      set: 'J-BRANCH',
       state: {
         question: input.queryText,
         criteria: criteria.map((c) => c.text),
@@ -328,13 +328,13 @@ export async function evaluateDecisionProposal(input: {
   let drafted = phraseBranchQuestion(definition.id, input.queryText, criterion.text, subject)
   try {
     let score = noulProbability(
-      (await input.jevTransport({ set: 'phrase', state: phraseState(drafted) })).answers,
+      (await input.jevTransport({ set: 'J-PHRASE', state: phraseState(drafted) })).answers,
       PHRASE_QUESTION_ID,
     )
     if (score === null || score < JEV_PHRASE_THRESHOLD) {
       drafted = rephraseBranchQuestion(definition.id, criterion.text, subject)
       score = noulProbability(
-        (await input.jevTransport({ set: 'phrase', state: phraseState(drafted) })).answers,
+        (await input.jevTransport({ set: 'J-PHRASE', state: phraseState(drafted) })).answers,
         PHRASE_QUESTION_ID,
       )
       if (score === null || score < JEV_PHRASE_THRESHOLD) return undefined

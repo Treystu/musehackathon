@@ -35,9 +35,26 @@ import { AnswerCard } from './ai/AnswerCard'
 import {
   answerScopeCovered,
   composeAnswerForRequest,
+  refineAnswerForRequest,
   resolveAnswerGeographies,
   type ResolvedAnswerGeographies,
 } from './ai/answer-runner'
+import { DecisionModal } from './ai/DecisionModal'
+import { ThinkingIndicator } from './ai/ThinkingIndicator'
+import { researchAck } from './ai/ack'
+import {
+  canRefine,
+  dismissModal,
+  expireModalForNewQuestion,
+  initialModalState,
+  landModal,
+  markRefined,
+  proposeModal,
+  readSessionDecisions,
+  withDecisionsParam,
+  type BranchId,
+  type ModalState,
+} from '../core/ai/decision-branches'
 import type { ComposedAnswer } from '../core/ai/answer'
 import { BriefingView } from './ai/BriefingView'
 import {
@@ -267,13 +284,85 @@ export default function App() {
   const answerInFlightIds = useRef(new Set<number>())
   const answerNotedIds = useRef(new Set<number>())
 
+  /**
+   * Decision-modal state (plan C7): one modal at a time, floating
+   * over the working state and then the provisional answer; the
+   * pipeline never waits on it. A new question expires a live modal
+   * unanswered (annex expiry (c)); a landed decision writes session
+   * + URL state and refines the answer in place, once.
+   */
+  const [modalState, setModalState] = useState<ModalState>(() => initialModalState())
+  const answerContextRef = useRef<{
+    intent: ValidatedIntent
+    queryText: string
+    resolved: ResolvedAnswerGeographies
+  } | null>(null)
+
   const handleAnswerRequest = useCallback((intent: ValidatedIntent, queryText: string) => {
     const id = ++answerRequestSeq.current
     // A new question replaces the previous answer outright; a stale
     // card above fresh results would read as this question's answer.
     setAnswer(null)
     setAnswerNote(null)
+    setModalState((state) => expireModalForNewQuestion(state))
     setAnswerRequest({ id, intent, queryText })
+  }, [])
+
+  // A fresh answer's proposal becomes the live modal (one at a time;
+  // a decided or closed branch is never re-asked).
+  useEffect(() => {
+    const proposal = answer?.decisionProposal
+    if (!proposal || !answerRequest) return
+    setModalState((state) =>
+      proposeModal(
+        state,
+        {
+          branch: proposal.branch as BranchId,
+          questionText: proposal.questionText,
+          runId: answerRequest.id,
+        },
+        readSessionDecisions(),
+      ),
+    )
+  }, [answer, answerRequest])
+
+  const handleDecisionChoose = useCallback(
+    (optionId: string) => {
+      const live = modalState.live
+      const context = answerContextRef.current
+      if (!live || !context || !answer) return
+      const branch = live.branch
+      setModalState((state) => landModal(state))
+      // The decision travels in the URL beside the intent, the same
+      // shareable channel stated criteria already use.
+      const decisions = { ...readSessionDecisions(), [branch]: optionId }
+      const nextSearch = withDecisionsParam(window.location.search, decisions)
+      window.history.replaceState(null, '', `${window.location.pathname}?${nextSearch}`)
+      if (!canRefine(modalState, branch)) return
+      void (async () => {
+        const refined = await refineAnswerForRequest({
+          intent: context.intent,
+          queryText: context.queryText,
+          rows: q.sweep,
+          resolved: context.resolved,
+          provider: HOUSE_PROVIDER,
+          research: needsResearch(context.queryText),
+          placeIndex: placeIndex ?? null,
+          provisional: answer,
+          branch,
+          option: optionId,
+        })
+        setAnswer(refined)
+        if (refined !== answer) {
+          setModalState((state) => markRefined(state, branch))
+        }
+      })()
+    },
+    [modalState, answer, q.sweep, placeIndex],
+  )
+
+  const handleDecisionDismiss = useCallback(() => {
+    setModalState((state) => dismissModal(state))
   }, [])
 
   useEffect(() => {
@@ -332,6 +421,7 @@ export default function App() {
       return
     }
     answerInFlightIds.current.add(id)
+    answerContextRef.current = { intent, queryText, resolved }
     void (async () => {
       try {
         const composed = await composeAnswerForRequest({
@@ -1154,13 +1244,32 @@ export default function App() {
               </div>
             ) : answerRequest ? (
               <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
-                <p role="status" className="text-sm text-slate-500">
-                  {q.sweepStatus === 'loading'
-                    ? 'Loading the country-wide data for this answer…'
-                    : 'Composing the answer…'}
+                {/*
+                  The answer path's working state is the conversational
+                  frame (plan C6): the ack + thinking indicator replace
+                  the stacked pending lines that used to render here.
+                */}
+                <p className="flex items-center gap-2 text-sm text-slate-500">
+                  <span>
+                    {needsResearch(answerRequest.queryText)
+                      ? researchAck('the stated criteria')
+                      : 'Let me look into that.'}
+                  </span>
+                  <ThinkingIndicator />
                 </p>
               </div>
             ) : null}
+            {modalState.live && answer?.decisionProposal && (
+              <div className="mx-auto max-w-3xl px-2">
+                <DecisionModal
+                  questionText={answer.decisionProposal.questionText}
+                  options={answer.decisionProposal.options}
+                  dismissLabel={answer.decisionProposal.dismissLabel}
+                  onChoose={handleDecisionChoose}
+                  onDismiss={handleDecisionDismiss}
+                />
+              </div>
+            )}
             {mode === 'ask' && q.selected.length === 0 && q.sweepStatus === 'ready' && screenStats && (
               <div className="anim-rise anim-rise-2 mx-auto mt-10 grid max-w-4xl grid-cols-1 gap-6 border-t border-slate-200 pt-8 text-center sm:grid-cols-3">
                 <div>

@@ -296,6 +296,17 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
         </HelpTip>
       </div>
 
+      {answer.refinementNote && (
+        <p role="note" className="mt-2 text-sm text-slate-600">
+          {answer.refinementNote}
+        </p>
+      )}
+      {answer.verification?.wonder === 'concerns' &&
+        (answer.verification.wonderConcerns ?? []).map((concern) => (
+          <p key={concern} role="note" className="mt-2 text-sm text-slate-600">
+            {concern}
+          </p>
+        ))}
       {answer.status === 'withheld' && (
         <p role="note" className="mt-2 text-sm text-slate-600">
           A composed answer was withheld because it did not pass verification. The figures below

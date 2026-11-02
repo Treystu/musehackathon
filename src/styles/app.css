@@ -173,6 +173,38 @@
 .anim-rise {
   animation: rise-in 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) both;
 }
+
+/*
+ * Thinking indicator dots (plan C6): 6 px, accent color, 1.2 s jump
+ * cycle staggered 0.15 s. The base layer's reduced-motion guard
+ * collapses the animation duration and iteration count, so the dots
+ * render static for a reader who opted out — no media query needed
+ * here.
+ */
+@keyframes thinking-jump {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-4px);
+  }
+}
+
+.thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: rgb(var(--accent));
+  animation: thinking-jump 1.2s ease-in-out infinite;
+}
+.thinking-dot-2 {
+  animation-delay: 0.15s;
+}
+.thinking-dot-3 {
+  animation-delay: 0.3s;
+}
 .anim-rise-1 {
   animation-delay: 0.08s;
 }

@@ -410,7 +410,10 @@ describe('live ask: no research status line while blocked in clarification', () 
     render(<AskPanel provider={provider} onExecute={() => ''} parseRetryDelaysMs={[]} />)
     await ask('best schools near Hilo')
     expect(clarificationSection()).toBeNull()
-    expect(container.textContent).toContain('Looking up what the Census data does not cover')
+    // Plan C6 supersedes this pin's original form: the standalone
+    // research status line folded into the ack + thinking indicator,
+    // so the line itself no longer renders while research is pending.
+    expect(container.textContent).not.toContain('Looking up what the Census data does not cover')
     await act(async () => {
       releaseResearch?.({ prose: '', sources: [] } as never)
     })

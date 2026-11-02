@@ -35,6 +35,8 @@ import { ClarificationPanel, type ClarificationCandidates } from './Clarificatio
 import { IntentEditor } from './IntentEditor'
 import { ExplainOnAsk } from './ExplainOnAsk'
 import { MicInput, type MicRecorder } from './MicInput'
+import { ThinkingIndicator } from './ThinkingIndicator'
+import { pickAckOpener, researchAck } from './ack'
 import type { ExplanationState } from './ExplainBox'
 import type { FigureInput } from './FigureCard'
 
@@ -422,6 +424,16 @@ export function AskPanel({
   parseRetryDelaysMs?: readonly number[]
 }) {
   const [text, setText] = useState('')
+  /**
+   * The conversational frame (plan C6): on submit, ONE acknowledgment
+   * line in the assistant's voice plus the thinking indicator is the
+   * whole working state — the stacked parse/research status lines
+   * fold into it. The opener rotates by question hash and never
+   * repeats the session's previous opener back-to-back; a research
+   * question gets the research variant naming its first criterion.
+   */
+  const [ack, setAck] = useState('')
+  const lastAckOpener = useRef<string | null>(null)
   const [intent, setIntent] = useState<ValidatedIntent | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -618,6 +630,17 @@ export function AskPanel({
 
   async function runQuery(queryText: string, spokenTranscript?: string) {
     setBusy(true)
+    if (needsResearch(queryText)) {
+      const firstCriterion = researchFirstCriteria(queryText)[0] ??
+        decomposeResearchCriteria(queryText)[0]
+      setAck(
+        firstCriterion ? researchAck(firstCriterion.label) : pickAckOpener(queryText, lastAckOpener.current),
+      )
+    } else {
+      const opener = pickAckOpener(queryText, lastAckOpener.current)
+      lastAckOpener.current = opener
+      setAck(opener)
+    }
     setNote('')
     setCoverageNote('')
     setCaughtError(null)
@@ -768,20 +791,17 @@ export function AskPanel({
   }
 
   /**
-   * Clarification state, by the same predicate that decides whether
-   * the ClarificationPanel renders: a question that cannot run yet is
-   * blocked in clarification. While it is, no research status line
-   * renders (owner live failure, 2026-11-02: the "Looking up what the
-   * Census data does not cover..." line stacked over a clarification
-   * for a question where nothing was running). The standalone research
-   * CALL still fires for clarification questions — its failure is what
-   * produces the politics coverage-note fallback the research-panel
-   * tests pin — so only the status line is suppressed here, not the
-   * call; the findings section itself, when research lands, is
-   * content rather than a status line and still renders.
+   * Clarification state note (plan C6): the research status line that
+   * once stacked over a clarification (owner live failure,
+   * 2026-11-02) no longer exists — the working state is the ack +
+   * thinking indicator alone, and it ends when the parse settles, so
+   * a blocked question never shows a working state. The standalone
+   * research CALL still fires for clarification questions — its
+   * failure is what produces the politics coverage-note fallback the
+   * research-panel tests pin; the findings section itself, when
+   * research lands, is content rather than a status line and still
+   * renders.
    */
-  const inClarification =
-    intent !== null && !canRun(intent) && !isResearchFirstHandoff(intent)
 
   return (
     <section aria-labelledby="ask-heading">
@@ -884,6 +904,12 @@ export function AskPanel({
           </button>
         ))}
       </div>
+      {busy && (
+        <p className="mt-3 flex items-center gap-2 text-sm text-slate-700">
+          <span>{ack}</span>
+          <ThinkingIndicator />
+        </p>
+      )}
       {errorNote && (
         <p role="status" aria-live="polite" className="mt-3 text-sm text-slate-700">
           {errorNote}
@@ -908,15 +934,12 @@ export function AskPanel({
         competing status, and the politics fallback pairs with the
         research outcome lines by design — see research-panel tests.)
       */}
-      {research.status === 'loading' &&
-        !busy &&
-        !caughtError &&
-        !proxyError &&
-        !inClarification && (
-          <p role="status" className="mt-2 text-sm text-slate-600">
-            Looking up what the Census data does not cover…
-          </p>
-        )}
+      {/*
+        The standalone research status line that used to render here
+        is folded into the ack + thinking indicator (plan C6): one
+        working state, not stacked lines. The research CALL and its
+        done/unavailable outcomes below are unchanged.
+      */}
       {research.status === 'done' && (
         <section aria-label="From the web" className="mt-4 border-t border-slate-200 pt-3">
           <div className="flex items-center gap-1.5">

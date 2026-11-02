@@ -346,6 +346,37 @@ export interface ComposedAnswer {
    * rather than silent.
    */
   notMeasurableCounties: string[]
+  /**
+   * The conversational stack's verification record (plan C5/C4),
+   * stamped by the UI runner — core compose never sets it. `wonder`
+   * is the bottom bookend's label: user-visible copy may claim Wonder
+   * verification only for 'verified' or 'concerns'; 'not-run' (any
+   * failure) shows nothing about Wonder. `jev` records whether the
+   * J-LOOP evaluation ran and how many patch rounds it used; absent
+   * or 'not-run' means no Jev claim is made anywhere.
+   */
+  verification?: {
+    wonder: 'verified' | 'concerns' | 'not-run'
+    wonderConcerns?: string[]
+    jev: { roundsUsed: number; passed: boolean } | 'not-run'
+    planObjections?: string[]
+  }
+  /** The one-line refinement note a landed decision's re-run carries (plan C7). */
+  refinementNote?: string
+  /** Per-stage timings in milliseconds, collected by the runner (plan C12). */
+  timings?: Record<string, number>
+  /**
+   * A decision-modal proposal the runner's branch evaluation produced
+   * for this answer (plan C7): the surface renders it as an overlay;
+   * the pipeline never waited on it. Absent = no interjection.
+   */
+  decisionProposal?: {
+    branch: string
+    criterionId: string
+    questionText: string
+    options: { id: string; label: string }[]
+    dismissLabel: string
+  }
 }
 
 /**

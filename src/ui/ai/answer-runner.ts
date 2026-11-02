@@ -1,9 +1,50 @@
 import {
+  decomposeResearchCriteria,
   runAnswerPipeline,
+  screenCriteriaFromIntent,
   type ComposedAnswer,
   type ResolvedCandidate,
 } from '../../core/ai/answer'
+import {
+  buildPlanPacket,
+  buildVerifyPacket,
+  createHttpBookendTransports,
+  wonderLabelFor,
+  type PlanTransport,
+  type VerifyTransport,
+} from '../../core/ai/bookends'
+import {
+  branchDefinition,
+  decisionEffect,
+  phraseBranchQuestion,
+  readSessionDecisions,
+  refinementNote,
+  rephraseBranchQuestion,
+  subjectForCriterion,
+  writeSessionDecision,
+  type BranchId,
+  type DecisionsRecord,
+} from '../../core/ai/decision-branches'
+import {
+  JEV_BRANCH_THRESHOLD,
+  JEV_PHRASE_THRESHOLD,
+  PHRASE_QUESTION_ID,
+  BRANCH_CHOICE_QUESTION_ID,
+  BRANCH_QUESTION_ID,
+  choiceSelection,
+  createHttpJevTransport,
+  noulProbability,
+  type JevTransport,
+} from '../../core/ai/jev-judgments'
+import { runJevLoop } from '../../core/ai/jev-loop'
+import {
+  blendEvidenceText,
+  decidedEvidenceText,
+  isProximityCriterion,
+  proximityFocus,
+} from '../../core/ai/nearby'
 import { stateCodeForGeography } from '../../core/ai/national-screen'
+import type { CountyIndex } from '../../core/zcta-county-index'
 import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
 import type { AreaRow } from '../../core/plugins/acs'
 import {
@@ -11,7 +52,6 @@ import {
   splitStateSuffix,
   type PlaceIndex,
 } from '../../core/zcta-place-index'
-import type { CountyIndex } from '../../core/zcta-county-index'
 
 /**
  * The UI-layer adapter between the Ask flow and the answer pipeline
@@ -170,6 +210,147 @@ export function answerScopeCovered(input: {
   return input.resolved.scopePrefixes.every((prefix) => input.sweepScope.includes(prefix))
 }
 
+/* ------------------------------------------------------------------ */
+/* Conversational stack (plan C2/C4/C5/C7/C8/C9)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The conversational stack's injectable transports. Tests script
+ * them; production defaults are the HTTP transports against the
+ * sibling lane's routes (/api/muse/jev, /api/muse/plan,
+ * /api/muse/verify). Every transport failure degrades its own
+ * consumer only: the loop is skipped, no modal interjects, the
+ * bookend labels not-run — the answer always ships on the
+ * deterministic pipeline alone.
+ */
+export interface ConversationalStackDeps {
+  jevTransport?: JevTransport
+  planTransport?: PlanTransport
+  verifyTransport?: VerifyTransport
+  /** Landed decisions for this run; defaults to the session record. */
+  decisions?: DecisionsRecord
+  /** Branches already closed this session (never re-proposed). */
+  closedBranches?: ReadonlySet<string>
+}
+
+function defaultStack(deps: ConversationalStackDeps | undefined): Required<
+  Pick<ConversationalStackDeps, 'jevTransport' | 'planTransport' | 'verifyTransport'>
+> & { decisions: DecisionsRecord; closedBranches: ReadonlySet<string> } {
+  const bookends = createHttpBookendTransports()
+  return {
+    jevTransport: deps?.jevTransport ?? createHttpJevTransport(),
+    planTransport: deps?.planTransport ?? bookends.plan,
+    verifyTransport: deps?.verifyTransport ?? bookends.verify,
+    decisions: deps?.decisions ?? readSessionDecisions(),
+    closedBranches: deps?.closedBranches ?? new Set(),
+  }
+}
+
+/** The loop's criterion list: Census measures first, then researched criteria. */
+function loopCriteriaFor(
+  intent: ValidatedIntent,
+  research: boolean,
+  queryText: string,
+): { id: string; text: string }[] {
+  const criteria: { id: string; text: string }[] = []
+  for (const criterion of screenCriteriaFromIntent(intent).criteria) {
+    criteria.push({ id: criterion.metricKey, text: criterion.metricKey })
+  }
+  for (const key of intent.metricKeys) {
+    if (!criteria.some((c) => c.id === key)) criteria.push({ id: key, text: key })
+  }
+  if (research) {
+    for (const criterion of decomposeResearchCriteria(queryText)) {
+      criteria.push({ id: criterion.id, text: criterion.label })
+    }
+  }
+  return criteria
+}
+
+/** Serialize an answer for Jev evaluation and for the patch request. */
+function answerTextForLoop(answer: ComposedAnswer): string {
+  const evidence = answer.criterionEvidence
+    .map((entry) => `${entry.criterion}: ${entry.status} — ${entry.detail}`)
+    .join('\n')
+  const claims = [...answer.places.flatMap((p) => p.claims), ...answer.generalClaims]
+    .map((claim) => claim.text)
+    .join('\n')
+  return [answer.summary, evidence, claims].filter((part) => part !== '').join('\n')
+}
+
+/**
+ * The branch evaluation at the screen -> research boundary (plan
+ * C7): J-BRANCH over the stage state, then the C8 specificity rule —
+ * phrase from the live ask, J-PHRASE check, ONE rephrase attempt,
+ * then interjection closes for that question. Returns the proposal
+ * the surface renders, or null. Any transport failure = no
+ * interjection (the provisional interpretation proceeds).
+ */
+export async function evaluateDecisionProposal(input: {
+  queryText: string
+  intent: ValidatedIntent
+  research: boolean
+  decisions: DecisionsRecord
+  closedBranches: ReadonlySet<string>
+  jevTransport: JevTransport
+}): Promise<ComposedAnswer['decisionProposal']> {
+  const criteria = loopCriteriaFor(input.intent, input.research, input.queryText)
+  if (criteria.length === 0) return undefined
+  let branchReply
+  try {
+    branchReply = await input.jevTransport({
+      set: 'branch',
+      state: {
+        question: input.queryText,
+        criteria: criteria.map((c) => c.text),
+        provisionalInterpretation: 'comprehensive',
+      },
+    })
+  } catch {
+    return undefined
+  }
+  const fire = noulProbability(branchReply.answers, BRANCH_QUESTION_ID)
+  if (fire === null || fire < JEV_BRANCH_THRESHOLD) return undefined
+  const branchId = choiceSelection(branchReply.answers, BRANCH_CHOICE_QUESTION_ID)
+  const definition = branchId ? branchDefinition(branchId) : null
+  if (!definition) return undefined
+  if (input.decisions[definition.id] !== undefined) return undefined
+  if (input.closedBranches.has(definition.id)) return undefined
+  const criterion = criteria.find((c) => definition.criterionIds.includes(c.id))
+  if (!criterion) return undefined
+
+  const subject = subjectForCriterion(criterion.id, input.queryText)
+  const phraseState = (drafted: string) => ({
+    draftedQuestion: drafted,
+    question: input.queryText,
+    criterion: criterion.text,
+  })
+  let drafted = phraseBranchQuestion(definition.id, input.queryText, criterion.text, subject)
+  try {
+    let score = noulProbability(
+      (await input.jevTransport({ set: 'phrase', state: phraseState(drafted) })).answers,
+      PHRASE_QUESTION_ID,
+    )
+    if (score === null || score < JEV_PHRASE_THRESHOLD) {
+      drafted = rephraseBranchQuestion(definition.id, criterion.text, subject)
+      score = noulProbability(
+        (await input.jevTransport({ set: 'phrase', state: phraseState(drafted) })).answers,
+        PHRASE_QUESTION_ID,
+      )
+      if (score === null || score < JEV_PHRASE_THRESHOLD) return undefined
+    }
+  } catch {
+    return undefined
+  }
+  return {
+    branch: definition.id,
+    criterionId: criterion.id,
+    questionText: drafted,
+    options: definition.options.map((option) => ({ ...option })),
+    dismissLabel: definition.dismissLabel,
+  }
+}
+
 /**
  * Run the pipeline for one Ask request over already-loaded rows.
  *
@@ -208,26 +389,299 @@ export async function composeAnswerForRequest(input: {
    * approximated from place fallbacks.
    */
   countyIndex?: CountyIndex | null
+  /**
+   * Conversational-stack transports + decision state (plan
+   * C2/C4/C5/C7). Absent = the production HTTP transports and the
+   * session's landed decisions; `false` disables the stack for this
+   * run (the deterministic pipeline alone, exactly as before it).
+   */
+  stack?: ConversationalStackDeps | false
 }): Promise<ComposedAnswer | null> {
   if (input.resolved.unresolvable) return null
+  const timings: Record<string, number> = {}
+  const stack = input.stack === false ? null : defaultStack(input.stack ?? undefined)
+  const decisions: DecisionsRecord = stack?.decisions ?? {}
   // Both directions read the same joined rows: screen-first hands
   // them to the screen and the research stage, research-first pulls
   // its candidates from them — one join at the entry covers both.
   const rows = withPlaceDisplayNames(input.rows, input.placeIndex)
-  const answer = await runAnswerPipeline({
-    intent: input.intent,
-    rows,
-    geographyZctas: input.resolved.zctas.size > 0 ? input.resolved.zctas : undefined,
-    researchQuery: input.research ? input.queryText : undefined,
-    queryText: input.queryText,
-    provider: input.provider,
-    signal: input.signal,
-    candidateResolver: input.placeIndex
-      ? (names) => resolveCandidatesWithIndex(names, input.placeIndex ?? null)
-      : undefined,
-    countyAssignments: input.countyIndex
-      ? input.countyIndex.assignmentsFor(rows.map((row) => row.zcta))
-      : undefined,
-  })
-  return answer.status === 'blocked' ? null : answer
+
+  // The research query for this run: the reader's question, plus the
+  // applicable focus where a decision or the nearby blend shapes it
+  // (plan C9: a proximity criterion's research request carries the
+  // applicable mode set; a landed non-transport decision carries its
+  // own focus). Screen-first questions with no such criterion keep
+  // the question text verbatim — the research contract the runner
+  // tests pin.
+  const researchCriteria = input.research ? decomposeResearchCriteria(input.queryText) : []
+  let researchQuery = input.queryText
+  if (input.research) {
+    const focuses: string[] = []
+    const proximity = researchCriteria.find((c) => isProximityCriterion(c.id))
+    if (proximity) {
+      focuses.push(proximityFocus(proximity.id, decisions.transport).focusText)
+    } else if (decisions.transport !== undefined) {
+      focuses.push(decisionEffect('transport', decisions.transport).focusText)
+    }
+    for (const branch of ['school-level', 'budget-anchor'] as const) {
+      const landed = decisions[branch]
+      if (landed !== undefined) focuses.push(decisionEffect(branch, landed).focusText)
+    }
+    if (focuses.length > 0) researchQuery = `${input.queryText} ${focuses.join(' ')}`
+  }
+
+  const runPipeline = (query: string) =>
+    runAnswerPipeline({
+      intent: input.intent,
+      rows,
+      geographyZctas: input.resolved.zctas.size > 0 ? input.resolved.zctas : undefined,
+      researchQuery: input.research ? query : undefined,
+      // Decomposition always reads the reader's original words, never
+      // the focused research query: the focus text names modes and
+      // levels ("a short public transit ride") that the criterion
+      // catalog would otherwise decompose into criteria the reader
+      // never stated (measured in-suite: a patch re-run gained a
+      // spurious 'amenities' criterion from the word 'transit').
+      researchCriteria: input.research ? [input.queryText] : undefined,
+      queryText: input.queryText,
+      provider: input.provider,
+      signal: input.signal,
+      candidateResolver: input.placeIndex
+        ? (names) => resolveCandidatesWithIndex(names, input.placeIndex ?? null)
+        : undefined,
+      countyAssignments: input.countyIndex
+        ? input.countyIndex.assignmentsFor(rows.map((row) => row.zcta))
+        : undefined,
+    })
+
+  // Branch evaluation at the screen -> research boundary (plan C7):
+  // evaluated BEFORE the pipeline runs so a landed decision from an
+  // earlier question is already in the research focus above, and a
+  // fresh proposal can float over the working state. The pipeline
+  // never waits on it.
+  let proposal: ComposedAnswer['decisionProposal']
+  if (stack && input.research) {
+    const started = performance.now()
+    proposal = await evaluateDecisionProposal({
+      queryText: input.queryText,
+      intent: input.intent,
+      research: input.research,
+      decisions,
+      closedBranches: stack.closedBranches,
+      jevTransport: stack.jevTransport,
+    })
+    timings.branch = performance.now() - started
+  }
+
+  // Top bookend (plan C2): after screen inputs exist, before
+  // research runs inside the pipeline. An unsound verdict's named
+  // objections are recorded on the answer as constraints; the
+  // deterministic stages own execution and the run proceeds (a
+  // second unsound verdict would proceed anyway, per plan).
+  let planObjections: string[] | undefined
+  if (stack) {
+    const started = performance.now()
+    const verdict = await stack.planTransport(
+      buildPlanPacket({
+        question: input.queryText,
+        intent: {
+          mode: input.intent.mode,
+          geographies: [...input.intent.geographies],
+          metricKeys: [...input.intent.metricKeys],
+        },
+        criteria: [
+          ...screenCriteriaFromIntent(input.intent).criteria.map((c) => ({
+            kind: 'census' as const,
+            text: c.metricKey,
+          })),
+          ...researchCriteria.map((c) => ({ kind: 'research' as const, text: c.label })),
+        ],
+        subsetSummary: { count: rows.length, ranges: [] },
+        decisions: { ...decisions } as Record<string, string>,
+      }),
+    )
+    timings.plan = performance.now() - started
+    if (verdict?.verdict === 'unsound') {
+      planObjections = verdict.objections.map((o) => `${o.code}: ${o.detail}`)
+    }
+  }
+
+  const pipelineStarted = performance.now()
+  let answer = await runPipeline(researchQuery)
+  timings.pipeline = performance.now() - pipelineStarted
+  if (answer.status === 'blocked') return null
+
+  const verification: NonNullable<ComposedAnswer['verification']> = {
+    wonder: 'not-run',
+    jev: 'not-run',
+    ...(planObjections ? { planObjections } : {}),
+  }
+
+  // The Jev loop (plan C4) runs only over a verified answer: compose
+  // -> verify (inside the pipeline) -> J-LOOP -> patch -> verify ->
+  // J-LOOP, max 2 rounds, best grounded version ships.
+  if (stack && answer.status === 'verified') {
+    const criteria = loopCriteriaFor(input.intent, input.research, input.queryText)
+    if (criteria.length > 0) {
+      const roundTimings: number[] = []
+      const patchTimings: number[] = []
+      const outcome = await runJevLoop(answer, {
+        transport: stack.jevTransport,
+        criteria,
+        evidenceLabels: answer.criterionEvidence.map(
+          (entry) => `${entry.criterion}: ${entry.status}`,
+        ),
+        sourceCount: answer.sources.length,
+        textOf: answerTextForLoop,
+        verifyOf: (candidate) => candidate.status === 'verified',
+        patch: async ({ gaps }) => {
+          // Patch, don't regenerate (plan C4): the revision carries
+          // the named gaps verbatim as the research focus. This
+          // pipeline's compose is deterministic code over the
+          // research stage's findings — there is no compose-stage
+          // model route in the provider contract — so the targeted
+          // patch re-runs the pipeline with the gaps as the research
+          // instruction; verify inside the pipeline re-runs before
+          // the candidate can enter the loop state.
+          if (!input.research) return null
+          const patched = await runPipeline(
+            `${researchQuery} Address these gaps: ${gaps.join('; ')}`,
+          )
+          return patched.status === 'blocked' ? null : patched
+        },
+        onTiming: (stage, ms) => {
+          if (stage === 'jev-round') roundTimings.push(ms)
+          else patchTimings.push(ms)
+        },
+      })
+      roundTimings.forEach((ms, i) => {
+        timings[`jev-round-${i}`] = ms
+      })
+      patchTimings.forEach((ms, i) => {
+        timings[`patch-${i}`] = ms
+      })
+      if (outcome.ran) {
+        answer = outcome.answer
+        const bestVersion =
+          outcome.state.versions.find((v) => v.answer === outcome.answer) ??
+          outcome.state.versions[0]!
+        verification.jev = {
+          roundsUsed: outcome.state.roundsUsed,
+          passed:
+            Object.values(bestVersion.noul).every((p) => p >= 0.8) &&
+            bestVersion.relevance >= 1.5 &&
+            bestVersion.completeness >= 1.5,
+        }
+      }
+    }
+  }
+
+  // The nearby blend lands in the proximity criterion's evidence
+  // (plan C9): the mode basis is stated inside the evidence, never a
+  // silent single-mode assumption.
+  if (input.research && answer.criterionEvidence.length > 0) {
+    const proximity = researchCriteria.find((c) => isProximityCriterion(c.id))
+    if (proximity) {
+      const modes = proximityFocus(proximity.id, decisions.transport).modes
+      const blend =
+        decisions.transport !== undefined
+          ? decidedEvidenceText({
+              decision: decisions.transport === 'no-car' ? 'no-car' : 'car',
+              modes,
+              findings: [],
+            })
+          : blendEvidenceText({ modes, findings: [] })
+      answer = {
+        ...answer,
+        criterionEvidence: answer.criterionEvidence.map((entry) =>
+          entry.criterion === proximity.label ? { ...entry, detail: blend } : entry,
+        ),
+      }
+    }
+  }
+
+  // Bottom bookend (plan C5): after the loop settles, before display.
+  if (stack && answer.status === 'verified') {
+    const started = performance.now()
+    const verdict = await stack.verifyTransport(
+      buildVerifyPacket({
+        summary: answer.summary,
+        places: answer.places.map((place) => ({
+          name: place.name,
+          figures: place.figures.map((f) => ({ key: f.key, value: f.value })),
+        })),
+        evidence: answer.criterionEvidence.map((entry) => ({
+          criterion: entry.criterion,
+          status: entry.status,
+          detail: entry.detail,
+        })),
+        sources: answer.sources.map((s) => ({ title: s.title, url: s.url })),
+        verifySummary: `status ${answer.status}; ${answer.places.length} places; ${answer.failures.length} verify failures`,
+        placeDisplayLimit: 10,
+      }),
+    )
+    timings.verify = performance.now() - started
+    verification.wonder = wonderLabelFor(verdict)
+    if (verdict?.verdict === 'concerns') {
+      verification.wonderConcerns = verdict.concerns.map((c) => c.detail)
+    }
+  }
+
+  return {
+    ...answer,
+    verification,
+    timings,
+    ...(proposal ? { decisionProposal: proposal } : {}),
+  }
+}
+
+/**
+ * Refine an answer with a landed decision (plan C7): the decision is
+ * written to session state, ONLY the affected stage is re-prompted
+ * (the research stage, via the decision's focus — the deterministic
+ * screen is unchanged by every catalogued branch), and the refined
+ * answer replaces the provisional in place with the refinement note,
+ * re-passing verify + J-LOOP inside composeAnswerForRequest. A
+ * refinement that fails verify keeps the provisional.
+ */
+export async function refineAnswerForRequest(input: {
+  intent: ValidatedIntent
+  queryText: string
+  rows: readonly AreaRow[]
+  resolved: ResolvedAnswerGeographies
+  provider: MuseProvider
+  research: boolean
+  signal?: AbortSignal
+  placeIndex?: PlaceIndex | null
+  stack?: ConversationalStackDeps | false
+  /** The provisional answer the decision floated over. */
+  provisional: ComposedAnswer
+  branch: BranchId
+  option: string
+}): Promise<ComposedAnswer> {
+  writeSessionDecision(input.branch, input.option)
+  const baseDecisions: DecisionsRecord =
+    input.stack === false
+      ? {}
+      : { ...(input.stack?.decisions ?? readSessionDecisions()), [input.branch]: input.option }
+  try {
+    const refined = await composeAnswerForRequest({
+      intent: input.intent,
+      queryText: input.queryText,
+      rows: input.rows,
+      resolved: input.resolved,
+      provider: input.provider,
+      research: input.research,
+      signal: input.signal,
+      placeIndex: input.placeIndex,
+      stack:
+        input.stack === false
+          ? false
+          : { ...(input.stack ?? {}), decisions: baseDecisions },
+    })
+    if (!refined || refined.status !== 'verified') return input.provisional
+    return { ...refined, refinementNote: refinementNote(input.branch, input.option) }
+  } catch {
+    return input.provisional
+  }
 }

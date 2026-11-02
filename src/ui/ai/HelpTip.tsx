@@ -11,8 +11,8 @@ import { useId, useState, type ReactNode } from 'react'
  * The panel is always in the DOM and merely hidden while closed:
  * the conformity pins assert the disclosure texts are present on the
  * surface, and a screen reader or find-in-page reaches them exactly
- * as before. Closing on Escape and on a second tap keeps the panel
- * from ever becoming the clutter it replaced.
+ * as before. Escape closes it, and a second tap unpins it, so the
+ * panel never becomes the clutter it replaced.
  */
 export function HelpTip({
   label,
@@ -24,28 +24,39 @@ export function HelpTip({
   align?: 'left' | 'right'
   children: ReactNode
 }) {
-  const [open, setOpen] = useState(false)
+  // Two open-sources, deliberately separate (measured defect, phone
+  // tap test 2026-11-02): a tap fires an emulated mouseenter BEFORE
+  // the click, so one shared boolean toggled by click and set by
+  // hover opens on hover and instantly closes on the tap that
+  // follows it. Hover/focus opens transiently; a click pins the
+  // panel open (or unpins it) regardless of hover state.
+  const [hover, setHover] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const open = hover || pinned
   const panelId = useId()
   return (
     <div
       className="relative inline-flex"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
     >
       <button
         type="button"
         aria-label={label}
         aria-expanded={open}
         aria-controls={panelId}
-        onClick={() => setOpen((o) => !o)}
-        onFocus={() => setOpen(true)}
+        onClick={() => setPinned((p) => !p)}
+        onFocus={() => setHover(true)}
         onBlur={(e) => {
           if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) {
-            setOpen(false)
+            setHover(false)
           }
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') setOpen(false)
+          if (e.key === 'Escape') {
+            setPinned(false)
+            setHover(false)
+          }
         }}
         className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-300 text-xs font-medium text-slate-500 transition-colors hover:border-slate-400 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
       >

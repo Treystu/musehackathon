@@ -593,7 +593,7 @@ export default function App() {
           />
           <button
             type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
+            className="rounded-full bg-[rgb(var(--accent))] px-4 py-2 text-sm font-medium text-white hover:bg-[rgb(var(--accent-dark))] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent))] focus-visible:ring-offset-2"
           >
             Add to comparison
           </button>
@@ -938,7 +938,7 @@ export default function App() {
                         carries the actual state. */}
                     <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200">
                       <div
-                        className="h-full bg-slate-900 transition-[width] duration-300"
+                        className="h-full bg-[rgb(var(--accent))] transition-[width] duration-300"
                         style={{
                           width: `${q.sweepProgress.total ? Math.round((q.sweepProgress.done / q.sweepProgress.total) * 100) : 0}%`,
                         }}
@@ -1012,7 +1012,7 @@ export default function App() {
                           key={p.id}
                           className={`cursor-pointer rounded-md border px-3 py-2 text-sm ${
                             sorting.presetId === p.id
-                              ? 'border-slate-900 bg-slate-900 text-white'
+                              ? 'border-[rgb(var(--accent))] bg-[rgb(var(--accent))] text-white'
                               : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
                           }`}
                         >

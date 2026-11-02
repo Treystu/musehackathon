@@ -209,7 +209,7 @@ export function GuidedTour({ open, onDismiss }: { open: boolean; onDismiss: () =
             <button
               type="button"
               onClick={() => (last ? finish() : setStep((s) => s + 1))}
-              className="min-h-[44px] rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
+              className="min-h-[44px] rounded-full bg-[rgb(var(--accent))] px-4 py-2 text-sm font-medium text-white hover:bg-[rgb(var(--accent-dark))] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent))] focus-visible:ring-offset-2"
             >
               {last ? 'Start' : 'Next'}
             </button>
@@ -257,7 +257,7 @@ export function TourNotice({ onOpen, onDismiss }: { onOpen: () => void; onDismis
         <button
           type="button"
           onClick={onOpen}
-          className="min-h-[44px] rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
+          className="min-h-[44px] rounded-full bg-[rgb(var(--accent))] px-3 py-2 text-sm font-medium text-white hover:bg-[rgb(var(--accent-dark))] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent))] focus-visible:ring-offset-2"
         >
           How this works
         </button>

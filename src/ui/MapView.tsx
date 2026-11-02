@@ -377,7 +377,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
                 <span
                   aria-hidden="true"
                   className={`mt-0.5 inline-block h-3 w-3 shrink-0 rounded-full border ${
-                    metric === m.key ? 'border-slate-900 bg-slate-900' : 'border-slate-400 bg-white'
+                    metric === m.key ? 'border-[rgb(var(--accent))] bg-[rgb(var(--accent))]' : 'border-slate-400 bg-white'
                   }`}
                 />
                 <span className="font-medium text-slate-900">{m.label}</span>

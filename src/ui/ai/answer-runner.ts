@@ -111,6 +111,44 @@ export function resolveCandidatesWithIndex(
 }
 
 /**
+ * Join each row's human display name from the place index, keyed by
+ * the row's ZCTA: "Corbin, KY" in place of the name the row arrived
+ * with.
+ *
+ * The join has to happen here, before the pipeline runs, because of
+ * what production rows actually carry. The ACS builder names every
+ * sweep row with the Census NAME label, which for a ZCTA is
+ * literally "ZCTA5 40771" — so an unjoined row.name is a raw label,
+ * not a place. The pipeline consumes row.name raw in three places a
+ * reader or a source can see: the composed places the AnswerCard
+ * headlines, the research stage's places list (screen-first research
+ * was being told "ZCTA5 96720" instead of "Hilo, HI"), and claim
+ * attribution, which matches researched claims to places by name
+ * mention — sources write "Corbin, KY", never "ZCTA5 40771", so an
+ * unjoined name also breaks attribution. The sweep table already
+ * joins at render through App's placeLabel; the answer layer cannot
+ * join at render, because by then the research stage has run.
+ *
+ * The format is the index's own label() — "City, ST" — the same
+ * string App's placeLabel hands the sweep table, the comparison and
+ * the CSV export, so a place is named identically on every surface.
+ * A ZCTA the index has no entry for keeps its row's own name: the
+ * fallback is the label the row arrived with, never a blank and
+ * never a guess. Input rows are not mutated — the loaded sweep is
+ * shared state other surfaces still read.
+ */
+export function withPlaceDisplayNames(
+  rows: readonly AreaRow[],
+  placeIndex: PlaceIndex | null | undefined,
+): readonly AreaRow[] {
+  if (!placeIndex) return rows
+  return rows.map((row) => {
+    const label = placeIndex.label(row.zcta)
+    return label && label !== row.name ? { ...row, name: label } : row
+  })
+}
+
+/**
  * Whether the currently loaded sweep can serve as the screen's rows.
  * `sweepScope` is the scope the loaded rows were fetched under, in
  * the 2-character prefixes every applyScope caller passes; an empty
@@ -151,13 +189,21 @@ export async function composeAnswerForRequest(input: {
   /** Whether this question carries criteria Census cannot serve (AskPanel's needsResearch). */
   research: boolean
   signal?: AbortSignal
-  /** Place index for research-first candidate resolution; absent = row-name resolution only. */
+  /**
+   * Place index for research-first candidate resolution and for the
+   * display-name join (withPlaceDisplayNames); absent = row-name
+   * resolution only, and rows keep the names they arrived with.
+   */
   placeIndex?: PlaceIndex | null
 }): Promise<ComposedAnswer | null> {
   if (input.resolved.unresolvable) return null
+  // Both directions read the same joined rows: screen-first hands
+  // them to the screen and the research stage, research-first pulls
+  // its candidates from them — one join at the entry covers both.
+  const rows = withPlaceDisplayNames(input.rows, input.placeIndex)
   const answer = await runAnswerPipeline({
     intent: input.intent,
-    rows: input.rows,
+    rows,
     geographyZctas: input.resolved.zctas.size > 0 ? input.resolved.zctas : undefined,
     researchQuery: input.research ? input.queryText : undefined,
     queryText: input.queryText,

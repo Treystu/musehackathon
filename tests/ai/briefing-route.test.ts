@@ -69,6 +69,42 @@ describe('briefing route', () => {
     expect(d.meter.snapshot().requests).toBe(1)
   })
 
+  it('accepts the same metric for two different places (multi-place pack)', async () => {
+    // Found live 2026-11-01: the browser briefing for a two-place
+    // comparison view was refused as a "duplicate figure key" because
+    // values carried no geography. Two places sharing a key is the
+    // normal pack; only the same place repeating a key is a duplicate.
+    const d = deps()
+    const r = await handleBriefing(
+      req({
+        figureSetId: 'p2',
+        values: [
+          { key: 'median_gross_rent', value: 1346, marginOfError: 52, geography: '96720' },
+          { key: 'median_gross_rent', value: 2946, marginOfError: 338, geography: '96821' },
+        ],
+      }),
+      d,
+    )
+    expect(r.status).toBe(200)
+    expect(d.meter.snapshot().requests).toBe(1)
+  })
+
+  it('still refuses the same figure twice for the same place', async () => {
+    const d = deps()
+    const r = await handleBriefing(
+      req({
+        figureSetId: 'p3',
+        values: [
+          { key: 'median_gross_rent', value: 1346, marginOfError: 52, geography: '96720' },
+          { key: 'median_gross_rent', value: 1400, marginOfError: 10, geography: '96720' },
+        ],
+      }),
+      d,
+    )
+    expect(r.status).toBe(422)
+    expect(d.meter.snapshot().requests).toBe(0)
+  })
+
   it('withholds prose carrying an invented numeral, returning the failure class only', async () => {
     const d = deps({
       async briefing() {

@@ -273,6 +273,7 @@ export async function generateBriefingPack(
     key: f.key,
     value: f.suppressed ? null : f.value,
     marginOfError: f.suppressed ? undefined : f.marginOfError,
+    geography: f.geography,
   }))
 
   let narrative: string | undefined
@@ -353,6 +354,9 @@ export interface BriefingRequestFigure {
   value: number | null
   marginOfError?: number
   vintage?: string
+  /** Place the figure belongs to; distinguishes same-key figures
+   * across the places of a multi-place pack. */
+  geography?: string
 }
 
 export type FigureSetVerification =
@@ -396,10 +400,14 @@ export function verifyFigureSet(
     if (!isKnownFigureKey(key)) {
       return fail(key, 'figure key not in the source registry')
     }
-    if (seen.has(key)) {
+    // A duplicate is the same figure twice: same key for the same
+    // place. Two places sharing a metric key is the normal multi-place
+    // pack, told apart by geography.
+    const identity = `${figure.geography ?? ''}|${key}`
+    if (seen.has(identity)) {
       return fail(key, 'duplicate figure key in set; a pack cannot tell which value is the source value')
     }
-    seen.add(key)
+    seen.add(identity)
     if (figure.value === null || !Number.isFinite(figure.value)) {
       return fail(key, 'figure carries no value (not published or suppressed at source)')
     }
@@ -452,10 +460,13 @@ export function composeBriefingRequest(
     figures: verification.figures,
     request: {
       figureSetId,
-      values: verification.figures.map((f) => ({
+      // Built from the verified input (not the validator figures,
+      // which carry no geography) so each value keeps its place.
+      values: values.map((f) => ({
         key: f.key,
         value: f.value as number,
         marginOfError: f.marginOfError,
+        geography: f.geography,
       })),
     },
   }

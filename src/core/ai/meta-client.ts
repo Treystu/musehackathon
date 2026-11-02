@@ -188,7 +188,8 @@ function briefingUserPrompt(req: BriefingRequest): string {
         ? ` plus or minus ${v.marginOfError}`
         : ' (no margin published)'
     const value = v.value === null ? 'no reportable value' : String(v.value)
-    return `- ${v.key}: ${value}${moe}`
+    const place = v.geography ? `${v.geography} — ` : ''
+    return `- ${place}${v.key}: ${value}${moe}`
   })
   return [`Briefing pack: ${req.figureSetId}`, 'Verified figures:', ...rows].join('\n')
 }

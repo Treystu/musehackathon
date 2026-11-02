@@ -60,7 +60,18 @@ export interface BriefingRequest {
    * briefing.ts before this call. The model narrates these and only these;
    * it is never handed an unverified figure (plan section 6.2.7).
    */
-  values: { key: string; value: number | null; marginOfError?: number }[]
+  values: {
+    key: string
+    value: number | null
+    marginOfError?: number
+    /**
+     * The place the figure belongs to, when the set spans places. Two
+     * places share metric keys legitimately; geography is what tells
+     * their figures apart (without it a multi-place pack was refused
+     * as "duplicate figure key" — found live 2026-11-01).
+     */
+    geography?: string
+  }[]
 }
 /** The same request ceiling enforced by the briefing proxy parser. */
 export const MAX_BRIEFING_VALUES = 64

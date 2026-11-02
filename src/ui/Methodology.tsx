@@ -143,7 +143,7 @@ export function Methodology() {
             upstream limit reset, so those checks are in place but not yet green. Sovereign-Harness runs
             only at verification time; it does not drive, route, or check live requests. Changes to this
             layer are additionally scored before they ship by Jev, a typed judgement model, under the
-            gate policy in the source repository. Questions are routed through the Muse models API by
+            project's Jev gate policy. Questions are routed through the Muse models API by
             a proxy whose meter counts every call at flat per-call rates for budget accounting only; the
             figures themselves never come from the model.
           </p>

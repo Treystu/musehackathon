@@ -111,12 +111,14 @@ describe('confirmation comes from the app re-validation event, never a claim', (
     expect(statusList()).toContain('Census API key: not set up yet.')
 
     // The app module storing the key dispatches the event; the surface
-    // re-reads and confirms.
+    // re-reads it. No probe is configured in this render, so the state
+    // is 'stored' — present, but not claimed as checked (the confirmed
+    // copy is reserved for a passing probe, pinned below).
     act(() => {
       setCensusKey(fakeCensusKey)
     })
     await flush()
-    expect(statusList()).toContain('Census API key: confirmed by the app in this browser.')
+    expect(statusList()).toContain('Census API key: stored in this browser; it is checked when it is used.')
     expect(statusList()).toContain('Personal key (optional): not set up yet.')
 
     act(() => {

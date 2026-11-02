@@ -24,8 +24,15 @@ import { getCensusKeySource } from '../../core/censusKey'
  * there is no prop, callback, or agent report that can mark a key
  * confirmed, and writing storage directly without the app's event does
  * not move the state either.
+ *
+ * Without a probe the state stops at 'stored': the key is present
+ * through the app's own path, but nothing has checked it, and the copy
+ * says so — 'confirmed' is reserved for a probe verdict of valid.
+ * (Live 2026-11-01: the App wires no probe, and a plainly fake key
+ * displayed 'confirmed by the app in this browser'. The status now
+ * names what actually happened; the key is checked when it is used.)
  */
-export type KeyCheckState = 'absent' | 'checking' | 'confirmed' | 'rejected'
+export type KeyCheckState = 'absent' | 'checking' | 'confirmed' | 'rejected' | 'stored'
 
 export interface KeyConfirmations {
   census: KeyCheckState
@@ -42,6 +49,7 @@ export const KEY_CHECK_COPY: Record<KeyCheckState, string> = {
   checking: 'stored — the app is re-checking it.',
   confirmed: 'confirmed by the app in this browser.',
   rejected: "stored, but the app's re-check did not accept it.",
+  stored: 'stored in this browser; it is checked when it is used.',
 }
 
 export function useKeyConfirmations(fetchers: KeyCheckFetchers = {}): KeyConfirmations {
@@ -64,8 +72,10 @@ export function useKeyConfirmations(fetchers: KeyCheckFetchers = {}): KeyConfirm
         which === 'census' ? fetchersRef.current.censusFetcher : fetchersRef.current.metaFetcher
       if (!fetcher) {
         // No probe configured: the stored key arrived through the app's
-        // own store path (its change event is what brought us here).
-        if (live) setChecks((c) => ({ ...c, [which]: 'confirmed' }))
+        // own store path (its change event is what brought us here),
+        // but nothing has checked it — report it as stored, never as
+        // confirmed.
+        if (live) setChecks((c) => ({ ...c, [which]: 'stored' }))
         return
       }
       if (live) setChecks((c) => ({ ...c, [which]: 'checking' }))

@@ -193,6 +193,10 @@ describe('live provider: BYO fallback', () => {
 describe('research via the Responses API (grounding is Responses-only)', () => {
   const RESPONSES_REPLY = {
     output: [
+      {
+        type: 'message',
+        content: [{ type: 'output_text', text: "I'll research that for you.", annotations: [] }],
+      },
       { type: 'web_search_call', results: [{ title: 'Search hit', url: 'https://example.org/hit' }] },
       {
         type: 'message',
@@ -228,6 +232,8 @@ describe('research via the Responses API (grounding is Responses-only)', () => {
       new AbortController().signal,
     )
     expect(result.prose).toContain('well rated')
+    // The pre-search narration message is process, not answer prose.
+    expect(result.prose).not.toContain("I'll research")
     expect(result.sources.map((s) => s.url)).toEqual([
       'https://example.org/hit',
       'https://example.org/doe',

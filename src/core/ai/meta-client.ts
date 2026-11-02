@@ -331,7 +331,14 @@ export function parseResearchResult(value: unknown): { prose: string; sources: R
   }
   const root = value as { output?: unknown } | null
   const items = Array.isArray(root?.output) ? root.output : []
-  for (const item of items as Array<Record<string, unknown>>) {
+  // Muse Spark narrates before it searches ("I'll research ..."), in
+  // a message that precedes the search call. That narration is process,
+  // not the answer: when a search happened, only message text after
+  // the first search call is answer prose.
+  const firstSearchAt = items.findIndex(
+    (i) => (i as { type?: unknown } | null)?.type === 'web_search_call',
+  )
+  for (const [index, item] of (items as Array<Record<string, unknown>>).entries()) {
     if (item?.type === 'web_search_call') {
       const results = (item as { results?: unknown }).results
       if (Array.isArray(results)) {
@@ -340,6 +347,7 @@ export function parseResearchResult(value: unknown): { prose: string; sources: R
       continue
     }
     if (item?.type !== 'message') continue
+    if (firstSearchAt >= 0 && index < firstSearchAt) continue
     const parts = Array.isArray(item.content) ? item.content : []
     for (const part of parts as Array<Record<string, unknown>>) {
       if (part?.type !== 'output_text' || typeof part.text !== 'string') continue

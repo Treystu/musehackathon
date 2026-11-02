@@ -7,6 +7,7 @@ import { validateCensusKey as validateCensusKeyLive } from '../core/censusKey'
 import { DISPLAYABLE_KEYS } from '../core/ai/intent-schema'
 import type { ValidatedIntent } from '../core/ai/provider'
 import { asStateCode, loadPlaceIndex, splitStateSuffix, type PlaceIndex, type PlaceSuggestion } from '../core/zcta-place-index'
+import { loadCountyIndex, type CountyIndex } from '../core/zcta-county-index'
 import { FairHousingNotice } from './FairHousingNotice'
 import { GuidedTour } from './GuidedTour'
 import { HelpTip } from './ai/HelpTip'
@@ -167,6 +168,13 @@ export default function App() {
    */
   const [placeIndex, setPlaceIndex] = useState<PlaceIndex | null | undefined>(undefined)
   /**
+   * The ZIP-to-county crosswalk, loaded the same way as the place
+   * index. Only the Answer Layer reads it (county-level answers);
+   * `null` means county answers stay in the unsupported reporting
+   * the pipeline had before the crosswalk shipped.
+   */
+  const [countyIndex, setCountyIndex] = useState<CountyIndex | null>(null)
+  /**
    * Tour dialog state. The dialog opens only when asked for (the header's
    * "How this works" button); there is no standing first-visit notice card
    * any more — it stood on every task surface and read as clutter on the
@@ -195,6 +203,9 @@ export default function App() {
     let cancelled = false
     void loadPlaceIndex().then((index) => {
       if (!cancelled) setPlaceIndex(index)
+    })
+    void loadCountyIndex().then((index) => {
+      if (!cancelled) setCountyIndex(index)
     })
     return () => {
       cancelled = true
@@ -332,6 +343,7 @@ export default function App() {
           research: needsResearch(queryText),
           signal: new AbortController().signal,
           placeIndex: placeIndex ?? null,
+          countyIndex: countyIndex ?? null,
         })
         // Superseded while composing: the newer request owns the
         // surface and renders its own terminal state. Any other
@@ -369,7 +381,7 @@ export default function App() {
         answerInFlightIds.current.delete(id)
       }
     })()
-  }, [answerRequest, placeIndex, q.sweep, q.sweepStatus, q.sweepScope, q.applyScope])
+  }, [answerRequest, placeIndex, countyIndex, q.sweep, q.sweepStatus, q.sweepScope, q.applyScope])
 
   const askFigures = useMemo(
     () =>

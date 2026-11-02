@@ -151,6 +151,41 @@ export function Methodology() {
       </section>
 
       {/*
+        County figures: the rule is stated here, on the answer card,
+        and in the answer's own criterion evidence — the same words in
+        all three places, because a reader who meets a county figure
+        in any one of them is owed the whole rule there. The margins
+        sentence must never lose the approximation label: a weighted
+        RMS of ZCTA margins is not a Census-published county margin,
+        and presenting it as one would be exactly the quiet upgrade
+        this page exists to prevent.
+      */}
+      <section aria-labelledby="county-heading">
+        <h2 id="county-heading" className="section-title">
+          County figures
+        </h2>
+        <div className="mt-2 space-y-3 text-sm leading-relaxed text-slate-700">
+          <p>
+            The Census figures this site loads are ZIP-area (ZCTA) figures. When a question asks about
+            counties, each ZIP area is assigned to the county it overlaps most by land area, using the
+            Census Bureau&rsquo;s 2020 ZCTA-to-county relationship file; that assignment ships with the
+            site for every ZIP area in the country, so a county answer is formed locally from the same
+            loaded figures as any other answer.
+          </p>
+          <p>
+            County counts are sums of their ZIP areas, with margins combined from the member margins.
+            Other county figures — rents, incomes, home values, shares, averages, and medians — are
+            population-weighted averages of their ZIP areas. Their margins are population-weighted
+            approximations, labelled &ldquo;approx.&rdquo; where they are shown; they are not official
+            Census county margins, and a weighted average of ZIP-area medians is not the county median
+            the Census Bureau would publish from its own county tables. A figure that cannot be
+            aggregated under these rules is reported as not measurable at county level rather than
+            estimated.
+          </p>
+        </div>
+      </section>
+
+      {/*
         The methodology Q&A box lives here and only here (owner phone
         review, 2026-11-02): it was previously mounted inside
         BriefingView, which put a second question box on the Explore

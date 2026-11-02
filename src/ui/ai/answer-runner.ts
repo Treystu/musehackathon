@@ -11,6 +11,7 @@ import {
   splitStateSuffix,
   type PlaceIndex,
 } from '../../core/zcta-place-index'
+import type { CountyIndex } from '../../core/zcta-county-index'
 
 /**
  * The UI-layer adapter between the Ask flow and the answer pipeline
@@ -199,6 +200,14 @@ export async function composeAnswerForRequest(input: {
    * resolution only, and rows keep the names they arrived with.
    */
   placeIndex?: PlaceIndex | null
+  /**
+   * County index for county-level answers: the pipeline's
+   * countyAssignments seam is built from it over the request's
+   * rows. Absent (the artefact failed to load), a county request
+   * keeps the pipeline's unsupported reporting — never a rollup
+   * approximated from place fallbacks.
+   */
+  countyIndex?: CountyIndex | null
 }): Promise<ComposedAnswer | null> {
   if (input.resolved.unresolvable) return null
   // Both directions read the same joined rows: screen-first hands
@@ -215,6 +224,9 @@ export async function composeAnswerForRequest(input: {
     signal: input.signal,
     candidateResolver: input.placeIndex
       ? (names) => resolveCandidatesWithIndex(names, input.placeIndex ?? null)
+      : undefined,
+    countyAssignments: input.countyIndex
+      ? input.countyIndex.assignmentsFor(rows.map((row) => row.zcta))
       : undefined,
   })
   return answer.status === 'blocked' ? null : answer

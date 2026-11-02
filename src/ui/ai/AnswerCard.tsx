@@ -129,6 +129,26 @@ export function unsupportedGeographyLine(answer: ComposedAnswer): string | null 
   return 'County-level figures are not available from the shipped data, so the places shown are at place and ZIP level.'
 }
 
+/**
+ * The county rule, stated on the card whenever a county answer was
+ * composed: the assignment and aggregation rule is part of the
+ * answer, not fine print elsewhere (the same statement stands in
+ * the answer's criterion evidence and on the Methodology page).
+ */
+export function countyMethodLine(answer: ComposedAnswer): string | null {
+  return answer.countyMethod ?? null
+}
+
+/** One quiet line naming counties dropped because their deciding figure was not measurable. */
+export function notMeasurableCountiesLine(answer: ComposedAnswer): string | null {
+  const dropped = answer.notMeasurableCounties ?? []
+  if (dropped.length === 0) return null
+  const list = dropped.join(', ')
+  return dropped.length === 1
+    ? `${list} is not shown because its figures could not be aggregated to county level from the available ZIP-area figures.`
+    : `${list} are not shown because their figures could not be aggregated to county level from the available ZIP-area figures.`
+}
+
 const EVIDENCE_STATUS_LABELS: Readonly<Record<string, string>> = {
   met: 'measured',
   partially_measured: 'partially measured',
@@ -193,7 +213,11 @@ function PlaceBlock({ place, answer }: { place: AnswerPlace; answer: ComposedAns
     <article className="mt-4 border-t border-slate-100 pt-4">
       <h3 className="text-lg font-semibold leading-snug text-slate-900">
         {place.name}{' '}
-        <span className="text-sm font-normal tabular-nums text-slate-500">{place.zcta}</span>
+        <span className="text-sm font-normal tabular-nums text-slate-500">
+          {place.memberZctas
+            ? `${count.format(place.memberZctas.length)} ZIP ${place.memberZctas.length === 1 ? 'area' : 'areas'}`
+            : place.zcta}
+        </span>
       </h3>
       <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-3">
         {place.figures.map((figure) => (
@@ -204,9 +228,14 @@ function PlaceBlock({ place, answer }: { place: AnswerPlace; answer: ComposedAns
               {figure.marginOfError !== undefined && (
                 <span
                   className="ml-1 text-xs font-normal tabular-nums text-slate-500"
-                  title={`Margin of error plus or minus ${formatFigureMargin(figure.marginOfError)}`}
+                  title={
+                    figure.marginApproximate
+                      ? `Approximate margin of error plus or minus ${formatFigureMargin(figure.marginOfError)} (population-weighted approximation for a county aggregate, not an official Census county margin)`
+                      : `Margin of error plus or minus ${formatFigureMargin(figure.marginOfError)}`
+                  }
                 >
                   ±{formatFigureMargin(figure.marginOfError)}
+                  {figure.marginApproximate ? ' approx.' : ''}
                 </span>
               )}
             </dd>
@@ -249,6 +278,8 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
   const shortfallLine = requestedCountLine(answer)
   const unresolvedCandidates = unresolvedCandidatesLine(answer)
   const unsupportedLine = unsupportedGeographyLine(answer)
+  const countyLine = countyMethodLine(answer)
+  const notMeasurableLine = notMeasurableCountiesLine(answer)
 
   return (
     <section
@@ -334,6 +365,16 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
       {unsupportedLine && (
         <p role="note" className="mt-1 text-xs text-slate-500">
           {unsupportedLine}
+        </p>
+      )}
+      {countyLine && (
+        <p role="note" className="mt-1 text-xs text-slate-500">
+          {countyLine}
+        </p>
+      )}
+      {notMeasurableLine && (
+        <p role="note" className="mt-1 text-xs text-slate-500">
+          {notMeasurableLine}
         </p>
       )}
       {droppedLine && (

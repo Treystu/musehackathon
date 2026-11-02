@@ -147,6 +147,11 @@
  *     repro, 2026-11-02: "find the top five places that have the
  *     best schools but also the least average cost of living").
  */
+import {
+  aggregateRowsToCounties,
+  classifyMetricKey,
+  type CountyAssignment,
+} from '../county-aggregate'
 import type { AreaRow } from '../plugins/acs'
 import type { MuseProvider, ResearchResult, ValidatedIntent } from './provider'
 import {
@@ -188,6 +193,14 @@ export interface AnswerFigure {
   marginOfError?: number
   /** Headroom against the stated bound; present only for filter keys. */
   distanceToBound?: number
+  /**
+   * True when the margin is the county aggregation's
+   * population-weighted RMS approximation (county-aggregate.ts), not
+   * a publisher margin. The card labels it as an approximation
+   * wherever it is shown; a figure without this flag carries the
+   * margin exactly as published or as standard sum propagation.
+   */
+  marginApproximate?: boolean
 }
 
 export interface ResearchedClaim {
@@ -201,6 +214,13 @@ export interface AnswerPlace {
   name: string
   figures: AnswerFigure[]
   claims: ResearchedClaim[]
+  /**
+   * County answers only: the member ZCTAs this county aggregate was
+   * formed from. Present exactly when the place is a county; the
+   * card shows the member count in place of a ZCTA, and `zcta`
+   * carries the synthetic county key, never a real ZCTA.
+   */
+  memberZctas?: string[]
 }
 
 export interface AnswerSource {
@@ -245,21 +265,32 @@ export interface CriterionEvidence {
  * The geography level an answer is composed at.
  *
  * COUNTY FINDING (measured 2026-11-02 against the shipped data):
- * county-level answers are NOT derivable from what ships. The place
- * index (public/map/zcta-places.json, decoded by
+ * county-level answers were NOT derivable from what shipped then.
+ * The place index (public/map/zcta-places.json, decoded by
  * src/core/zcta-place-index.ts) is ZCTA-level: it carries a county
  * name only as the fallback record for the 4,983 ZCTAs with no
  * incorporated place (kind 'K' in the generator,
  * tools/gen-zcta-city-mapping.mjs) — for every other ZCTA the county
  * was fetched at generation time (the Census 2020 ZCTA-to-county
  * relationship file, tab20_zcta520_county20_natl.txt) and discarded
- * in favour of the city. A county rollup therefore needs that
- * crosswalk shipped as a build-time artefact (one county per ZCTA by
- * largest land overlap, the generator's existing rule); until it is,
- * 'county' is a level an answer can REQUEST and must report as
- * unsupported (unsupportedGeography + a not_measurable evidence
- * entry), never a level approximated from fallback names. This is
- * the generalization phase's one open item.
+ * in favour of the city.
+ *
+ * COUNTY CURE (2026-11-02, Jev-gated semantics): the crosswalk now
+ * ships as a build-time artefact (public/map/zcta-counties.json,
+ * decoded by src/core/zcta-county-index.ts): one county per ZCTA by
+ * largest land overlap, the generator's existing rule, for all
+ * 33,791 ZCTAs. When the caller supplies that crosswalk
+ * (AnswerPipelineInput.countyAssignments), a county request is
+ * composed at county level: the screen bounds first (a state bound
+ * narrows the rows), then screened rows aggregate to their counties
+ * under src/core/county-aggregate.ts — counts summed with
+ * root-sum-of-squares margins, rates/means/medians as
+ * population-weighted means with population-weighted
+ * root-mean-square margins labelled approximations, anything else
+ * reported not measurable. Without a crosswalk, 'county' remains a
+ * level an answer can REQUEST and must report as unsupported
+ * (unsupportedGeography + a not_measurable evidence entry), never a
+ * level approximated from fallback names.
  */
 export type AnswerGeographyLevel = 'zcta' | 'place' | 'state' | 'county' | 'national'
 
@@ -301,7 +332,33 @@ export interface ComposedAnswer {
    * renders the candidate-cap overflow line.
    */
   requestedCount?: number | null
+  /**
+   * The county assignment + aggregation rule, stated on the answer
+   * whenever a county answer was composed from the crosswalk
+   * (COUNTY_AGGREGATION_METHOD), or null for non-county answers and
+   * for county requests the crosswalk could not serve.
+   */
+  countyMethod: string | null
+  /**
+   * Counties dropped from a county answer because the deciding
+   * figure could not be aggregated for them (county-aggregate.ts
+   * reported it not measurable), named so the drop is disclosed
+   * rather than silent.
+   */
+  notMeasurableCounties: string[]
 }
+
+/**
+ * The county rule, stated wherever a county answer is shown or
+ * described (the composed answer, the card, and Methodology copy
+ * carry the same statement). Numeral-free, like the summaries, so
+ * no figure on the answer can be mistaken for part of the rule.
+ */
+export const COUNTY_AGGREGATION_METHOD =
+  'Each ZIP area is assigned to the county it overlaps most by land area. ' +
+  'County counts are sums of their ZIP areas, with margins combined from the member margins. ' +
+  'Other county figures are population-weighted averages of their ZIP areas, and their margins ' +
+  'are population-weighted approximations, not official Census county margins.'
 
 /**
  * How many candidate places one research pass may cover. Research is
@@ -748,6 +805,10 @@ export function criterionEvidenceFor(input: {
   places: readonly AnswerPlace[]
   claims: readonly ResearchedClaim[]
   unsupportedGeography: string | null
+  /** True when a county answer was composed from the crosswalk. */
+  countySupported?: boolean
+  /** A requested figure that cannot be aggregated to county level, when one was. */
+  countyFigureNotMeasurable?: string | null
 }): CriterionEvidence[] {
   const evidence: CriterionEvidence[] = []
   for (const criterion of input.criteria) {
@@ -780,6 +841,25 @@ export function criterionEvidenceFor(input: {
         'County-level figures are not available from the shipped data, which is place and ZIP level; the places shown are at that level instead.',
       sourceUrls: [],
     })
+  }
+  if (input.countySupported) {
+    evidence.push({
+      criterion: 'County-level geography',
+      kind: 'census',
+      status: input.places.length > 0 ? 'met' : 'not_measurable',
+      detail: COUNTY_AGGREGATION_METHOD,
+      sourceUrls: [],
+    })
+    if (input.countyFigureNotMeasurable) {
+      evidence.push({
+        criterion: input.countyFigureNotMeasurable,
+        kind: 'census',
+        status: 'not_measurable',
+        detail:
+          'This figure cannot be aggregated to county level from ZIP-area figures, so no county figure is shown for it.',
+        sourceUrls: [],
+      })
+    }
   }
   for (const criterion of input.researchCriteria) {
     const serving = input.claims.filter(
@@ -842,6 +922,18 @@ export function composeAnswer(input: {
   summaryOverride?: string
   /** The top-N count the reader asked for, stamped verbatim for the card's shortfall line. */
   requestedCount?: number | null
+  /**
+   * County aggregation metadata keyed by aggregate-row zcta, from
+   * county-aggregate.ts via the pipeline: which member ZCTAs formed
+   * each county and which of its figures carry approximate margins.
+   */
+  countyMeta?: ReadonlyMap<string, { memberZctas: string[]; approximateMarginKeys: readonly string[] }>
+  /** True when this answer was composed at county level from the crosswalk. */
+  countySupported?: boolean
+  /** A requested figure that could not be aggregated to county level. */
+  countyFigureNotMeasurable?: string | null
+  /** Counties dropped because their deciding figure was not measurable. */
+  notMeasurableCounties?: readonly string[]
 }): ComposedAnswer {
   const { intent, screen } = input
   // Pull mode (research-first): candidates arrived from research, so
@@ -854,12 +946,27 @@ export function composeAnswer(input: {
     input.pullMode && intent.metricKeys.length === 0
       ? { ...intent, metricKeys: ['median_gross_rent'] }
       : intent
-  const places: AnswerPlace[] = screen.rows.map((row) => ({
-    zcta: row.zcta,
-    name: row.name,
-    figures: figuresForRow(row, figureIntent, screen.criteria),
-    claims: [],
-  }))
+  const places: AnswerPlace[] = screen.rows.map((row) => {
+    const figures = figuresForRow(row, figureIntent, screen.criteria)
+    const meta = input.countyMeta?.get(row.zcta)
+    if (meta) {
+      // The approximation label rides from the aggregate row onto
+      // the figure itself, so it survives to wherever the figure is
+      // shown rather than living only in pipeline bookkeeping.
+      for (const figure of figures) {
+        if (figure.marginOfError !== undefined && meta.approximateMarginKeys.includes(figure.key)) {
+          figure.marginApproximate = true
+        }
+      }
+    }
+    return {
+      zcta: row.zcta,
+      name: row.name,
+      figures,
+      claims: [],
+      ...(meta ? { memberZctas: [...meta.memberZctas] } : {}),
+    }
+  })
 
   const droppedClaims: ResearchedClaim[] = []
   const generalClaims: ResearchedClaim[] = []
@@ -888,7 +995,9 @@ export function composeAnswer(input: {
       ? 'No place in the loaded data meets all of the stated Census criteria.'
       : input.pullMode
         ? 'The places named here were named by the cited research for the stated criteria, with Census figures shown for each place.'
-        : 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.')
+        : input.countySupported
+          ? 'The counties named here are formed from the ZIP areas assigned to each county, with the deciding figures aggregated from those ZIP areas and shown from Census data.'
+          : 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.')
 
   const researchCriteria = input.researchCriteria ?? []
   const unsupportedGeography = input.unsupportedGeography ?? null
@@ -914,6 +1023,8 @@ export function composeAnswer(input: {
       places,
       claims: allClaims,
       unsupportedGeography,
+      countySupported: input.countySupported ?? false,
+      countyFigureNotMeasurable: input.countyFigureNotMeasurable ?? null,
     }),
     candidateCap: SCREENED_RESEARCH_CANDIDATE_CAP,
     candidateCapApplied: input.candidateCapApplied ?? false,
@@ -921,6 +1032,8 @@ export function composeAnswer(input: {
     geographyLevel: input.geographyLevel ?? geographyLevelOfIntent(intent),
     unsupportedGeography,
     requestedCount: input.requestedCount ?? null,
+    countyMethod: input.countySupported ? COUNTY_AGGREGATION_METHOD : null,
+    notMeasurableCounties: [...(input.notMeasurableCounties ?? [])],
   }
 }
 
@@ -1043,6 +1156,16 @@ export interface AnswerPipelineInput {
   candidateExtractor?: CandidateExtractor
   /** Research-first resolution seam; defaults to exact row-name matching. */
   candidateResolver?: CandidateResolver
+  /**
+   * The county crosswalk seam: ZCTA -> county assignment, from the
+   * shipped artefact (CountyIndex.assignmentsFor in
+   * src/core/zcta-county-index.ts). When a county-level answer is
+   * requested and this seam is supplied, the screen's rows aggregate
+   * to counties and the answer is composed at county level. When it
+   * is absent, a county request is reported unsupported, as before
+   * the artefact existed — never approximated from place fallbacks.
+   */
+  countyAssignments?: ReadonlyMap<string, CountyAssignment>
 }
 
 function emptyAnswerFields(): Pick<
@@ -1054,6 +1177,8 @@ function emptyAnswerFields(): Pick<
   | 'unresolvedCandidates'
   | 'geographyLevel'
   | 'unsupportedGeography'
+  | 'countyMethod'
+  | 'notMeasurableCounties'
 > {
   return {
     researchCriteria: [],
@@ -1063,6 +1188,8 @@ function emptyAnswerFields(): Pick<
     unresolvedCandidates: [],
     geographyLevel: 'national',
     unsupportedGeography: null,
+    countyMethod: null,
+    notMeasurableCounties: [],
   }
 }
 
@@ -1188,16 +1315,91 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // Stage 2: deterministic Census screen.
   const screen = screenRows(input.intent, input.rows, input.geographyZctas)
 
+  // Stage 2b (county): when the question asks for counties and the
+  // caller supplied the crosswalk, aggregate the screened rows to
+  // their counties. The order is the gated semantics: the screen
+  // bounds first — a state bound in the intent's geographies has
+  // already narrowed the rows inside screenRows — and aggregation
+  // runs over what the screen kept. Counties whose deciding figure
+  // (the question's measure, or its first criterion) cannot be
+  // aggregated are dropped and named on the answer; when that figure
+  // class is not aggregable at all, the evidence entry says so. If
+  // no screened row carries an assignment, the county level stays
+  // unsupported, exactly as it was before the crosswalk shipped.
+  let effectiveScreen = screen
+  let effectiveUnsupportedGeography = unsupportedGeography
+  let countyMeta: Map<string, { memberZctas: string[]; approximateMarginKeys: readonly string[] }> | undefined
+  let countySupported = false
+  let countyFigureNotMeasurable: string | null = null
+  let notMeasurableCounties: string[] = []
+  let countyEmptySummary: string | undefined
+  if (countyRequested && input.countyAssignments) {
+    const figureKeys = [
+      ...new Set([
+        ...input.intent.metricKeys,
+        ...screen.criteria.map((c) => c.metricKey),
+      ]),
+    ]
+    const aggregation = aggregateRowsToCounties(screen.rows, input.countyAssignments, figureKeys)
+    if (aggregation.rows.length > 0) {
+      countySupported = true
+      effectiveUnsupportedGeography = null
+      countyMeta = new Map(
+        aggregation.rows.map((row) => [
+          row.zcta,
+          { memberZctas: row.memberZctas, approximateMarginKeys: row.approximateMarginKeys },
+        ]),
+      )
+      const rankKey = input.intent.metricKeys[0] ?? screen.criteria[0]?.metricKey
+      let countyRows = aggregation.rows
+      if (rankKey) {
+        if (classifyMetricKey(rankKey) === 'not_aggregable') {
+          countyFigureNotMeasurable = rankKey
+        }
+        const measurable = new Set(
+          countyRows.filter((row) => {
+            const value = row.metrics[rankKey]
+            return typeof value === 'number' && Number.isFinite(value)
+          }),
+        )
+        notMeasurableCounties = countyRows
+          .filter((row) => !measurable.has(row))
+          .map((row) => row.name)
+        countyRows = countyRows.filter((row) => measurable.has(row))
+        // The bounded-superlative order at county level: a boundless
+        // sweep sorts by its measure, lowest first, exactly as the
+        // ZCTA screen does — now over the county aggregates, so the
+        // county with the lowest aggregated figure leads. Bounded
+        // screens keep the deterministic name order the aggregation
+        // produced; the card orders those by their first criterion.
+        if (screen.criteria.length === 0 && input.intent.metricKeys.length > 0) {
+          countyRows = [...countyRows].sort((a, b) => {
+            const av = a.metrics[rankKey] as number
+            const bv = b.metrics[rankKey] as number
+            return av - bv || a.name.localeCompare(b.name, 'en')
+          })
+        }
+        if (countyRows.length === 0) {
+          countyEmptySummary =
+            'No county in the loaded data has a measurable figure for the stated measure at county level, so no county is named here.'
+        }
+      }
+      effectiveScreen = { ...screen, rows: countyRows }
+    }
+  }
+
   // Stage 3: research over the screened subset only, one pass per
   // decomposed criterion, capped at SCREENED_RESEARCH_CANDIDATE_CAP
   // places. An empty screen researches nothing — there is no subset
   // to research. A question with a research query but no catalog
   // criterion still decomposes to the one combined criterion, so the
   // legacy single-pass shape is the one-criterion case of this loop.
+  // On the county path the subset is the county aggregates, so
+  // research is told county names, never member ZCTAs.
   let research: ResearchStageResult | null = null
-  const candidateCapApplied = screen.rows.length > SCREENED_RESEARCH_CANDIDATE_CAP
-  if (input.researchQuery && input.provider && screen.rows.length > 0) {
-    const capped = screen.rows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
+  const candidateCapApplied = effectiveScreen.rows.length > SCREENED_RESEARCH_CANDIDATE_CAP
+  if (input.researchQuery && input.provider && effectiveScreen.rows.length > 0) {
+    const capped = effectiveScreen.rows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
     research =
       researchCriteria.length > 0
         ? await researchPerCriterion(
@@ -1213,17 +1415,24 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // Stage 4: compose.
   const composed = composeAnswer({
     intent: input.intent,
-    screen,
+    screen: effectiveScreen,
     research,
     researchCriteria: input.researchQuery ? researchCriteria : [],
     candidateCapApplied: research ? candidateCapApplied : false,
     geographyLevel,
-    unsupportedGeography,
+    unsupportedGeography: effectiveUnsupportedGeography,
+    countyMeta,
+    countySupported,
+    countyFigureNotMeasurable,
+    notMeasurableCounties,
+    summaryOverride: countyEmptySummary,
   })
   if (composed.status === 'empty') return { ...composed, stage: 'verify' }
 
-  // Stage 5: verify, fail-closed.
-  const verdict = verifyAnswer(composed, screen.rows)
+  // Stage 5: verify, fail-closed. On the county path the figures are
+  // checked against the aggregate rows compose read — the same
+  // exact-equality gate, over the aggregated figures.
+  const verdict = verifyAnswer(composed, effectiveScreen.rows)
   if (!verdict.ok) {
     return { ...composed, status: 'withheld', stage: 'verify', failures: verdict.failures }
   }

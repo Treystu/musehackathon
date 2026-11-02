@@ -16,6 +16,16 @@
  *
  * Output:
  *   public/map/zcta-places.json   33,791 records, dictionary-packed
+ *   public/map/zcta-counties.json 33,791 records, dictionary-packed
+ *
+ * The county file carries the assignment the place file discards: one
+ * county per ZCTA for EVERY ZCTA (largest land overlap, the same
+ * parseCounty rule the place file uses for its fallback labels), so
+ * the Answer Layer can aggregate ZIP-area figures to county level
+ * (src/core/county-aggregate.ts). It is packed the same way as the
+ * place file — delta-encoded ZIP list plus dictionary indices — with
+ * a 7-character record (5-digit county-name index, 2-digit state
+ * index), decoded by src/core/zcta-county-index.ts.
  *
  * Served from /map/, which `public/_headers` already marks immutable for a year,
  * so a returning visitor pays nothing. Run with: npm run gen:zcta-city
@@ -168,8 +178,9 @@ function parseCounty(text) {
 async function main() {
   const force = process.argv.includes('--force')
   const target = join(OUT, 'zcta-places.json')
-  if (!force && existsSync(target)) {
-    log('zcta-places.json already present; pass --force to regenerate')
+  const countyTarget = join(OUT, 'zcta-counties.json')
+  if (!force && existsSync(target) && existsSync(countyTarget)) {
+    log('zcta-places.json and zcta-counties.json already present; pass --force to regenerate')
     return
   }
 
@@ -268,6 +279,58 @@ async function main() {
   log(`  ${cityCount} resolved to an incorporated place, ${zips.length - cityCount} to a county`)
   log(`  ${names.length} distinct names, ${stateList.length} distinct states`)
 
+  // The county assignment for every ZCTA, as its own artefact. The
+  // place file above keeps only the 4,983 fallback counties; this file
+  // keeps all of them, because a county rollup needs the county of the
+  // ZCTAs that resolved to a city too. A ZCTA with no county row would
+  // leave the artefact misaligned against the shared ZIP list, so it
+  // is a hard failure here rather than a gap the decoder must guess at.
+  const countyMissing = zips.filter((z) => !counties.has(z))
+  if (countyMissing.length > 0) {
+    throw new Error(
+      `${countyMissing.length} ZCTAs have no county assignment: ${countyMissing.slice(0, 5)}`,
+    )
+  }
+  const countyNames = []
+  const countyNameIndex = new Map()
+  const countyStateList = []
+  const countyStateIndex = new Map()
+  // Distinct counties are (name, state) pairs, not name strings: the
+  // country reuses county names across states (Washington County
+  // alone names counties in most states), so the dictionary size
+  // would understate the county count the manifest reports.
+  const distinctCounties = new Set()
+  let countyRecords = ''
+  for (const zip of zips) {
+    const county = counties.get(zip)
+    const abbr = states.get(county.stateFips)
+    if (!abbr) {
+      throw new Error(`ZIP ${zip} county resolved to state FIPS "${county.stateFips}", which TIGERweb did not return`)
+    }
+    distinctCounties.add(`${county.name}|${abbr}`)
+    const n = intern(countyNames, countyNameIndex, county.name)
+    const s = intern(countyStateList, countyStateIndex, abbr)
+    if (n > 99999 || s > 99) throw new Error(`county dictionary overflow: name=${n} state=${s}`)
+    // 5 + 2 = 7 characters per ZIP: county name, state.
+    countyRecords += String(n).padStart(5, '0') + String(s).padStart(2, '0')
+  }
+  const countyPayload = {
+    v: 1,
+    source: 'US Census Bureau 2020 ZCTA-to-County relationship file',
+    note:
+      'one county per ZCTA by largest land overlap (AREALAND_PART). names are ' +
+      'NAMELSAD_COUNTY_20 verbatim. The ZIP list (zd) is the same delta encoding ' +
+      'as zcta-places.json and covers the same 33,791 ZCTAs in the same order.',
+    zd: deltas,
+    names: countyNames,
+    states: countyStateList,
+    rec: countyRecords,
+  }
+  const countyJson = JSON.stringify(countyPayload)
+  writeFileSync(countyTarget, countyJson)
+  log(`zcta-counties.json: ${zips.length} records, ${(countyJson.length / 1024).toFixed(0)} KB raw`)
+  log(`  ${distinctCounties.size} distinct counties, ${countyStateList.length} distinct states`)
+
   // Folded into the existing manifest rather than replacing it, because the gate
   // and `tools/gen-map-data.mjs` both read keys that must keep working.
   const manifestPath = join(OUT, 'manifest.json')
@@ -276,6 +339,9 @@ async function main() {
   manifest.placeMappingCities = cityCount
   manifest.placeMappingCounties = zips.length - cityCount
   manifest.placeMappingBytes = Buffer.byteLength(json)
+  manifest.countyMappingZctas = zips.length
+  manifest.countyMappingCounties = distinctCounties.size
+  manifest.countyMappingBytes = Buffer.byteLength(countyJson)
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n')
   log('manifest.json updated (existing keys preserved)')
 }

@@ -744,10 +744,13 @@ export default function App() {
       //   and a county the crosswalk does not carry contributes
       //   nothing — never the place index's fallback ZIP standing in
       //   for the county, which is the answer resolver's own rule.
-      //   Place, ZIP and state geographies keep the resolution below
-      //   unchanged, and the note below still fires for a request
-      //   whose geographies genuinely resolve to nothing (the
-      //   Atlantis County control in the re-run: both notes agree).
+      //   State geographies in a lookup/compare are read from the
+      //   same resolver's state-average record (see the
+      //   stateAverageLabels block below; P2d). Place and ZIP
+      //   geographies keep the resolution below unchanged, and the
+      //   note below still fires for a request whose geographies
+      //   genuinely resolve to nothing (the Atlantis County control
+      //   in the re-run: both notes agree).
       const countyClass = (geography: string) =>
         /\b(county|parish|borough|census area|municipality)\b/i.test(geography)
       const places: PlaceIndex | null =
@@ -762,16 +765,61 @@ export default function App() {
           : intent.geographies.some(countyClass)
             ? await loadCountyIndex()
             : null
+      // One resolver call, read for both aggregate kinds. The
+      // resolver needs the county index only for its county entries;
+      // its state entries read the place index alone, which the
+      // non-ZIP geographies above already awaited — so a state side
+      // needs no new wait, exactly as a county side needed none
+      // beyond the loaders P2c wired.
+      const resolvedGeographies = resolveAnswerGeographies(intent, places, counties)
       const countyZips = new Map<string, string[]>()
-      if (counties) {
-        for (const county of resolveAnswerGeographies(intent, places, counties).countyGeographies) {
-          countyZips.set(county.geography, county.zctas)
+      for (const county of resolvedGeographies.countyGeographies) {
+        countyZips.set(county.geography, county.zctas)
+      }
+      // State-average sides (views_state_average_place_name_collision,
+      // closing battery cluster C re-run on be13e7e, 2026-11-02: the
+      // C6 card correctly paired Hilo with the Hawaii state
+      // average, but this layer resolved "Hawaii" through
+      // place-name search to Hawaiian Acres and opened it as
+      // the second comparison place — views_layer_contradiction Noul
+      // 0.99). The answer resolver records a bare state in a
+      // lookup/compare as a state aggregate, never as a place; this
+      // layer reads that same record. A state side contributes NO
+      // ZIP here and never reaches the place search below: the
+      // comparison is per-ZIP drilldowns (selectPlace returns
+      // without a ZIP, and a drilldown is fetched by ZCTA), so it
+      // has no aggregate entry to open — opening every member ZIP
+      // instead would open the substituted place itself as an
+      // individual place (it is a member of its state),
+      // and recomputing the average in this layer would duplicate
+      // the card's aggregation instead of reading it. The honest
+      // shape is the one the lookup/compare branch below returns:
+      // the real places open, and the run note says the state
+      // average is shown on the answer card. Suppressed when the
+      // intent itself names a county-class geography: the pipeline
+      // composes at one aggregate level at a time (its stage 2c is
+      // skipped on the county path), so a state named beside
+      // counties is not composed as a state average either, and
+      // this note must not claim it is. Sweep geographies never
+      // land here — the resolver records aggregates only for
+      // lookup/compare, a state in a sweep being a scope.
+      const hasCountyClass = intent.geographies.some(countyClass)
+      const stateAverageLabels = new Map<string, string>()
+      if (!hasCountyClass) {
+        for (const aggregate of resolvedGeographies.stateAggregates) {
+          stateAverageLabels.set(aggregate.geography, aggregate.label)
         }
       }
+      const stateAverageSides: string[] = []
       const zips: string[] = []
       for (const geography of intent.geographies) {
         if (/^\d{5}$/.test(geography.trim())) {
           if (!zips.includes(geography.trim())) zips.push(geography.trim())
+          continue
+        }
+        const stateLabel = stateAverageLabels.get(geography.trim())
+        if (stateLabel) {
+          if (!stateAverageSides.includes(stateLabel)) stateAverageSides.push(stateLabel)
           continue
         }
         const members = countyZips.get(geography.trim())
@@ -795,13 +843,33 @@ export default function App() {
       }
 
       if (intent.mode === 'lookup' || intent.mode === 'compare') {
+        // The state-average sentence, when a side was one: it names
+        // the aggregate as itself, with no figure — the figure is
+        // the card's, computed there from the loaded rows; this
+        // layer runs before that load and must not state a number
+        // it did not compute (figures-by-reference, the result
+        // map's rule, applied to prose).
+        const stateAverageNote =
+          stateAverageSides.length > 0
+            ? `The ${stateAverageSides.map((label) => `${label} state average`).join(' and ')} ${
+                stateAverageSides.length > 1 ? 'are' : 'is'
+              } shown on the answer card.`
+            : ''
         if (zips.length === 0) {
+          if (stateAverageNote) {
+            return `${stateAverageNote} No place was opened in the comparison for ${
+              stateAverageSides.length > 1 ? 'them' : 'it'
+            }.`
+          }
           return 'No ZIP code could be resolved from the places in this request, so nothing was opened.'
         }
         for (const zip of zips) addZip(zip)
         setView('explore')
         setMode('ask')
-        return `Opened ${zips.length === 1 ? '1 place' : `${zips.length} places`} in the comparison.`
+        return (
+          `Opened ${zips.length === 1 ? '1 place' : `${zips.length} places`} in the comparison.` +
+          (stateAverageNote ? ` ${stateAverageNote}` : '')
+        )
       }
 
       if (intent.mode === 'sweep_filter') {

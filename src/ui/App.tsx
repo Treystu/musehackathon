@@ -40,6 +40,8 @@ import {
   type ResolvedAnswerGeographies,
 } from './ai/answer-runner'
 import { DecisionModal } from './ai/DecisionModal'
+import { createSpeechDriver, type SpeechDriver } from './ai/speech-driver'
+import { composeSpokenSummary, guardSpokenSentences } from './ai/spoken-answer'
 import { ThinkingIndicator } from './ai/ThinkingIndicator'
 import { researchAck } from './ai/ack'
 import {
@@ -277,6 +279,30 @@ export default function App() {
     queryText: string
   } | null>(null)
   const [answer, setAnswer] = useState<ComposedAnswer | null>(null)
+  /**
+   * Voice-out (plan C10, branch b — no Muse TTS exists on the Model
+   * API roster, re-verified 2026-11-02): when the conversation is in
+   * voice mode (the question arrived by mic, set by AskPanel's accept
+   * path), a verified answer is also spoken by the DEVICE's speech
+   * synthesis. The driver is created once; its sticky session mute is
+   * the Stop voice control's state, mirrored here only so the control
+   * re-renders. Spoken text comes solely from composeSpokenSummary —
+   * verified figures by reference, unverified numerals dropped.
+   */
+  const [voiceMode, setVoiceMode] = useState(false)
+  const [voiceMuted, setVoiceMuted] = useState(false)
+  const speechDriverRef = useRef<SpeechDriver | null>(null)
+  if (speechDriverRef.current === null) {
+    speechDriverRef.current = createSpeechDriver()
+  }
+  useEffect(() => {
+    const driver = speechDriverRef.current
+    if (!driver) return
+    driver.setVoiceModeActive(voiceMode)
+    if (voiceMode && answer?.status === 'verified') {
+      driver.speak(composeSpokenSummary(answer))
+    }
+  }, [answer, voiceMode])
   const [answerNote, setAnswerNote] = useState<{ id: number; text: string } | null>(null)
   const answerRequestSeq = useRef(0)
   const answerLoadIds = useRef(new Set<number>())
@@ -307,6 +333,19 @@ export default function App() {
     setModalState((state) => expireModalForNewQuestion(state))
     setAnswerRequest({ id, intent, queryText })
   }, [])
+
+  // In voice mode a live decision modal is also spoken, once per run
+  // (plan C7 + C10): the question text passes the spoken-number guard
+  // with an empty verified list — a modal question carries no figures,
+  // so any numeral in it suppresses the speech, never the modal.
+  const spokenModalRunRef = useRef<number | null>(null)
+  useEffect(() => {
+    const live = modalState.live
+    if (!live || !voiceMode) return
+    if (spokenModalRunRef.current === live.runId) return
+    spokenModalRunRef.current = live.runId
+    speechDriverRef.current?.speak(guardSpokenSentences([live.questionText], []))
+  }, [modalState.live, voiceMode])
 
   // A fresh answer's proposal becomes the live modal (one at a time;
   // a decided or closed branch is never re-asked).
@@ -1199,6 +1238,7 @@ export default function App() {
                   figures={askFigures}
                   onExecute={executeIntent}
                   onAnswerRequest={handleAnswerRequest}
+                  onVoiceModeChange={setVoiceMode}
                   censusFetcher={CENSUS_PROBE_FETCHER}
                   clarificationCandidates={{
                     geographies: [],
@@ -1226,6 +1266,20 @@ export default function App() {
             */}
             {answer ? (
               <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+                {voiceMode && !voiceMuted && speechDriverRef.current?.isAvailable() ? (
+                  <div className="mb-2 text-right">
+                    <button
+                      type="button"
+                      className="text-sm text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-700"
+                      onClick={() => {
+                        speechDriverRef.current?.mute()
+                        setVoiceMuted(true)
+                      }}
+                    >
+                      Stop voice
+                    </button>
+                  </div>
+                ) : null}
                 <AnswerCard answer={answer} />
               </div>
             ) : answerNote && answerRequest && answerNote.id === answerRequest.id ? (

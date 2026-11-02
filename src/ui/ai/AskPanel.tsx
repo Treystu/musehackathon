@@ -370,6 +370,7 @@ export function AskPanel({
   validator = hermeticStubValidator,
   onExecute,
   onAnswerRequest,
+  onVoiceModeChange,
   proxyError,
   clarificationCandidates,
   onOpenSettings,
@@ -407,6 +408,13 @@ export function AskPanel({
    * mounts), research fires in parallel with the parse, as before.
    */
   onAnswerRequest?: (intent: ValidatedIntent, queryText: string) => void
+  /**
+   * Voice-mode activation for spoken answers (plan C10): called with
+   * true only when a mic transcript is ACCEPTED (the question arrived
+   * by voice), and with false on a typed submit. A clarified
+   * transcript does not activate voice mode — no question ran.
+   */
+  onVoiceModeChange?: (active: boolean) => void
   proxyError?: ProxyError | null
   clarificationCandidates?: ClarificationCandidates
   onOpenSettings?: () => void
@@ -765,6 +773,7 @@ export function AskPanel({
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!text.trim() || busy) return
+    onVoiceModeChange?.(false)
     await runQuery(text)
   }
 
@@ -787,6 +796,7 @@ export function AskPanel({
       )
       return
     }
+    onVoiceModeChange?.(true)
     void runQuery(assessment.transcript, assessment.transcript)
   }
 

@@ -147,6 +147,10 @@ export function Methodology() {
             a proxy whose meter counts every call at flat per-call rates for budget accounting only; the
             figures themselves never come from the model.
           </p>
+          <p>
+            When a question arrives by voice, the answer can be read aloud. The intelligence is
+            Muse; the voice is the device's.
+          </p>
         </div>
       </section>
 

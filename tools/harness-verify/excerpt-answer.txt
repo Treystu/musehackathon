@@ -1,0 +1,131 @@
+/* ------------------------------------------------------------------ */
+
+/**
+ * The stage gate. Figure equality is exact (===) against the screened
+ * rows the caller supplies — the same rows compose read — so a figure
+ * altered anywhere between screen and render fails here. Claims must
+ * cite a source the answer carries, and all prose on the answer must
+ * pass the validator in criteria-grounded context.
+ */
+export function verifyAnswer(
+  answer: ComposedAnswer,
+  screenedRows: readonly AreaRow[],
+): { ok: boolean; failures: string[] } {
+  const failures: string[] = []
+  const rowByZcta = new Map(screenedRows.map((row) => [row.zcta, row]))
+  const figures: FigureForValidation[] = []
+
+  for (const place of answer.places) {
+    const row = rowByZcta.get(place.zcta)
+    if (!row) {
+      failures.push(`place not in screened rows: ${place.zcta}`)
+      continue
+    }
+    for (const figure of place.figures) {
+      const expected = row.metrics[figure.key]
+      if (expected === null || expected === undefined || figure.value !== expected) {
+        failures.push(
+          `figure mismatch for ${place.zcta} ${figure.key}: answer ${figure.value}, screened row ${String(expected)}`,
+        )
+      }
+      const expectedMoe = row.moes[figure.key]
+      const answerMoe = figure.marginOfError ?? null
+      const rowMoe = expectedMoe === undefined ? null : expectedMoe
+      if (answerMoe !== rowMoe) {
+        failures.push(
+          `margin mismatch for ${place.zcta} ${figure.key}: answer ${String(answerMoe)}, screened row ${String(rowMoe)}`,
+        )
+      }
+      figures.push({
+        key: figure.key,
+        value: figure.value,
+        ...(figure.marginOfError !== undefined ? { marginOfError: figure.marginOfError } : {}),
+      })
+    }
+  }
+
+  const carriedUrls = new Set(answer.sources.map((s) => s.url))
+  const allClaims = [
+    ...answer.places.flatMap((p) => p.claims),
+    ...answer.generalClaims,
+  ]
+  for (const claim of allClaims) {
+    if (claim.sourceUrls.length === 0) {
+      failures.push(`uncited researched claim survived compose: ${claim.text}`)
+    } else if (!claim.sourceUrls.every((url) => carriedUrls.has(url))) {
+      failures.push(`claim cites a source the answer does not carry: ${claim.text}`)
+    }
+    const banned = findBannedConstruction(claim.text, { criteriaGrounded: true })
+    if (banned) failures.push(`banned construction in claim (${banned}): ${claim.text}`)
+  }
+
+  const validator = createValidator()
+  const verdict = validator.validate(answer.summary, figures)
+  if (!verdict.pass) {
+    // The summary is composed by code and numeral-free, so a failure
+    // here is a defect in compose, reported like any other.
+    failures.push(`summary failed validator: ${verdict.failure}: ${verdict.detail}`)
+  }
+
+  return { ok: failures.length === 0, failures }
+}
+
+/* ------------------------------------------------------------------ */
+/* The staged flow                                                     */
+/* ------------------------------------------------------------------ */
+
+   */
+  researchQuery?: string
+  /** Provider for the research stage; required when researchQuery is. */
+  provider?: MuseProvider
+  signal?: AbortSignal
+}
+
+export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<ComposedAnswer> {
+  // Stage 1: parse gate. The intent arrived from the intent route,
+  // but the gate is cheap and fail-closed, and the screen must never
+  // run on a proxy-key filter the route somehow let through.
+  const gate = intentGate(input.intent)
+  if (!gate.pass) {
+    return {
+      status: 'blocked',
+      stage: 'parse',
+      criteria: [],
+      droppedCriteria: [],
+      unresolvedGeographies: [],
+      screenedCount: 0,
+      places: [],
+      generalClaims: [],
+      sources: [],
+      summary: '',
+      droppedClaims: [],
+      failures: [`intent gate: ${gate.detail}`],
+    }
+  }
+
+  // Stage 2: deterministic Census screen.
+  const screen = screenRows(input.intent, input.rows, input.geographyZctas)
+
+  // Stage 3: research over the screened subset only. An empty screen
+  // researches nothing — there is no subset to research.
+  let research: ResearchStageResult | null = null
+  if (input.researchQuery && input.provider && screen.rows.length > 0) {
+    research = await researchScreened(
+      input.provider,
+      screen.rows,
+      input.researchQuery,
+      input.signal ?? new AbortController().signal,
+    )
+  }
+
+  // Stage 4: compose.
+  const composed = composeAnswer({ intent: input.intent, screen, research })
+  if (composed.status === 'empty') return { ...composed, stage: 'verify' }
+
+  // Stage 5: verify, fail-closed.
+  const verdict = verifyAnswer(composed, screen.rows)
+  if (!verdict.ok) {
+    return { ...composed, status: 'withheld', stage: 'verify', failures: verdict.failures }
+  }
+  return { ...composed, status: 'verified', stage: 'verify' }
+}

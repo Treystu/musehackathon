@@ -6,7 +6,7 @@ import {
   JEV_PHRASE_PASS,
   JEV_SCORE_PASS,
   buildSystemOneRequest,
-  loopQuestions,
+  loopQuestionsFromLabels,
   mapSystemOneResponse,
 } from '../../src/core/ai/jev-judgments'
 import { createJevTransport, JevUnavailableError } from '../../src/server/jev-client'
@@ -27,7 +27,7 @@ describe('jev judgment sets', () => {
   })
 
   it('J-LOOP builds one noul per criterion plus relevance and completeness scores', () => {
-    const qs = loopQuestions(['good schools', 'few fast food places'])
+    const qs = loopQuestionsFromLabels(['good schools', 'few fast food places'])
     expect(qs.map((q) => q.id)).toEqual(['criterion_0', 'criterion_1', 'relevance', 'completeness'])
     expect(qs[0]).toEqual({
       id: 'criterion_0',
@@ -65,7 +65,7 @@ describe('jev judgment sets', () => {
   })
 
   it('maps wire answers back by id and drops malformed answers', () => {
-    const qs = loopQuestions(['schools'])
+    const qs = loopQuestionsFromLabels(['schools'])
     const mapped = mapSystemOneResponse(
       {
         model: 'jev-1.14.0',

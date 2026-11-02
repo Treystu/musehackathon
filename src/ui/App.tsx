@@ -26,7 +26,15 @@ import { StateFilter } from './StateFilter'
 import { MapView } from './MapView'
 import { sortSweepRows } from '../core/sweep-sorting'
 import { scopePrefixesForStates, STATE_NAME_BY_CODE } from '../core/sweep/states'
-import { AskPanel } from './ai/AskPanel'
+import { AskPanel, needsResearch } from './ai/AskPanel'
+import { AnswerCard } from './ai/AnswerCard'
+import {
+  answerScopeCovered,
+  composeAnswerForRequest,
+  resolveAnswerGeographies,
+  type ResolvedAnswerGeographies,
+} from './ai/answer-runner'
+import type { ComposedAnswer } from '../core/ai/answer'
 import { BriefingView } from './ai/BriefingView'
 import {
   briefingFiguresFromMetrics,
@@ -195,6 +203,96 @@ export default function App() {
   )
 
   const [similaritySeed, setSimilaritySeed] = useState('')
+
+  /**
+   * The answer layer (owner directive, 2026-11-02: answer first).
+   * AskPanel hands each runnable, answer-eligible intent here with
+   * the reader's question text; the effect below composes the answer
+   * once the sweep rows the screen needs are loaded — triggering the
+   * sweep's own scope load when they are not — and the AnswerCard
+   * renders above the result views the execution already produced.
+   * A request whose rows never arrive (no Census key, a failed load)
+   * simply never composes: the execution's views remain the result,
+   * so the card's absence is never a dead end.
+   */
+  const [answerRequest, setAnswerRequest] = useState<{
+    id: number
+    intent: ValidatedIntent
+    queryText: string
+  } | null>(null)
+  const [answer, setAnswer] = useState<ComposedAnswer | null>(null)
+  const answerRequestSeq = useRef(0)
+  const answerLoadIds = useRef(new Set<number>())
+  const answerComposedIds = useRef(new Set<number>())
+  const answerInFlightIds = useRef(new Set<number>())
+
+  const handleAnswerRequest = useCallback((intent: ValidatedIntent, queryText: string) => {
+    const id = ++answerRequestSeq.current
+    // A new question replaces the previous answer outright; a stale
+    // card above fresh results would read as this question's answer.
+    setAnswer(null)
+    setAnswerRequest({ id, intent, queryText })
+  }, [])
+
+  useEffect(() => {
+    if (!answerRequest) return
+    const { id, intent, queryText } = answerRequest
+    if (answerComposedIds.current.has(id) || answerInFlightIds.current.has(id)) return
+    const resolved: ResolvedAnswerGeographies = resolveAnswerGeographies(intent, placeIndex ?? null)
+    if (resolved.unresolvable) {
+      // Nothing to screen against: executeIntent's run note already
+      // told the reader no ZIP could be resolved.
+      answerComposedIds.current.add(id)
+      return
+    }
+    const covered =
+      q.sweepStatus === 'ready' &&
+      answerScopeCovered({
+        rowCount: q.sweep.length,
+        sweepScope: q.sweepScope,
+        resolved,
+        placeless: intent.geographies.length === 0,
+      })
+    if (!covered) {
+      // Reuse the sweep loading machinery: scope the load to the
+      // question's geography (or widen to the country for a placeless
+      // screen, the same widening executeIntent performs). The effect
+      // re-runs as the load lands and composes then.
+      if (!answerLoadIds.current.has(id) && q.sweepStatus !== 'loading') {
+        answerLoadIds.current.add(id)
+        void q.applyScope(intent.geographies.length === 0 ? [] : resolved.scopePrefixes)
+      }
+      return
+    }
+    answerInFlightIds.current.add(id)
+    let cancelled = false
+    void (async () => {
+      try {
+        const composed = await composeAnswerForRequest({
+          intent,
+          queryText,
+          rows: q.sweep,
+          resolved,
+          provider: HOUSE_PROVIDER,
+          research: needsResearch(queryText),
+          signal: new AbortController().signal,
+        })
+        if (!cancelled && composed) {
+          answerComposedIds.current.add(id)
+          setAnswer(composed)
+        }
+      } catch {
+        // A failed research or pipeline run leaves no card; the
+        // executed views below are the result, as they were before
+        // the answer layer existed.
+      } finally {
+        answerInFlightIds.current.delete(id)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [answerRequest, placeIndex, q.sweep, q.sweepStatus, q.sweepScope, q.applyScope])
 
   const askFigures = useMemo(
     () =>
@@ -906,12 +1004,28 @@ export default function App() {
                   provider={HOUSE_PROVIDER}
                   figures={askFigures}
                   onExecute={executeIntent}
+                  onAnswerRequest={handleAnswerRequest}
                   censusFetcher={CENSUS_PROBE_FETCHER}
                   clarificationCandidates={{
                     geographies: clarificationGeographies,
                     metricKeys: [...DISPLAYABLE_KEYS],
                   }}
                 />
+              </div>
+            )}
+            {/*
+              The composed answer is the primary result (owner
+              directive, 2026-11-02): it renders directly under the
+              question surface and above every result view — the
+              comparison, the briefing, the screening table — which
+              stay below as supporting evidence, unchanged. The mount
+              sits outside the mode blocks so a sweep answer survives
+              the execution's switch to the data mode that shows its
+              table.
+            */}
+            {answer && (
+              <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+                <AnswerCard answer={answer} />
               </div>
             )}
             {mode === 'ask' && q.selected.length === 0 && q.sweepStatus === 'ready' && screenStats && (

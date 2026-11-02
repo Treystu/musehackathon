@@ -103,9 +103,12 @@ export function Methodology() {
           <p>
             The AI layer is generated from the same metric registry as the data layer, so the measures the
             assistant can use cannot drift from the measures the site displays. The assistant may only use the{' '}
-            {METRIC_KEYS.length} registered metrics; ranking, recommendation, and demographic characterisation
-            requests are never complied with — the assistant clarifies instead, keeping the parts of the
-            question the data can answer (allowlisted filters, validated output, withheld wording).
+            {METRIC_KEYS.length} registered metrics. When a question states criteria the data can check,
+            the assistant names the places that meet the reader's own stated criteria, showing the
+            deciding figures and the sources behind them; it does not characterise a place or steer by
+            who lives in it, and demographic characterisation requests are never complied with — the
+            assistant clarifies instead, keeping the parts of the question the data can answer
+            (allowlisted filters, validated output, withheld wording).
           </p>
           <p>
             Every explanatory sentence the assistant writes about the figures is checked against the
@@ -116,19 +119,33 @@ export function Methodology() {
             Some questions reach past what Census data contains — schools, amenities, safety, the
             political character of a place. Those parts are answered separately, from web search run
             through the same metered proxy, in a labeled section with its sources listed. Web findings
-            are never presented as figures, are shown only when they carry citations, and the assistant
-            itself still never ranks or recommends places — it reports what the sources say and leaves
-            the weighing to the reader.
+            are never presented as figures and are shown only when they carry citations. Where they bear
+            on a place the reader's criteria named, they are shown with that place in the answer, as
+            what the sources say, with the citation attached — the weighing stays with the reader.
           </p>
           <p>
-            The assistant is held to that contract by tooling, not by intention. An evaluation harness
-            (Sovereign-Harness) replays a fixed corpus of questions — every shape the assistant can be
-            asked, including the shapes it must refuse — against the live model, and a release is accepted
-            only when the recorded scores clear their bars. Changes to this layer are additionally scored
-            before they ship by Jev, a typed judgement model, under the gate policy in the source
-            repository. Questions are routed through the Muse models API by a proxy whose meter counts
-            every call at flat per-call rates for budget accounting only; the figures themselves never
-            come from the model.
+            The assistant is held to that contract by tooling, not by intention. The project's own eval
+            replays a fixed corpus of questions — every shape the assistant can be asked, including the
+            shapes it must refuse — hermetically, through the same schema and validator the live path
+            uses: every recorded intent must match exactly, and every refusal case must stay
+            non-runnable. The scores are recorded in the project's eval record; the replay exercises the
+            schema and validator, and says nothing about the live model's accuracy.
+          </p>
+          <p>
+            Separately, the AI layer's safety properties are checked at verification time by
+            Sovereign-Harness (sovereign-harness 0.5.1): that the runtime model is a Muse model, that
+            ungrounded or unscanned research prose cannot be shown, and that a composed answer whose
+            figures or citations fail verification is withheld. The check is a panel of Muse models —
+            Muse Spark 1.3 and Muse Wonder — with a Muse Wonder judge; the convergence specialist is
+            pinned to Muse models as well, every run is cost-bounded before dispatch and recorded in a
+            hash-chained ledger that is verified afterwards, and each run's event record is audited so
+            that no model other than a Muse model takes part. The first panel verdicts are pending an
+            upstream limit reset, so those checks are in place but not yet green. Sovereign-Harness runs
+            only at verification time; it does not drive, route, or check live requests. Changes to this
+            layer are additionally scored before they ship by Jev, a typed judgement model, under the
+            gate policy in the source repository. Questions are routed through the Muse models API by
+            a proxy whose meter counts every call at flat per-call rates for budget accounting only; the
+            figures themselves never come from the model.
           </p>
         </div>
       </section>

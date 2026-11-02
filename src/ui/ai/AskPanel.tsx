@@ -82,6 +82,25 @@ export function needsResearch(queryText: string | undefined): boolean {
 }
 
 /**
+ * Whether a runnable intent is served by the answer pipeline
+ * (core/ai/answer.ts): a sweep (its bounds are the screen's criteria,
+ * placeless ones included — the national screen), any intent carrying
+ * filters, or a lookup/compare naming places and measures, which the
+ * pipeline renders as the plain figure card. Similarity is the one
+ * runnable mode with no pipeline shape: the screen cannot express
+ * "like this place", so it keeps the existing views alone.
+ */
+export function answerEligible(intent: ValidatedIntent): boolean {
+  if (intent.mode === 'sweep_filter') return true
+  if (intent.filters.length > 0) return true
+  return (
+    (intent.mode === 'lookup' || intent.mode === 'compare') &&
+    intent.geographies.length > 0 &&
+    intent.metricKeys.length > 0
+  )
+}
+
+/**
  * Starting points offered under the welcome. Each one is a shape the
  * intent path is verified to run — a two-place rent comparison (the
  * first was exercised live against the portal), a single-place lookup,
@@ -182,6 +201,7 @@ export function AskPanel({
   byoProvider,
   validator = hermeticStubValidator,
   onExecute,
+  onAnswerRequest,
   proxyError,
   clarificationCandidates,
   onOpenSettings,
@@ -208,6 +228,17 @@ export function AskPanel({
    * bounds, and saying so is better than changing nothing in silence.
    */
   onExecute?: (intent: ValidatedIntent) => string | void
+  /**
+   * Hands a runnable, answer-eligible intent and the reader's original
+   * question text to the answer layer (App owns the rows and the place
+   * index the pipeline screens over). When this is provided, the
+   * pipeline owns research for eligible questions — it researches the
+   * screened subset with this same question text — so the panel defers
+   * its standalone research until the parse settles and fires it only
+   * for questions the pipeline will not serve. Absent (tests, other
+   * mounts), research fires in parallel with the parse, as before.
+   */
+  onAnswerRequest?: (intent: ValidatedIntent, queryText: string) => void
   proxyError?: ProxyError | null
   clarificationCandidates?: ClarificationCandidates
   onOpenSettings?: () => void
@@ -236,6 +267,14 @@ export function AskPanel({
     | { status: 'done'; prose: string; sources: ResearchSource[] }
   >({ status: 'idle' })
   const researchRun = useRef(0)
+  /**
+   * The reader's most recent question text. The answer layer's
+   * research query is the original question (the pipeline's contract),
+   * and editor or clarification commits re-run the understood request
+   * without re-asking it — they reuse this text rather than inventing
+   * a query from the intent.
+   */
+  const lastQueryText = useRef('')
 
   /**
    * Grounded web findings for the parts of a question the Census data
@@ -286,13 +325,29 @@ export function AskPanel({
    * never has to press a Run button; the understood request stays on
    * screen so what ran is always visible and adjustable.
    */
-  function executeNow(next: ValidatedIntent) {
-    if (!onExecute) return
-    const said = onExecute(next)
-    setExecutionNote(typeof said === 'string' ? said : '')
+  function executeNow(next: ValidatedIntent, queryText?: string) {
+    if (onExecute) {
+      const said = onExecute(next)
+      setExecutionNote(typeof said === 'string' ? said : '')
+    }
+    const questionText = queryText ?? (lastQueryText.current || undefined)
+    if (onAnswerRequest && questionText && answerEligible(next)) {
+      onAnswerRequest(next, questionText)
+    }
   }
 
-  function accept(result: IntentResult, spokenTranscript?: string, queryText?: string) {
+  /**
+   * Returns the parsed intent when one was set (runnable or awaiting
+   * clarification), or null when the reply was refused outright.
+   * runQuery uses the distinction to settle the deferred research:
+   * only a runnable, answer-eligible intent hands research to the
+   * answer pipeline.
+   */
+  function accept(
+    result: IntentResult,
+    spokenTranscript?: string,
+    queryText?: string,
+  ): ValidatedIntent | null {
     const check = validateIntent(result.intent)
     // National-screen rescue: a placeless superlative ("cheapest rent in
     // America") clarifies with neither a place nor a measure, and the
@@ -321,7 +376,7 @@ export function AskPanel({
       )
       if (!rescued) {
         setNote('That request cannot be run as asked. Try the manual search below.')
-        return
+        return null
       }
       parsed = rescued
     } else {
@@ -340,7 +395,7 @@ export function AskPanel({
       const verdict = checkSpokenNumbers(spokenTranscript, parsed, validator)
       if (!verdict.pass) {
         setNote(SPOKEN_NUMBER_MISMATCH_NOTE)
-        return
+        return null
       }
     }
     if (result.prose) {
@@ -359,7 +414,8 @@ export function AskPanel({
     } else if (parsed.clarificationNeeded) {
       setNote('More detail is needed before anything runs. Check the understood request below.')
     }
-    if (canRun(parsed)) executeNow(parsed)
+    if (canRun(parsed)) executeNow(parsed, queryText)
+    return parsed
   }
 
   /** Editor and clarification changes are committed picks; a runnable result runs. */
@@ -373,14 +429,34 @@ export function AskPanel({
     setNote('')
     setCoverageNote('')
     setCaughtError(null)
-    // Research runs in parallel with the parse: it answers a different
-    // part of the question (what the Census data cannot cover), so
-    // neither waits on the other.
+    lastQueryText.current = queryText
+    // Research answers a different part of the question (what the
+    // Census data cannot cover). Without an answer layer wired, it
+    // runs in parallel with the parse, as it always has. With one,
+    // it is deferred until the parse settles: a runnable,
+    // answer-eligible intent hands research to the pipeline (which
+    // researches the screened subset with this same question text),
+    // and firing the standalone path too would spend two research
+    // calls on one question and render two overlapping web sections.
+    // Every other outcome — clarification, an ineligible mode, a
+    // refused or failed parse — settles by firing the standalone
+    // path, so its coverage-note fallback is preserved.
+    let researchDeferred = false
     if (needsResearch(queryText)) {
-      startResearch(queryText)
+      if (onAnswerRequest) {
+        researchDeferred = true
+      } else {
+        startResearch(queryText)
+      }
     } else {
       researchRun.current += 1
       setResearch({ status: 'idle' })
+    }
+    const settleResearch = (parsed: ValidatedIntent | null) => {
+      if (!researchDeferred) return
+      researchDeferred = false
+      if (parsed && canRun(parsed) && answerEligible(parsed)) return
+      startResearch(queryText)
     }
     const request = {
       slots: { geographyHints: [], metricHints: [] },
@@ -392,10 +468,11 @@ export function AskPanel({
       // (PARSE_RETRYABLE / PARSE_RETRY_DELAYS_MS above) instead of
       // failing the reader's question on the first bad second.
       let accepted = false
+      let acceptedParsed: ValidatedIntent | null = null
       let lastErr: unknown
       for (let attempt = 0; attempt <= parseRetryDelaysMs.length && !accepted; attempt++) {
         try {
-          accept(
+          acceptedParsed = accept(
             await provider.intent(request, new AbortController().signal),
             spokenTranscript,
             queryText,
@@ -419,7 +496,10 @@ export function AskPanel({
           await new Promise((resolve) => setTimeout(resolve, parseRetryDelaysMs[attempt]))
         }
       }
-      if (accepted) return
+      if (accepted) {
+        settleResearch(acceptedParsed)
+        return
+      }
       const known = extractProxyError(lastErr)
       diagnostics.recordErrorState(known ?? 'unexpected')
       if (
@@ -432,16 +512,18 @@ export function AskPanel({
         }) === 'byo'
       ) {
         try {
-          accept(
+          const parsed = accept(
             await byoProvider.intent(request, new AbortController().signal),
             spokenTranscript,
             queryText,
           )
+          settleResearch(parsed)
           return
         } catch {
           // BYO-direct also failed; fall through to the shared copy below.
         }
       }
+      settleResearch(null)
       if (known) setCaughtError(known)
       setNote(
         known

@@ -317,15 +317,31 @@ export class DurableMeterClient {
     )
   }
 
-  recordCall(
+  /**
+   * Accounting for one served call, spoken in the ops the DEPLOYED
+   * meter class dispatches. Measured 2026-11-02, first de-gated
+   * deployment (d3d5bbe): successful calls stopped appearing in
+   * diagnostics (requests/spent frozen across intent + explain +
+   * briefing probes while recordError still landed) because the
+   * standalone civicscope-meter worker still runs the pre-recordCall
+   * class — its dispatch has no 'recordCall' op, so every recordCall
+   * failed and the accounting wrapper swallowed it, exactly as
+   * designed, invisibly. reserve + settle is the same bookkeeping in
+   * the two ops every deployed class speaks. A null reservation (the
+   * old contract's cap refusal) loses that one call's count and
+   * nothing else — accounting only, never admission. Retire this
+   * composition when the meter worker is redeployed from a source
+   * whose dispatch includes 'recordCall'.
+   */
+  async recordCall(
     clientId: string,
     actualMicroUsd: number,
     tin: number,
     tout: number,
   ): Promise<void> {
-    return this.call<null>('recordCall', [clientId, actualMicroUsd, tin, tout], false).then(
-      () => undefined,
-    )
+    const id = await this.reserve(clientId, actualMicroUsd, tin + tout)
+    if (id === null) return
+    await this.settle(id, clientId, actualMicroUsd, tin, tout)
   }
 
   release(id: string): Promise<void> {

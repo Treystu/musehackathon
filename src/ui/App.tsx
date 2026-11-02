@@ -40,6 +40,11 @@ import {
   type ResolvedAnswerGeographies,
 } from './ai/answer-runner'
 import { DecisionModal } from './ai/DecisionModal'
+import { GeneralAnswer } from './ai/GeneralAnswer'
+import {
+  composeGeneralAnswer,
+  type GeneralAnswerData,
+} from './ai/general-runner'
 import { createSpeechDriver, type SpeechDriver } from './ai/speech-driver'
 import { composeSpokenSummary, guardSpokenSentences } from './ai/spoken-answer'
 import { ThinkingIndicator } from './ai/ThinkingIndicator'
@@ -324,15 +329,83 @@ export default function App() {
     resolved: ResolvedAnswerGeographies
   } | null>(null)
 
+  /**
+   * The general lane's rendered state (plan C13), declared before
+   * handleAnswerRequest because that handler clears it: a new DATA
+   * question replaces a stale general card, but a hybrid question's
+   * data companion — which arrives through handleAnswerRequest with
+   * the SAME query text, immediately after the general handler —
+   * must not cancel the general part it pairs with.
+   */
+  const [generalAnswer, setGeneralAnswer] = useState<GeneralAnswerData | null>(null)
+  const [generalNote, setGeneralNote] = useState<string | null>(null)
+  const generalSeq = useRef(0)
+  const generalQueryRef = useRef<string | null>(null)
+
   const handleAnswerRequest = useCallback((intent: ValidatedIntent, queryText: string) => {
     const id = ++answerRequestSeq.current
     // A new question replaces the previous answer outright; a stale
     // card above fresh results would read as this question's answer.
     setAnswer(null)
     setAnswerNote(null)
+    if (generalQueryRef.current !== queryText) {
+      generalSeq.current += 1
+      setGeneralAnswer(null)
+      setGeneralNote(null)
+    }
     setModalState((state) => expireModalForNewQuestion(state))
     setAnswerRequest({ id, intent, queryText })
   }, [])
+
+  /**
+   * The general lane (plan C13): AskPanel hands a genuinely
+   * off-domain question here; the general runner's answer renders in
+   * the answer column under its own label (GeneralAnswer), beside —
+   * never inside — the data card. A hybrid question's data part
+   * arrives separately through handleAnswerRequest, so both labeled
+   * parts render. A new data question clears the general card (the
+   * handleAnswerRequest wrapper below), and a failed general run
+   * states itself in one note line rather than leaving the area
+   * empty.
+   */
+  const handleGeneralRequest = useCallback((_intent: ValidatedIntent, queryText: string) => {
+    const id = ++generalSeq.current
+    generalQueryRef.current = queryText
+    setGeneralAnswer(null)
+    setGeneralNote(null)
+    void (async () => {
+      try {
+        const data = await composeGeneralAnswer({
+          queryText,
+          deps: { provider: HOUSE_PROVIDER },
+        })
+        if (generalSeq.current !== id) return
+        setGeneralAnswer(data)
+      } catch {
+        if (generalSeq.current !== id) return
+        setGeneralNote(
+          'That question sits outside the Census data, and the general answer could not be reached just now. The data views below still work.',
+        )
+      }
+    })()
+  }, [])
+
+  // In voice mode the general lane's inquiry turn is spoken through
+  // the same speech driver and the same spoken-number guard as the
+  // decision modal's question (plan C7/C10 wiring): the inquiry text
+  // carries no figures, so it passes the guard with an empty verified
+  // list, and any numeral that ever entered it would suppress the
+  // speech, never the inquiry. Beat 1's own numerals are the model's
+  // estimates, not verified figures, so they are NOT spoken — speech
+  // never replaces the on-screen card, and the spoken-number
+  // provenance gate is not widened for them.
+  const spokenGeneralRef = useRef<GeneralAnswerData | null>(null)
+  useEffect(() => {
+    if (!voiceMode || !generalAnswer?.inquiry) return
+    if (spokenGeneralRef.current === generalAnswer) return
+    spokenGeneralRef.current = generalAnswer
+    speechDriverRef.current?.speak(guardSpokenSentences([generalAnswer.inquiry.text], []))
+  }, [generalAnswer, voiceMode])
 
   // In voice mode a live decision modal is also spoken, once per run
   // (plan C7 + C10): the question text passes the spoken-number guard
@@ -1237,6 +1310,7 @@ export default function App() {
                   figures={askFigures}
                   onExecute={executeIntent}
                   onAnswerRequest={handleAnswerRequest}
+                  onGeneralRequest={handleGeneralRequest}
                   onVoiceModeChange={setVoiceMode}
                   clarificationCandidates={{
                     geographies: [],
@@ -1262,6 +1336,29 @@ export default function App() {
               request is in flight. A handoff promise from AskPanel
               never stands over an empty answer area again (Round 11).
             */}
+            {/*
+              The general lane's card (plan C13) renders in the same
+              answer column, above the data card: for a pure
+              off-domain question it is the answer; for a hybrid it
+              is the estimate part, labeled as the model's own, with
+              the Census part on the data card below it.
+            */}
+            {generalAnswer ? (
+              <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+                <GeneralAnswer answer={generalAnswer} />
+              </div>
+            ) : generalNote ? (
+              <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+                <section
+                  aria-label="General answer"
+                  className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-[0_1px_6px_rgba(32,33,36,0.14)]"
+                >
+                  <p role="note" className="mt-2 text-sm text-slate-600">
+                    {generalNote}
+                  </p>
+                </section>
+              </div>
+            ) : null}
             {answer ? (
               <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
                 {voiceMode && !voiceMuted && speechDriverRef.current?.isAvailable() ? (

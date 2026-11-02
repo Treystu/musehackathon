@@ -6,8 +6,8 @@
  *
  * The canonical contract both sides now code against:
  *
- *   POST /api/muse/jev  { set: 'J-LOOP' | 'J-BRANCH' | 'J-PHRASE',
- *                         state, questions }
+ *   POST /api/muse/jev  { set: 'J-LOOP' | 'J-BRANCH' | 'J-PHRASE' |
+ *                         'J-GEN' | 'J-INQUIRY', state, questions }
  *     -> { answers: { [questionId]: JevAnswer }, model, latencyMs }
  *
  * The CLIENT authors the questions (it knows the criterion ids and
@@ -32,8 +32,14 @@
  * the same values — one source of truth, both import surfaces.
  */
 
-export type JevSetId = 'J-LOOP' | 'J-BRANCH' | 'J-PHRASE'
-export const JEV_SET_IDS: readonly JevSetId[] = ['J-LOOP', 'J-BRANCH', 'J-PHRASE']
+export type JevSetId = 'J-LOOP' | 'J-BRANCH' | 'J-PHRASE' | 'J-GEN' | 'J-INQUIRY'
+export const JEV_SET_IDS: readonly JevSetId[] = [
+  'J-LOOP',
+  'J-BRANCH',
+  'J-PHRASE',
+  'J-GEN',
+  'J-INQUIRY',
+]
 
 /** The TypeSafe model alias the Jev route requests. */
 export const JEV_MODEL = 'jev-latest'
@@ -83,6 +89,23 @@ export const JEV_BRANCH_THRESHOLD = 0.75
 export const JEV_PHRASE_THRESHOLD = 0.8
 /** The Jev loop runs at most this many patch rounds (plan C4). */
 export const JEV_LOOP_MAX_ROUNDS = 2
+/**
+ * J-GEN accuracy bar (C13 refinement, owner-set): the general
+ * answer's accuracy/confidence Score — two levels, so its expected
+ * value reads on the 0-1 scale — must clear 0.98, or the answer
+ * ships with its precision limit stated after the round cap.
+ */
+export const GEN_ACCURACY_TARGET = 0.98
+/** J-GEN relevance bar, on the same 0-1 two-level Score scale. */
+export const GEN_RELEVANCE_TARGET = 0.9
+/**
+ * J-INQUIRY bars (C13 refinement): a specific bridge is offered only
+ * when its relevance Score AND its confidence Score each clear 0.90
+ * (two-level Scores, expected values on the 0-1 scale). Below either
+ * bar, the inquiry is the open question only — no manufactured tie-in.
+ */
+export const INQUIRY_RELEVANCE_THRESHOLD = 0.9
+export const INQUIRY_CONFIDENCE_THRESHOLD = 0.9
 
 /** Aliases from the server copy — same values, one source of truth. */
 export const JEV_CRITERION_PASS = JEV_CRITERION_NOUL_THRESHOLD
@@ -173,6 +196,96 @@ export function branchQuestions(): JevQuestion[] {
       instructions: 'Which catalogued branch point this is.',
       criteria: [...BRANCH_CHOICE_OPTIONS],
     },
+  ]
+}
+
+export const GEN_ACCURACY_QUESTION_ID = 'gen-accuracy'
+export const GEN_RELEVANCE_QUESTION_ID = 'gen-relevance'
+
+/**
+ * J-GEN (plan C13 refinement): the general lane's judgment set. The
+ * accuracy Score's two levels put its expected value on the 0-1
+ * scale the owner's 0.98 bar is stated on; relevance uses the same
+ * scale so both read the same way in the loop's gap list. The
+ * deterministic arithmetic check (arithmetic-check.ts) runs beside
+ * this set in code — Jev judges the assumptions, code owns the
+ * multiplication, and a failed arithmetic check enters the loop as
+ * a named gap exactly like a failed Score.
+ */
+export function genQuestions(): JevQuestion[] {
+  return [
+    {
+      id: GEN_ACCURACY_QUESTION_ID,
+      type: 'score' as const,
+      instructions:
+        'How accurate and well-supported is this general answer under its stated assumptions?',
+      criteria: [
+        'inaccurate, unsupported, or wrong under its stated assumptions',
+        'accurate and well-supported under its stated assumptions',
+      ],
+    },
+    {
+      id: GEN_RELEVANCE_QUESTION_ID,
+      type: 'score' as const,
+      instructions: 'How directly does this general answer address the question asked?',
+      criteria: [
+        'answers a different question',
+        'directly addresses the question asked',
+      ],
+    },
+  ]
+}
+
+export const INQUIRY_CHOICE_QUESTION_ID = 'inquiry-choice'
+/** The explicit no-bridge option in the J-INQUIRY Choice set. */
+export const INQUIRY_NONE_OPTION = 'none'
+
+export function inquiryRelevanceQuestionId(candidateId: string): string {
+  return `inquiry-relevance:${candidateId}`
+}
+
+export function inquiryConfidenceQuestionId(candidateId: string): string {
+  return `inquiry-confidence:${candidateId}`
+}
+
+/**
+ * J-INQUIRY (plan C13 refinement, beat 2): a Choice among the
+ * candidate underlying-intent bridges PLUS the explicit 'none'
+ * option, and a relevance + confidence Score per candidate. A
+ * specific bridge renders only when the Choice selects it AND both
+ * of its Scores clear their 0.90 bars; anything else is the open
+ * question only.
+ */
+export function inquiryQuestions(
+  candidates: readonly { id: string; offerText: string }[],
+): JevQuestion[] {
+  return [
+    {
+      id: INQUIRY_CHOICE_QUESTION_ID,
+      type: 'choice' as const,
+      instructions:
+        'Which candidate, if any, names what this reader is plausibly actually after, ' +
+        'in a way this place-data tool can genuinely serve?',
+      criteria: [...candidates.map((c) => c.id), INQUIRY_NONE_OPTION],
+    },
+    ...candidates.flatMap((candidate): JevQuestion[] => [
+      {
+        id: inquiryRelevanceQuestionId(candidate.id),
+        type: 'score' as const,
+        instructions:
+          `How relevant is this bridge to the reader's actual question and to this ` +
+          `tool's real capabilities: ${candidate.offerText}`,
+        criteria: ['not relevant to this reader or this tool', 'genuinely relevant'],
+      },
+      {
+        id: inquiryConfidenceQuestionId(candidate.id),
+        type: 'score' as const,
+        instructions:
+          `How confident is it that this bridge names what the reader is actually after: ` +
+          candidate.offerText,
+        criteria: ['speculative guess', 'well-grounded in the question asked'],
+      },
+    ]),
   ]
 }
 
@@ -291,6 +404,11 @@ export function questionsForSet(set: JevSetId, criteria: readonly string[] = [])
       return branchQuestionsFallback()
     case 'J-PHRASE':
       return phraseQuestionsFallback()
+    case 'J-GEN':
+      return genQuestions()
+    case 'J-INQUIRY':
+      // Route-level fallback: the label criteria carry candidate ids.
+      return inquiryQuestions(criteria.map((id) => ({ id, offerText: id })))
   }
 }
 
@@ -350,7 +468,11 @@ export function createHttpJevTransport(
         ? loopQuestions(loopCriteriaFromState(state))
         : set === 'J-BRANCH'
           ? branchQuestions()
-          : phraseQuestions()
+          : set === 'J-GEN'
+            ? genQuestions()
+            : set === 'J-INQUIRY'
+              ? inquiryQuestions(inquiryCandidatesFromState(state))
+              : phraseQuestions()
     const response = await fetcher('/api/muse/jev', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -367,6 +489,19 @@ export function createHttpJevTransport(
     }
     return { answers: body.answers, model: body.model, latencyMs: body.latencyMs }
   }
+}
+
+/** The inquiry set's candidates ride in the state the general runner builds. */
+export function inquiryCandidatesFromState(
+  state: Record<string, unknown>,
+): { id: string; offerText: string }[] {
+  const candidates = state.candidates
+  if (!Array.isArray(candidates)) return []
+  return candidates.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return []
+    const { id, offerText } = entry as { id?: unknown; offerText?: unknown }
+    return typeof id === 'string' && typeof offerText === 'string' ? [{ id, offerText }] : []
+  })
 }
 
 /** The loop set's criteria ride in the state the runner builds (see jev-loop.ts). */

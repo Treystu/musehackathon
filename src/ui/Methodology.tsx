@@ -141,6 +141,19 @@ export function Methodology({
             what the sources say, with the citation attached — the weighing stays with the reader.
           </p>
           <p>
+            A question that is not about places or data at all — arithmetic, a joke, a thought
+            experiment — is answered by the model from its own knowledge, in the answer column
+            under a label that says exactly that: it is the model&rsquo;s own answer, outside the
+            Census data, and its figures are never presented as Census figures or checked by the
+            figure checker above, which governs data prose only. Computations it states are
+            verified arithmetically in code, and the answer is also scored for accuracy by the
+            typed judgement model when that service is reachable; an answer that stays below
+            the scoring bar after revision says so in one clause rather than dressing an
+            estimate as exact. Under it, the assistant may ask once what brought you here — a
+            specific possibility only when it is confidently relevant, otherwise the open
+            question — and a reply to that question is treated as a new question in full.
+          </p>
+          <p>
             The assistant is held to that contract by tooling, not by intention. The project's own eval
             replays a fixed corpus of questions — every shape the assistant can be asked, including the
             shapes it must refuse — hermetically, through the same schema and validator the live path

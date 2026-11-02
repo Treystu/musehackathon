@@ -10,6 +10,7 @@
  * server-side only and is never sent to the browser.
  */
 import { validateIntent } from '../../../src/core/ai/intent-schema'
+import { resolveDomainClassification } from '../../../src/core/ai/general'
 import { preCallGate, mapProviderError, attemptCall, accountCall, accountError, accountFailure, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute, type MuseEnv, type PagesContext } from '../../../src/server/muse-adapter'
 
@@ -51,10 +52,27 @@ export async function handleIntent(
       accountError(deps, check.error)
       return { status: 422, body: { error: check.error, detail: check.detail } }
     }
+    // The domain classification's deterministic guards (plan C13):
+    // when the model supplied a classification, the guards may
+    // correct it — current-events phrasing is never off-domain, a
+    // servable place+measure reading prefers the data class — and
+    // the corrected value is what rides the contract out. When the
+    // model supplied none, the reply keeps its prior shape and
+    // consumers apply the (a)-preference default themselves.
+    const intent =
+      check.intent.domain !== undefined
+        ? {
+            ...check.intent,
+            domain: resolveDomainClassification(
+              check.intent,
+              typeof body.queryText === 'string' ? body.queryText : undefined,
+            ).domain,
+          }
+        : check.intent
     // Counted only once the intent validates, as before — but as pure
     // accounting: best-effort, and never a condition of serving.
     accountCall(deps, req.clientId, FLAT_COST_MICRO, FLAT_TOKENS_IN, FLAT_TOKENS_OUT)
-    return { status: 200, body: { intent: check.intent } }
+    return { status: 200, body: { intent } }
   } catch (e) {
     accountFailure(deps)
     const mapped = mapProviderError(e)

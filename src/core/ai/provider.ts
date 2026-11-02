@@ -18,12 +18,26 @@ export interface IntentRequest {
   locale: 'en'
 }
 
+/**
+ * The three-way domain classification at intent time (plan C13):
+ * 'data_with_gaps' (a question about US places / Census data /
+ * researched criteria — gaps go to clarification), 'off_domain'
+ * (genuinely off-domain — the general lane answers it), 'safety'
+ * (safety-tier — the existing refusal shape, unchanged). Optional on
+ * the type for back-compat with intents constructed before the field
+ * existed; validateIntent stamps the (a)-preference default, and
+ * resolveDomainClassification (core/ai/general.ts) applies the
+ * deterministic guards. Never a second model call.
+ */
+export type DomainClassification = 'data_with_gaps' | 'off_domain' | 'safety'
+
 export interface ValidatedIntent {
   mode: IntentMode
   geographies: string[]
   metricKeys: string[]
   filters: { metricKey: string; op: 'gt' | 'lt' | 'eq_range'; value: number }[]
   clarificationNeeded: boolean
+  domain?: DomainClassification
 }
 
 export interface IntentResult {
@@ -158,12 +172,29 @@ export interface ResearchResult {
   sources: ResearchSource[]
 }
 
+/**
+ * A general-lane request (plan C13, beat 1): a genuinely off-domain
+ * question the model answers from its own knowledge. A revision
+ * request carries the current answer text plus the J-GEN loop's
+ * named gaps verbatim and patches only those (the loop's
+ * patch-don't-regenerate rule, applied to general prose).
+ */
+export interface GeneralRequest {
+  queryText: string
+  revision?: { answerText: string; gaps: string[] }
+}
+
+export interface GeneralResult {
+  prose: string
+}
+
 export interface MuseProvider {
   intent(req: IntentRequest, signal: AbortSignal): Promise<IntentResult>
   explain(req: ExplainRequest, signal: AbortSignal): Promise<ExplainResult>
   briefing(req: BriefingRequest, signal: AbortSignal): Promise<BriefingResult>
   transcribe(req: TranscribeRequest, signal: AbortSignal): Promise<TranscribeResult>
   research(req: ResearchRequest, signal: AbortSignal): Promise<ResearchResult>
+  general(req: GeneralRequest, signal: AbortSignal): Promise<GeneralResult>
 }
 
 /**
@@ -232,6 +263,9 @@ export function createStubProvider(
     },
     async research() {
       return { prose: '', sources: [] }
+    },
+    async general() {
+      return { prose: '' }
     },
     ...handler,
   }

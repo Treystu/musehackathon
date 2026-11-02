@@ -161,6 +161,12 @@ export function createReplayProvider(corpus: GoldenCorpus): MuseProvider {
     async research() {
       return { prose: '', sources: [] }
     },
+    // The replay corpus records intents, not general answers: the
+    // general lane has no recorded prose to replay, so it answers
+    // empty here exactly as explain does.
+    async general() {
+      return { prose: '' }
+    },
   }
   return provider
 }

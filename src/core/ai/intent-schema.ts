@@ -5,7 +5,18 @@
  * school/health keys can never appear in filters by construction.
  */
 import { METRIC_KEYS, SORTABLE_METRIC_KEYS } from '../civicscope-registry'
-import type { IntentMode, ValidatedIntent } from './provider'
+import type { DomainClassification, IntentMode, ValidatedIntent } from './provider'
+
+/** The closed domain-classification enum (plan C13, three-way). */
+export const DOMAIN_CLASSIFICATIONS: readonly DomainClassification[] = [
+  'data_with_gaps',
+  'off_domain',
+  'safety',
+]
+
+function isDomainClassification(value: unknown): value is DomainClassification {
+  return typeof value === 'string' && DOMAIN_CLASSIFICATIONS.some((d) => d === value)
+}
 
 /** Exactly the ported SORTABLE_METRIC_KEYS — same reference, never a copy. */
 export const FILTER_LEGAL_KEYS = SORTABLE_METRIC_KEYS
@@ -139,6 +150,14 @@ export function validateIntent(raw: unknown):
   if (typeof raw.clarificationNeeded !== 'boolean') {
     return { ok: false, error: 'shape_invalid', detail: 'clarificationNeeded must be a boolean' }
   }
+  // The domain classification rides the intent contract (plan C13):
+  // when the model supplies it, it must be inside the closed
+  // three-way enum; when it does not, the field stays absent and
+  // consumers apply the (a)-preference default in
+  // resolveDomainClassification rather than inventing a stamp here.
+  if (raw.domain !== undefined && !isDomainClassification(raw.domain)) {
+    return { ok: false, error: 'shape_invalid', detail: 'domain outside closed enum' }
+  }
   if (raw.geographies.length > MAX_GEOGRAPHIES) {
     return { ok: false, error: 'shape_invalid', detail: 'too many geographies' }
   }
@@ -211,6 +230,7 @@ export function validateIntent(raw: unknown):
       metricKeys,
       filters,
       clarificationNeeded: raw.clarificationNeeded,
+      ...(isDomainClassification(raw.domain) ? { domain: raw.domain } : {}),
     },
   }
 }

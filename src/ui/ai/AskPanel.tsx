@@ -21,6 +21,14 @@ import {
 } from '../../core/ai/answer'
 import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
 import {
+  INQUIRY_WAVE_OFF_CLOSE,
+  dataIntentForHybrid,
+  isInquiryWaveOff,
+  markInquiryWavedOff,
+  readInquirySession,
+  resolveDomainClassification,
+} from '../../core/ai/general'
+import {
   NATIONAL_SCREEN_LABELS,
   completeParsedBoundedScreen,
   rescueNationalScreen,
@@ -407,6 +415,7 @@ export function AskPanel({
   validator = hermeticStubValidator,
   onExecute,
   onAnswerRequest,
+  onGeneralRequest,
   onVoiceModeChange,
   proxyError,
   clarificationCandidates,
@@ -443,6 +452,15 @@ export function AskPanel({
    * mounts), research fires in parallel with the parse, as before.
    */
   onAnswerRequest?: (intent: ValidatedIntent, queryText: string) => void
+  /**
+   * Hands a genuinely off-domain intent (plan C13: domain
+   * 'off_domain' after the deterministic guards) and the reader's
+   * question text to the general lane (App owns the general runner
+   * and its rendering in the answer column). Absent, an off-domain
+   * parse keeps the pre-lane behavior — the clarification panel —
+   * exactly as in mounts without the lane wired.
+   */
+  onGeneralRequest?: (intent: ValidatedIntent, queryText: string) => void
   /**
    * Voice-mode activation for spoken answers (plan C10): called with
    * true only when a mic transcript is ACCEPTED (the question arrived
@@ -655,6 +673,25 @@ export function AskPanel({
         setNote('Wording was withheld for failing verification. Figures are shown without it.')
       }
     }
+    // The general lane (plan C13): a parse the guards resolve to
+    // genuinely off-domain goes to the general runner, never the
+    // clarification panel — the panel was the whole response to
+    // every cluster-E case on the baseline build. A hybrid (a place
+    // named inside an estimate question) ALSO routes its place part
+    // to the data path as a first-class intent, and that data intent
+    // is the understood request the panel shows. Without a general
+    // lane wired, this branch does not exist and the panel stands.
+    const resolution = resolveDomainClassification(parsed, queryText)
+    if (resolution.domain === 'off_domain' && onGeneralRequest && queryText) {
+      const generalIntent: ValidatedIntent = { ...parsed, domain: 'off_domain' }
+      onGeneralRequest(generalIntent, queryText)
+      if (resolution.hybrid) {
+        const dataIntent = withRunnability(dataIntentForHybrid(parsed))
+        setIntent(dataIntent)
+        if (canRun(dataIntent)) executeNow(dataIntent, queryText)
+      }
+      return parsed
+    }
     setIntent(parsed)
     if (rescued) {
       const label = NATIONAL_SCREEN_LABELS[rescued.metricKeys[0]!] ?? 'that measure'
@@ -681,6 +718,20 @@ export function AskPanel({
   }
 
   async function runQuery(queryText: string, spokenTranscript?: string) {
+    // The inquiry wave-off (plan C13 beat 2, battery E9): after the
+    // session's one inquiry, a short wave-off reply closes it
+    // gracefully — no parse, no second inquiry, no panel. A reply
+    // carrying any request content is not a wave-off (the pattern is
+    // deliberately narrow) and falls through to the normal pipeline
+    // as a first-class request (battery E7).
+    if (readInquirySession().asked && isInquiryWaveOff(queryText)) {
+      markInquiryWavedOff()
+      setAck('')
+      setNote(INQUIRY_WAVE_OFF_CLOSE)
+      setCoverageNote('')
+      setCaughtError(null)
+      return
+    }
     setBusy(true)
     if (needsResearch(queryText)) {
       const firstCriterion = researchFirstCriteria(queryText)[0] ??

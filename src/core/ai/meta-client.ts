@@ -24,6 +24,8 @@ import type {
   BriefingResult,
   ExplainRequest,
   ExplainResult,
+  GeneralRequest,
+  GeneralResult,
   IntentRequest,
   IntentResult,
   MuseProvider,
@@ -137,9 +139,13 @@ export function intentJsonSchema() {
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['mode', 'geographies', 'metricKeys', 'filters', 'clarificationNeeded'],
+    required: ['mode', 'geographies', 'metricKeys', 'filters', 'clarificationNeeded', 'domain'],
     properties: {
       mode: { type: 'string', enum: ['lookup', 'compare', 'sweep_filter', 'similarity'] },
+      domain: {
+        type: 'string',
+        enum: ['data_with_gaps', 'off_domain', 'safety'],
+      },
       geographies: {
         type: 'array',
         maxItems: 8,
@@ -193,6 +199,17 @@ const INTENT_SYSTEM_PROMPT = [
   // shape as its English twin, and no downstream lexical layer may
   // veto it for not matching English trigger words.
   'Questions may arrive in any language. Parse their meaning exactly as you would the same question in English.',
+  'Also classify the question in the domain field, one of three values. "data_with_gaps": a',
+  'question about United States places, Census data, or things research can check about them',
+  '(schools, amenities, safety, current housing news) — use this whenever any plausible reading',
+  'is a data question, and whenever the question mentions a real place; gaps in it are clarified,',
+  'not a reason to leave this class. "off_domain": genuinely off-domain — no plausible reading',
+  'as a question about places or data at all (arithmetic, jokes, general knowledge, questions',
+  'about what you can do, thought experiments like how many marbles would fill the moon).',
+  '"safety": a safety-tier ask, classified exactly as before. When a question mixes an',
+  'off-domain estimate with a real place (marbles in a typical house in a named town), return',
+  '"off_domain" and keep the place in geographies and any measure the place part names in',
+  'metricKeys, so both parts can be served.',
   'Return only the JSON object.',
 ].join(' ')
 
@@ -372,6 +389,48 @@ export const RESEARCH_SYSTEM_PROMPT =
   'not characterize places by race, ethnicity, religion, or national ' +
   'origin, and do not rank or steer readers toward or away from places by ' +
   'who lives there.'
+
+/**
+ * The general lane's system prompt (plan C13 refinement, beat 1):
+ * Spark answers a genuinely off-domain question head-on from its own
+ * knowledge. The shape is the owner's: the answer first — for a
+ * Fermi estimate the number first — then the derivation in one
+ * compact breath, with the assumptions in a clause, not a paragraph.
+ * Computations the answer relies on are written as explicit
+ * equations so the deterministic arithmetic check
+ * (core/ai/arithmetic-check.ts) can verify them in code; that
+ * instruction is what makes the check more than decoration, measured
+ * by the check's own extraction counts in the lane's tests.
+ * The general lane is a distinct prose class: this prose never
+ * enters the figure-provenance validator (validator.ts), because its
+ * numerals are the model's own, not retrieved figures — and it never
+ * carries Census figures, which belong to the data path alone.
+ */
+export const GENERAL_SYSTEM_PROMPT =
+  'You answer a question that is not about United States Census data, from your own ' +
+  'knowledge, for the reader of a housing-data tool. Answer head-on and precisely: no ' +
+  'deflection, no hedging stack, no refusal costume. For an estimate, give the number ' +
+  'first, then the derivation in one compact breath, with the assumptions stated in a ' +
+  'clause (sizes, volumes, packing or rounding assumptions). For exact arithmetic, give ' +
+  'the exact result and its rounding when the question asks for one. Write every ' +
+  'multiplication, division, or percentage the answer relies on as an explicit equation ' +
+  '(for example 17% of 2,450 = 416.5, or 2.2e19 / 5.2e-7 x 0.64 = 2.7e25). Keep it short: ' +
+  'a few sentences at most. Do not present any figure as Census data, do not invent a ' +
+  'statistic about a real place, and do not rank or recommend places.'
+
+function generalUserPrompt(req: GeneralRequest): string {
+  if (!req.revision) return `Question: ${req.queryText}`
+  return [
+    `Question: ${req.queryText}`,
+    'Your current answer:',
+    req.revision.answerText,
+    'Named gaps to fix:',
+    ...req.revision.gaps.map((gap) => `- ${gap}`),
+    'Patch only the named gaps and change nothing else. Keep the same shape: answer ' +
+      'first, derivation in one compact breath, assumptions in a clause, computations ' +
+      'as explicit equations.',
+  ].join('\n')
+}
 
 export interface ResearchSourceLike {
   title: string
@@ -654,6 +713,29 @@ export function createMetaDirectProvider(
       return { prose: filtered.prose, sources }
     },
 
+    async general(req: GeneralRequest, signal: AbortSignal): Promise<GeneralResult> {
+      // VALIDATOR SEPARATION (plan C13): general prose is returned
+      // exactly as the model wrote it. It is a distinct prose class
+      // and is never passed to the figure-provenance validator —
+      // its numerals are the model's own estimates, not retrieved
+      // figures, so invented_numeral has no jurisdiction here. The
+      // deterministic arithmetic check in the general runner is its
+      // verification, not the figure validator.
+      const reply = await complete(
+        {
+          messages: [
+            { role: 'system', content: GENERAL_SYSTEM_PROMPT },
+            { role: 'user', content: generalUserPrompt(req) },
+          ],
+          temperature: 0.2,
+        },
+        signal,
+      )
+      const text = contentOf(reply)
+      if (!text) throw new ProviderCallError('provider_down')
+      return { prose: text.trim() }
+    },
+
     async transcribe(req: TranscribeRequest, signal: AbortSignal): Promise<TranscribeResult> {
       // The ASR endpoint accepts mono PCM WAV only; anything else is
       // a shape failure here rather than a bare 400 upstream. The mic
@@ -883,7 +965,34 @@ export function createLiveProvider(options: LiveProviderOptions = {}): MuseProvi
       }
       return direct.research(req, signal)
     },
+
+    async general(req: GeneralRequest, signal: AbortSignal): Promise<GeneralResult> {
+      try {
+        const reply = await viaProxy<{ prose?: unknown }>(
+          '/api/muse/general',
+          { queryText: req.queryText, ...(req.revision ? { revision: req.revision } : {}) },
+          signal,
+        )
+        // No validator re-check on this path, deliberately: the
+        // route's reply is general-class prose (see the direct
+        // provider's note). parseGeneralReply checks shape only.
+        return parseGeneralReply(reply)
+      } catch (e) {
+        const code = e instanceof ProviderCallError ? e.code : null
+        if (!code || !BYO_FALLBACK_ERRORS.has(code) || !direct || !directKeyAvailable()) throw e
+      }
+      return direct.general(req, signal)
+    },
   }
+}
+
+/** Validate the general route's reply shape: prose only, no sources, no figures. */
+export function parseGeneralReply(value: unknown): GeneralResult {
+  const rec = value as { prose?: unknown } | null
+  if (!rec || typeof rec.prose !== 'string' || !rec.prose.trim()) {
+    throw new ProviderCallError('provider_down')
+  }
+  return { prose: rec.prose.trim() }
 }
 
 /** Validate the research route's reply: prose plus a non-empty source list. */

@@ -76,6 +76,53 @@ export async function requestValidatedExplanation(
   }
 }
 
+/** Error states worth one automatic wait-and-retry (see requestValidatedExplanationWithRetry). */
+const AUTO_RETRYABLE: ReadonlySet<string> = new Set([
+  'breaker_open',
+  'provider_down',
+  'rate_limited',
+])
+
+export interface ExplainRetryOptions {
+  /** Delay before the single automatic retry; tests inject ~0. */
+  retryDelayMs?: number
+  sleep?: (ms: number) => Promise<void>
+}
+
+/**
+ * Explanation with exactly one automatic retry on the transient failure
+ * classes, mirroring requestBriefingPack and AutoExplain's posture (same
+ * error set, same 15 s wait). The retry is a fresh whole request, which
+ * is the layer that helps against the failure measured live on
+ * 2026-11-02: a single request failed closed as breaker_open in ~1 s
+ * while a concurrent sibling request succeeded — a one-request bad draw,
+ * not an outage. A genuinely down upstream still ends at the same honest
+ * unavailable outcome after the second attempt. Withheld prose never
+ * retries: a refused figure must stay refused. The manual Explain
+ * buttons in data views use this wrapper; the Ask surface keeps calling
+ * requestValidatedExplanation directly because AutoExplain already
+ * retries once at the component level.
+ */
+export async function requestValidatedExplanationWithRetry(
+  provider: MuseProvider,
+  figureSetId: string,
+  figures: readonly FigureInput[],
+  options: ExplainRetryOptions = {},
+): Promise<{
+  explanation?: ExplanationState
+  message?: string
+  withholdClass?: WithholdClass
+  errorState?: ErrorState
+}> {
+  const first = await requestValidatedExplanation(provider, figureSetId, figures)
+  if (!first.errorState || !AUTO_RETRYABLE.has(first.errorState)) return first
+  const sleep =
+    options.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  await sleep(options.retryDelayMs ?? 15_000)
+  return requestValidatedExplanation(provider, figureSetId, figures)
+}
+
 export function ExplainAction({
   title,
   figureSetId,
@@ -105,7 +152,7 @@ export function ExplainAction({
     setBusy(true)
     setExplanation(undefined)
     setMessage(undefined)
-    const result = await requestValidatedExplanation(provider, figureSetId, figures)
+    const result = await requestValidatedExplanationWithRetry(provider, figureSetId, figures)
     // Counts only, in this browser: never the prose, the figures, or the error text.
     if (result.withholdClass) diagnostics.recordWithhold(result.withholdClass)
     if (result.errorState) diagnostics.recordErrorState(result.errorState)

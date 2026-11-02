@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { createStubProvider, type ExplainRequest } from '../../src/core/ai/provider'
 import type { FigureInput } from '../../src/ui/ai/FigureCard'
-import { requestValidatedExplanation, valuesForExplanation } from '../../src/ui/ai/ExplainAction'
+import {
+  requestValidatedExplanation,
+  requestValidatedExplanationWithRetry,
+  valuesForExplanation,
+} from '../../src/ui/ai/ExplainAction'
 
 function figure(key: string, value: number | null, marginOfError?: number): FigureInput {
   return {
@@ -77,6 +81,74 @@ describe('Explain action input and validator gate', () => {
     await expect(requestValidatedExplanation(empty, 'comparison', figures)).resolves.toEqual({
       message: 'The wording helper returned no explanation.',
     })
+  })
+
+  it('retries once on a transient failure and returns the retried prose', async () => {
+    let calls = 0
+    const provider = createStubProvider({
+      async explain() {
+        calls += 1
+        if (calls === 1) throw Object.assign(new Error('breaker_open'), { code: 'breaker_open' })
+        return { prose: 'The median gross rent is 1,450 ± 85.' }
+      },
+    })
+
+    const result = await requestValidatedExplanationWithRetry(
+      provider,
+      'comparison',
+      [figure('median_gross_rent', 1450, 85)],
+      { sleep: async () => {} },
+    )
+
+    expect(calls).toBe(2)
+    expect(result).toEqual({ explanation: { prose: 'The median gross rent is 1,450 ± 85.' } })
+  })
+
+  it('gives up after one retry when the failure persists', async () => {
+    let calls = 0
+    const provider = createStubProvider({
+      async explain() {
+        calls += 1
+        throw Object.assign(new Error('provider_down'), { code: 'provider_down' })
+      },
+    })
+
+    const result = await requestValidatedExplanationWithRetry(
+      provider,
+      'comparison',
+      [figure('median_gross_rent', 1450, 85)],
+      { sleep: async () => {} },
+    )
+
+    expect(calls).toBe(2)
+    expect(result.errorState).toBe('provider_down')
+    expect(result.message).toBe('Explanation is unavailable right now. The figures remain available.')
+  })
+
+  it('never retries a non-retryable error or withheld prose', async () => {
+    let badKeyCalls = 0
+    const badKey = createStubProvider({
+      async explain() {
+        badKeyCalls += 1
+        throw Object.assign(new Error('bad_key'), { code: 'bad_key' })
+      },
+    })
+    const withheld = createStubProvider({
+      async explain() {
+        return { prose: 'The median gross rent is 9999.' }
+      },
+    })
+    const figures = [figure('median_gross_rent', 1450, 85)]
+
+    const badKeyResult = await requestValidatedExplanationWithRetry(badKey, 'comparison', figures, {
+      sleep: async () => {},
+    })
+    expect(badKeyCalls).toBe(1)
+    expect(badKeyResult.errorState).toBe('bad_key')
+
+    await expect(
+      requestValidatedExplanationWithRetry(withheld, 'comparison', figures, { sleep: async () => {} }),
+    ).resolves.toEqual({ explanation: { withheld: true }, withholdClass: 'invented_numeral' })
   })
 
   it('does not call a provider when every value is absent or suppressed', async () => {

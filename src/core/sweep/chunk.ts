@@ -132,27 +132,54 @@ export interface ZctasByPrefix {
   zctas: string[]
 }
 
+/**
+ * Majority state for each two-digit ZIP prefix, as a display name.
+ *
+ * Derived 2026-11-01 from the shipped place index (the Census 2020
+ * ZCTA-to-place/county relationships over all 33,791 ZCTAs): for each
+ * prefix, the state holding the most of its ZCTAs. The table this
+ * replaces was keyed by state FIPS codes while groupByState groups by
+ * ZIP prefix, so it mislabeled nearly every group — prefix 08 (New
+ * Jersey ZIP codes) read "Colorado", 06 (Connecticut) read
+ * "California", and Colorado's own prefixes, 80 and 81, fell back to
+ * "ZIP prefix NN" and were filtered out of the state filter entirely.
+ *
+ * A prefix can straddle a state line (02 is mostly Massachusetts with
+ * Rhode Island's 028/029; 99 is Alaska with Washington's 993-995 in
+ * the minority there — see the tally in the state-scope tests). The
+ * label is therefore display text only: loading messages and group
+ * labels. Which state a ZIP belongs to is never decided here; state
+ * selection is built from the place index itself (states.ts).
+ */
 const STATE_NAMES: Record<string, string> = {
-  '01': 'Alabama', '02': 'Alaska', '04': 'Arizona', '05': 'Arkansas', '06': 'California',
-  '08': 'Colorado', '09': 'Connecticut', '10': 'Delaware', '11': 'District of Columbia',
-  '12': 'Florida', '13': 'Georgia', '15': 'Hawaii', '16': 'Idaho', '17': 'Illinois',
-  '18': 'Indiana', '19': 'Iowa', '20': 'Kansas', '21': 'Kentucky', '22': 'Louisiana',
-  '23': 'Maine', '24': 'Maryland', '25': 'Massachusetts', '26': 'Michigan', '27': 'Minnesota',
-  '28': 'Mississippi', '29': 'Missouri', '30': 'Montana', '31': 'Nebraska', '32': 'Nevada',
-  '33': 'New Hampshire', '34': 'New Jersey', '35': 'New Mexico', '36': 'New York',
-  '37': 'North Carolina', '38': 'North Dakota', '39': 'Ohio', '40': 'Oklahoma',
-  '41': 'Oregon', '42': 'Pennsylvania', '44': 'Rhode Island', '45': 'South Carolina',
-  '46': 'South Dakota', '47': 'Tennessee', '48': 'Texas', '49': 'Utah', '50': 'Vermont',
-  '51': 'Virginia', '53': 'Washington', '54': 'West Virginia', '55': 'Wisconsin',
-  '56': 'Wyoming', '60': 'American Samoa', '66': 'Guam', '69': 'Northern Mariana Islands',
-  '72': 'Puerto Rico', '78': 'Virgin Islands', '01 ': 'Alabama',
+  '00': 'Puerto Rico', '01': 'Massachusetts', '02': 'Massachusetts', '03': 'New Hampshire',
+  '04': 'Maine', '05': 'Vermont', '06': 'Connecticut', '07': 'New Jersey', '08': 'New Jersey',
+  '10': 'New York', '11': 'New York', '12': 'New York', '13': 'New York', '14': 'New York',
+  '15': 'Pennsylvania', '16': 'Pennsylvania', '17': 'Pennsylvania', '18': 'Pennsylvania',
+  '19': 'Pennsylvania', '20': 'Maryland', '21': 'Maryland', '22': 'Virginia', '23': 'Virginia',
+  '24': 'Virginia', '25': 'West Virginia', '26': 'West Virginia', '27': 'North Carolina',
+  '28': 'North Carolina', '29': 'South Carolina', '30': 'Georgia', '31': 'Georgia',
+  '32': 'Florida', '33': 'Florida', '34': 'Florida', '35': 'Alabama', '36': 'Alabama',
+  '37': 'Tennessee', '38': 'Tennessee', '39': 'Mississippi', '40': 'Kentucky', '41': 'Kentucky',
+  '42': 'Kentucky', '43': 'Ohio', '44': 'Ohio', '45': 'Ohio', '46': 'Indiana', '47': 'Indiana',
+  '48': 'Michigan', '49': 'Michigan', '50': 'Iowa', '51': 'Iowa', '52': 'Iowa',
+  '53': 'Wisconsin', '54': 'Wisconsin', '55': 'Minnesota', '56': 'Minnesota',
+  '57': 'South Dakota', '58': 'North Dakota', '59': 'Montana', '60': 'Illinois',
+  '61': 'Illinois', '62': 'Illinois', '63': 'Missouri', '64': 'Missouri', '65': 'Missouri',
+  '66': 'Kansas', '67': 'Kansas', '68': 'Nebraska', '69': 'Nebraska', '70': 'Louisiana',
+  '71': 'Louisiana', '72': 'Arkansas', '73': 'Oklahoma', '74': 'Oklahoma', '75': 'Texas',
+  '76': 'Texas', '77': 'Texas', '78': 'Texas', '79': 'Texas', '80': 'Colorado', '81': 'Colorado',
+  '82': 'Wyoming', '83': 'Idaho', '84': 'Utah', '85': 'Arizona', '86': 'Arizona',
+  '87': 'New Mexico', '88': 'New Mexico', '89': 'Nevada', '90': 'California', '91': 'California',
+  '92': 'California', '93': 'California', '94': 'California', '95': 'California',
+  '96': 'California', '97': 'Oregon', '98': 'Washington', '99': 'Alaska',
 }
 
 export function stateName(prefix: string): string {
   return STATE_NAMES[prefix] ?? `ZIP prefix ${prefix}`
 }
 
-/** Groups ZCTAs by their two-digit USPS prefix, which is the state code. */
+/** Groups ZCTAs by their first two digits (the sweep's partition unit). */
 export function groupByState(zctas: readonly string[]): ZctasByPrefix[] {
   const groups = new Map<string, string[]>()
   for (const z of zctas) {

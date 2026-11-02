@@ -21,8 +21,10 @@ export function StateFilter({
   busy,
 }: {
   options: StateOption[]
+  /** The current scope as ZIP prefixes; a state reads as selected when all
+   * of its prefixes are in the scope. */
   selected: string[]
-  onToggle: (code: string) => void
+  onToggle: (option: StateOption) => void
   onClear: () => void
   onApply: () => void
   totalChunks: number
@@ -31,6 +33,11 @@ export function StateFilter({
 }) {
   const [open, setOpen] = useState(false)
   const listId = useId()
+  const selectedOptions = options.filter((o) => o.prefixes.every((p) => selected.includes(p)))
+  const selectedText =
+    selectedOptions.length > 0 && selectedOptions.flatMap((o) => o.prefixes).length === selected.length
+      ? selectedOptions.map((o) => o.label).join(', ')
+      : selected.join(', ')
 
   return (
     <div className="panel panel-padded">
@@ -55,7 +62,7 @@ export function StateFilter({
 
       {selected.length > 0 && (
         <p className="mt-2 text-sm text-slate-800">
-          <span className="font-medium">Selected:</span> {selected.join(', ')} — about{' '}
+          <span className="font-medium">Selected:</span> {selectedText} — about{' '}
           {scopeChunks} {scopeChunks === 1 ? 'request' : 'requests'}.
         </p>
       )}
@@ -67,15 +74,15 @@ export function StateFilter({
               <label
                 key={o.code}
                 className={`cursor-pointer rounded-md border px-2.5 py-1.5 text-sm ${
-                  selected.includes(o.code)
+                  o.prefixes.every((p) => selected.includes(p))
                     ? 'border-slate-900 bg-slate-900 text-white'
                     : 'border-slate-300 text-slate-700 hover:bg-slate-50'
                 }`}
               >
                 <input
                   type="checkbox"
-                  checked={selected.includes(o.code)}
-                  onChange={() => onToggle(o.code)}
+                  checked={o.prefixes.every((p) => selected.includes(p))}
+                  onChange={() => onToggle(o)}
                   className="sr-only"
                 />
                 {o.label}

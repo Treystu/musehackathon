@@ -4,8 +4,17 @@ import { fetchAreas, rowToMetrics, type AreaRow } from './plugins/acs'
 import { enrichWithTracts } from './plugins/geography'
 import { DRILLDOWN_PLUGIN_IDS, isSchoolPlugin, registry } from './plugin-catalog'
 import { runSweep, type SweepProgress, type SweepScope } from './sweep/runSweep'
-import { CHUNK_SIZE, groupByState, listAllZctas, type ZctasByPrefix } from './sweep/chunk'
-import { describeScope, estimateChunks, stateOptions, toggleState, type StateOption } from './sweep/states'
+import { CHUNK_SIZE, listAllZctas } from './sweep/chunk'
+import {
+  buildStatePartitions,
+  describeScope,
+  estimateChunks,
+  stateOptions,
+  toggleStateOption,
+  type StateOption,
+  type StatePartition,
+} from './sweep/states'
+import { loadPlaceIndex } from './zcta-place-index'
 import { formatPlace, geocode } from './geocode'
 import { resolveCensusKey, CENSUS_KEY_EVENT, type CensusKeySource } from './censusKey'
 import { sweepCache } from './cache'
@@ -360,11 +369,19 @@ export function useHousingQuery() {
   }, [search])
 
   /**
-   * Enumerates the national ZCTA list once, keylessly, so the state picker can
-   * show real counts before the user commits to a scope. Doing this on demand
-   * rather than on load keeps the first paint instant.
+   * Enumerates the national ZCTA list once, keylessly, and partitions it by
+   * each ZCTA's own state from the place index, so the state picker can show
+   * real counts before the user commits to a scope. The enumeration is
+   * cached for ninety days, so this costs a returning visitor nothing; it
+   * runs in the background and never blocks first paint.
+   *
+   * Measured defect this wiring fixes (2026-11-01): loadStateList previously
+   * had no caller anywhere, so the partitions never loaded — the state
+   * filter rendered with no options, and the Ask sweep derivation, which
+   * intersected its prefixes with the filter's offered codes, always came
+   * up empty and applied every named-state bound to the whole country.
    */
-  const [stateList, setStateList] = useState<ZctasByPrefix[] | null>(null)
+  const [stateList, setStateList] = useState<StatePartition[] | null>(null)
   const [stateScope, setStateScope] = useState<string[]>([])
   const stateAbort = useRef<AbortController | null>(null)
 
@@ -374,14 +391,24 @@ export function useHousingQuery() {
     const ctrl = new AbortController()
     stateAbort.current = ctrl
     try {
-      const all = await listAllZctas(ctrl.signal)
-      const groups = groupByState(all)
-      setStateList(groups)
-      return groups
+      const [all, index] = await Promise.all([listAllZctas(ctrl.signal), loadPlaceIndex(ctrl.signal)])
+      if (!index) return null
+      const stateByZip = new Map<string, string>()
+      for (const [zip, record] of index.byZip) stateByZip.set(zip, record.state)
+      const partitions = buildStatePartitions(all, stateByZip)
+      setStateList(partitions)
+      return partitions
     } catch {
       return null
     }
   }, [stateList])
+
+  const stateListStarted = useRef(false)
+  useEffect(() => {
+    if (stateListStarted.current) return
+    stateListStarted.current = true
+    void loadStateList()
+  }, [loadStateList])
 
   const applyScope = useCallback(
     async (states: string[]) => {
@@ -400,7 +427,12 @@ export function useHousingQuery() {
     () =>
       estimateChunks(
         stateList
-          ? stateList.filter((g) => stateScope.length === 0 || stateScope.includes(g.zip)).reduce((n, g) => n + g.zctas.length, 0)
+          ? stateList.reduce(
+              (n, p) =>
+                n +
+                p.zctas.filter((z) => stateScope.length === 0 || stateScope.includes(z.slice(0, 2))).length,
+              0,
+            )
           : 0,
         CHUNK_SIZE,
       ),
@@ -425,10 +457,10 @@ export function useHousingQuery() {
     stateChoices,
     stateScope,
     setStateScope,
-    toggleState: (code: string) => setStateScope((cur) => toggleState(cur, code)),
+    toggleState: (option: StateOption) => setStateScope((cur) => toggleStateOption(cur, option)),
     totalChunks,
     scopeChunks,
-    scopeLabel: describeScope(stateScope),
+    scopeLabel: describeScope(stateScope, stateList ?? undefined),
     selectPlace,
     deselect,
     search,

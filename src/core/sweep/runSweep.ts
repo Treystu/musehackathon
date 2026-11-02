@@ -72,8 +72,12 @@ export interface SweepScope {
 
 export function scopeLabel(scope: SweepScope, groups: readonly ZctasByPrefix[]): string {
   if (scope.states.length === 0) return 'the United States'
-  if (scope.states.length === 1) return groups[0]?.label ?? `ZIP prefix ${scope.states[0] ?? ''}`
-  return `${scope.states.length} states`
+  // A state can span several prefixes (Colorado is 80 and 81), so the label
+  // counts distinct group labels, not prefixes.
+  const labels = [...new Set(groups.map((g) => g.label))]
+  if (labels.length === 1) return labels[0]!
+  if (labels.length > 1) return `${labels.length} states`
+  return `ZIP prefix ${scope.states[0] ?? ''}`
 }
 
 export interface SweepProgress {

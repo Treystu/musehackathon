@@ -22,7 +22,7 @@ import { FundingSection } from './Funding'
 import { StateFilter } from './StateFilter'
 import { MapView } from './MapView'
 import { sortSweepRows } from '../core/sweep-sorting'
-import { stateName } from '../core/sweep/chunk'
+import { scopePrefixesForStates, STATE_NAME_BY_CODE } from '../core/sweep/states'
 import { AskPanel } from './ai/AskPanel'
 import { BriefingView } from './ai/BriefingView'
 import {
@@ -288,31 +288,26 @@ export default function App() {
 
         // Scope the screen to the states the request names, through the same
         // scope the manual state filter drives. A state's scope is its ZIP
-        // prefixes, derived from the place index and limited to the prefixes
-        // the manual filter itself offers, so an Ask scope can never be one
-        // the reader could not have set by hand.
+        // prefixes, derived from the place index — the index is the authority
+        // on which state a ZIP is in. An earlier version intersected those
+        // prefixes with the filter's offered codes; the offered list was
+        // empty in practice (its loader had no caller), so the intersection
+        // silently emptied every scope and the bound applied nationally.
         const namedStates: string[] = []
         for (const geography of intent.geographies) {
           const state = asStateCode(geography) ?? splitStateSuffix(geography.trim().toLowerCase()).state
           if (state && !namedStates.includes(state)) namedStates.push(state)
         }
-        const scopePrefixes: string[] = []
-        if (placeIndex && namedStates.length > 0) {
-          const offered = new Set(q.stateChoices.map((option) => option.code))
-          const found = new Set<string>()
-          for (const place of placeIndex.places) {
-            if (!namedStates.includes(place.state)) continue
-            for (const zip of place.zips) found.add(zip.slice(0, 2))
-          }
-          for (const prefix of found) if (offered.has(prefix)) scopePrefixes.push(prefix)
-          scopePrefixes.sort()
-        }
+        const scopePrefixes: string[] =
+          placeIndex && namedStates.length > 0 ? scopePrefixesForStates(placeIndex.places, namedStates) : []
         let scopeNote = ''
         if (intent.geographies.length > 0 && scopePrefixes.length === 0) {
           scopeNote = ' The place in this request could not be matched to a state, so the bound was applied to the whole loaded table.'
         } else if (scopePrefixes.length > 0) {
           const label =
-            namedStates.length === 1 ? stateName(scopePrefixes[0]!) : `${namedStates.length} states`
+            namedStates.length === 1
+              ? (STATE_NAME_BY_CODE[namedStates[0]!] ?? namedStates[0]!)
+              : `${namedStates.length} states`
           const alreadyScoped =
             scopePrefixes.length === q.stateScope.length &&
             scopePrefixes.every((prefix) => q.stateScope.includes(prefix))
@@ -344,7 +339,7 @@ export default function App() {
       setView('explore')
       return `Opened similar-ZIP search from ${seed}.`
     },
-    [addZip, placeIndex, q.applyScope, q.stateScope, q.stateChoices],
+    [addZip, placeIndex, q.applyScope, q.stateScope],
   )
 
   /*

@@ -449,8 +449,16 @@ export function AskPanel({
    * Runs the intent. May return a sentence for the reader: a mode can be
    * validated and still land on a surface that cannot express one of its
    * bounds, and saying so is better than changing nothing in silence.
+   * The sentence may arrive as a promise: the App's execution resolves
+   * geographies through indexes that may still be loading when the
+   * reader asks, and a verdict taken before they land is the false
+   * "nothing was opened" note the views-layer coherence fix removed
+   * (P2b confirmation re-run, 2026-11-02). Synchronous returns keep
+   * their synchronous timing; a promised sentence lands when it
+   * resolves, guarded by the execution run below so a superseded
+   * execution never overwrites a newer run's note.
    */
-  onExecute?: (intent: ValidatedIntent) => string | void
+  onExecute?: (intent: ValidatedIntent) => string | void | Promise<string | void>
   /**
    * Hands a runnable, answer-eligible intent and the reader's original
    * question text to the answer layer (App owns the rows and the place
@@ -512,6 +520,15 @@ export function AskPanel({
     | { status: 'done'; prose: string; sources: ResearchSource[] }
   >({ status: 'idle' })
   const researchRun = useRef(0)
+  /**
+   * Which execution's promised note may still land. An execution
+   * that resolves geographies asynchronously (see the onExecute
+   * contract above) can settle after a newer question has already
+   * run; without this guard its stale note would overwrite the newer
+   * run's, the same supersession discipline researchRun applies to
+   * research.
+   */
+  const executionRun = useRef(0)
   /**
    * The reader's most recent question text. The answer layer's
    * research query is the original question (the pipeline's contract),
@@ -578,8 +595,28 @@ export function AskPanel({
     // geography in the views, like any lookup.
     const placelessHandoff = isResearchFirstHandoff(next) && next.geographies.length === 0
     if (onExecute && !placelessHandoff) {
+      const run = ++executionRun.current
       const said = onExecute(next)
-      setExecutionNote(typeof said === 'string' ? said : '')
+      if (typeof said === 'string') {
+        setExecutionNote(said)
+      } else if (said && typeof (said as Promise<string | void>).then === 'function') {
+        // A promised sentence: clear the previous run's note now (a
+        // stale "nothing was opened" must not stand while this run
+        // is still resolving), then land this run's sentence only if
+        // no newer execution has superseded it. A rejected execution
+        // leaves the cleared note — the executed views and the
+        // answer area state their own outcomes, as they do for a
+        // synchronous void return.
+        setExecutionNote('')
+        void (said as Promise<string | void>).then(
+          (landed) => {
+            if (executionRun.current === run && typeof landed === 'string') setExecutionNote(landed)
+          },
+          () => {},
+        )
+      } else {
+        setExecutionNote('')
+      }
     }
     const questionText = queryText ?? (lastQueryText.current || undefined)
     if (onAnswerRequest && questionText && answerEligible(next)) {

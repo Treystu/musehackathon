@@ -716,20 +716,80 @@ export default function App() {
    *   note rather than silently dropped.
    */
   const executeIntent = useCallback(
-    (intent: ValidatedIntent): string => {
+    async (intent: ValidatedIntent): Promise<string> => {
+      // Resolution here must be coherent with the answer layer's
+      // (views_layer_contradiction, measured by the P2b confirmation
+      // re-run, 2026-11-02: the answer-area strand was cured, but
+      // this run note still read "No ZIP code could be resolved"
+      // beside the working Boulder and Denver/Boulder county cards,
+      // Jev 0.98/0.99). Two gaps caused it, and both close before any
+      // geography is resolved:
+      // - The indexes this layer reads had no wait. The answer
+      //   effect re-runs when they land; this one-shot execution ran
+      //   with both still loading on a question asked straight after
+      //   mount (measured in the re-run harness: place and county
+      //   both still loading at execution time) and took the empty
+      //   result as the verdict. The loaders are the mount effect's
+      //   own cached promises, so awaiting them here awaits the same
+      //   load, not a second one. Only the indexes the named
+      //   geographies need are awaited: a ZIP-only request waits for
+      //   nothing, exactly as before.
+      // - A named county was resolved through the place index alone,
+      //   which carries no Denver County record at all and only the
+      //   single fallback ZIP for Boulder County. County-class
+      //   geographies now resolve through the same county-aware
+      //   resolver the answer effect uses (resolveAnswerGeographies
+      //   with the county index): a named county expands to all of
+      //   its member ZIPs, which is what the comparison opens on,
+      //   and a county the crosswalk does not carry contributes
+      //   nothing — never the place index's fallback ZIP standing in
+      //   for the county, which is the answer resolver's own rule.
+      //   Place, ZIP and state geographies keep the resolution below
+      //   unchanged, and the note below still fires for a request
+      //   whose geographies genuinely resolve to nothing (the
+      //   Atlantis County control in the re-run: both notes agree).
+      const countyClass = (geography: string) =>
+        /\b(county|parish|borough|census area|municipality)\b/i.test(geography)
+      const places: PlaceIndex | null =
+        placeIndex !== undefined
+          ? placeIndex
+          : intent.geographies.some((geography) => !/^\d{5}$/.test(geography.trim()))
+            ? await loadPlaceIndex()
+            : null
+      const counties: CountyIndex | null =
+        countyIndex !== undefined
+          ? countyIndex
+          : intent.geographies.some(countyClass)
+            ? await loadCountyIndex()
+            : null
+      const countyZips = new Map<string, string[]>()
+      if (counties) {
+        for (const county of resolveAnswerGeographies(intent, places, counties).countyGeographies) {
+          countyZips.set(county.geography, county.zctas)
+        }
+      }
       const zips: string[] = []
       for (const geography of intent.geographies) {
         if (/^\d{5}$/.test(geography.trim())) {
           if (!zips.includes(geography.trim())) zips.push(geography.trim())
           continue
         }
+        const members = countyZips.get(geography.trim())
+        if (members) {
+          for (const zip of members) if (!zips.includes(zip)) zips.push(zip)
+          continue
+        }
+        // A county-class geography the crosswalk does not carry is
+        // unresolved here, as in the answer layer — the place search
+        // below must not stand a fallback ZIP in for it.
+        if (countyClass(geography)) continue
         // Prefer a city record over a county fallback. A county record's
         // first ZIP can be a small area with no published figure for the
         // measure asked about — the Honolulu comparison opened on exactly
         // one (96759, no rent figure) while the city's own ZIPs carry the
         // figures (found live, 2026-11-01). The search box still offers
         // every record; choosing between them is execution's job.
-        const hits = placeIndex?.search(geography, 8) ?? []
+        const hits = places?.search(geography, 8) ?? []
         const resolved = (hits.find((hit) => hit.isCity) ?? hits[0])?.zips[0]
         if (resolved && !zips.includes(resolved)) zips.push(resolved)
       }
@@ -793,8 +853,8 @@ export default function App() {
                 stateCodeForGeography(geography)
               if (state && !namedStates.includes(state)) namedStates.push(state)
             }
-            if (placeIndex && namedStates.length > 0) {
-              const prefixes = scopePrefixesForStates(placeIndex.places, namedStates)
+            if (places && namedStates.length > 0) {
+              const prefixes = scopePrefixesForStates(places.places, namedStates)
               const alreadyScoped =
                 prefixes.length === q.stateScope.length &&
                 prefixes.every((prefix) => q.stateScope.includes(prefix))
@@ -822,7 +882,7 @@ export default function App() {
           if (state && !namedStates.includes(state)) namedStates.push(state)
         }
         const scopePrefixes: string[] =
-          placeIndex && namedStates.length > 0 ? scopePrefixesForStates(placeIndex.places, namedStates) : []
+          places && namedStates.length > 0 ? scopePrefixesForStates(places.places, namedStates) : []
         let scopeNote = ''
         if (intent.geographies.length > 0 && scopePrefixes.length === 0) {
           scopeNote = ' The place in this request could not be matched to a state, so the bound was applied to the whole loaded table.'
@@ -875,7 +935,7 @@ export default function App() {
       setMode('data')
       return `Opened similar-ZIP search from ${seed}.`
     },
-    [addZip, placeIndex, q.applyScope, q.stateScope],
+    [addZip, placeIndex, countyIndex, q.applyScope, q.stateScope],
   )
 
   /*

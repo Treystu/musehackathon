@@ -864,7 +864,7 @@ export default function App() {
                 />
               </div>
             )}
-            {mode === 'ask' && q.selected.length === 0 && screenStats && (
+            {mode === 'ask' && q.selected.length === 0 && q.sweepStatus === 'ready' && screenStats && (
               <div className="anim-rise anim-rise-2 mx-auto mt-10 grid max-w-4xl grid-cols-1 gap-6 border-t border-slate-200 pt-8 text-center sm:grid-cols-3">
                 <div>
                   <p className="figure-value text-3xl">{num.format(screenStats.count)}</p>
@@ -876,7 +876,9 @@ export default function App() {
                     <span className="figure-unit"> /mo</span>
                   </p>
                   <p className="figure-label mt-1">
-                    Cheapest median rent — {screenStats.cheapest.row.name} · {screenStats.cheapest.row.zcta}
+                    Cheapest median rent —{' '}
+                    {placeLabel(screenStats.cheapest.row.zcta) ?? screenStats.cheapest.row.name} ·{' '}
+                    {screenStats.cheapest.row.zcta}
                   </p>
                 </div>
                 <div>

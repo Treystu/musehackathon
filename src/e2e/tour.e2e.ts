@@ -63,10 +63,12 @@ describe('e2e: first run', () => {
     // because it could not type into it. Nothing may be modal until asked for.
     expect(await page.locator(`${TOUR}[open]`).count()).toBe(0)
 
-    // And the notice itself must not intercept: a reader can simply type.
-    expect(await page.locator('#place').count()).toBe(1)
-    await page.fill('#place', '78701')
-    expect(await page.locator('#place').inputValue()).toBe('78701')
+    // And nothing stands between the reader and the ask box: the landing
+    // surface is the Ask mode, whose input is #ask-input (the #place
+    // lookup lives on the data surfaces, not on arrival).
+    expect(await page.locator('#ask-input').count()).toBe(1)
+    await page.fill('#ask-input', '78701')
+    expect(await page.locator('#ask-input').inputValue()).toBe('78701')
   }, 60000)
 
   it('stands no notice card on the task surface; the key fact sits behind the pill tip', async () => {

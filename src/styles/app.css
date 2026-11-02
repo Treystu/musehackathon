@@ -147,17 +147,25 @@
 
 /*
  * Entrance motion (competition layer, 2026-11-01): the hero rises in —
- * a short fade with a small upward drift, staggered by utility delay.
- * The global reduced-motion guard in the base layer collapses these to
- * instant, so nothing here moves for a reader who opted out.
+ * a small upward drift, staggered by utility delay (the original fade
+ * was removed 2026-11-02; see the keyframe note for the measured
+ * contrast reason). The global reduced-motion guard in the base layer
+ * collapses these to instant, so nothing here moves for a reader who
+ * opted out.
  */
 @keyframes rise-in {
+  /* Drift only, no fade (measured 2026-11-02, axe timeline probe on the
+     a11y.e2e explore audit): an opacity fade on the container blends
+     every descendant's colors toward the page for the animation's full
+     0.55s — the Ask submit's white-on-accent measured #277be9 at
+     4.12:1 mid-fade against its settled #1a73e8 pass, and secondary
+     text blends further below its settled ratio. The upward drift
+     carries the motion on its own; colors are at full strength from
+     the first frame. */
   from {
-    opacity: 0;
     transform: translateY(10px);
   }
   to {
-    opacity: 1;
     transform: translateY(0);
   }
 }

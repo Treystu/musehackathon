@@ -121,6 +121,21 @@ function extractProxyError(e: unknown): ProxyError | null {
   return null
 }
 
+/**
+ * Failures worth waiting out (2026-11-01, owner-reported): the shared
+ * helper's upstream flaps in minute-scale windows and its circuit
+ * breaker pauses for ~30 s, so a single attempt fails a reader whose
+ * question would have parsed seconds later. The delays below span a
+ * full breaker cooldown; anything else (a bad key, an exhausted
+ * budget, a shape refusal) will not heal by waiting and fails at once.
+ */
+const PARSE_RETRYABLE: ReadonlySet<ProxyError> = new Set([
+  'breaker_open',
+  'provider_down',
+  'rate_limited',
+])
+const PARSE_RETRY_DELAYS_MS: readonly number[] = [5000, 12000, 25000]
+
 export function Disclosure() {
   return (
     <p role="note" className="house-disclosure mt-4">
@@ -157,6 +172,7 @@ export function AskPanel({
   metaFetcher,
   micRecorder,
   micStorage,
+  parseRetryDelaysMs = PARSE_RETRY_DELAYS_MS,
 }: {
   provider: MuseProvider
   /**
@@ -185,6 +201,8 @@ export function AskPanel({
   micRecorder?: MicRecorder | null
   /** Test/port injection for mic consent storage; defaults to browser storage. */
   micStorage?: MicStorage
+  /** Wait-out schedule for retryable parse failures; tests inject ~0. */
+  parseRetryDelaysMs?: readonly number[]
 }) {
   const [text, setText] = useState('')
   const [intent, setIntent] = useState<ValidatedIntent | null>(null)
@@ -297,12 +315,39 @@ export function AskPanel({
       locale: 'en' as const,
     }
     try {
-      accept(await provider.intent(request, new AbortController().signal), spokenTranscript, queryText)
-    } catch (err) {
-      const known = extractProxyError(err)
-      // A proxy failure is counted even when the BYO retry below recovers: the
-      // shared path did fail, and hiding that would understate its error rate.
-      diagnostics.recordIntentFailure(known ?? 'unexpected')
+      // Patient retry: retryable failures wait out the flap window
+      // (PARSE_RETRYABLE / PARSE_RETRY_DELAYS_MS above) instead of
+      // failing the reader's question on the first bad second.
+      let accepted = false
+      let lastErr: unknown
+      for (let attempt = 0; attempt <= parseRetryDelaysMs.length && !accepted; attempt++) {
+        try {
+          accept(
+            await provider.intent(request, new AbortController().signal),
+            spokenTranscript,
+            queryText,
+          )
+          accepted = true
+        } catch (err) {
+          lastErr = err
+          const known = extractProxyError(err)
+          // A proxy failure is counted per attempt, even when a retry
+          // or the BYO path below recovers: the shared path did fail,
+          // and hiding that would understate its error rate.
+          diagnostics.recordIntentFailure(known ?? 'unexpected')
+          if (
+            !known ||
+            !PARSE_RETRYABLE.has(known) ||
+            attempt === parseRetryDelaysMs.length
+          ) {
+            break
+          }
+          setNote('The wording helper is briefly busy. Retrying your question…')
+          await new Promise((resolve) => setTimeout(resolve, parseRetryDelaysMs[attempt]))
+        }
+      }
+      if (accepted) return
+      const known = extractProxyError(lastErr)
       diagnostics.recordErrorState(known ?? 'unexpected')
       if (
         known &&

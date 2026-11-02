@@ -1,4 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+
+/** Error states worth one automatic wait-and-retry (see AutoExplain). */
+const AUTO_RETRYABLE: ReadonlySet<string> = new Set([
+  'breaker_open',
+  'provider_down',
+  'rate_limited',
+])
 import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
 import { diagnostics } from '../../core/ai/diagnostics'
 import { requestValidatedExplanation, valuesForExplanation } from './ExplainAction'
@@ -27,6 +34,7 @@ function AutoExplain({
   const [message, setMessage] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  const autoRetriedFor = useRef<string | null>(null)
 
   useEffect(() => {
     let live = true
@@ -38,6 +46,21 @@ function AutoExplain({
       if (!live) return
       if (result.withholdClass) diagnostics.recordWithhold(result.withholdClass)
       if (result.errorState) diagnostics.recordErrorState(result.errorState)
+      // Same patience as the parse path (2026-11-01): a retryable
+      // failure — the helper's breaker pause or a provider flap — is
+      // waited out once, automatically, before the unavailable copy
+      // and the manual retry button take over.
+      if (
+        result.errorState &&
+        AUTO_RETRYABLE.has(result.errorState) &&
+        autoRetriedFor.current !== fingerprint
+      ) {
+        autoRetriedFor.current = fingerprint
+        setTimeout(() => {
+          if (live) setAttempt((n) => n + 1)
+        }, 15000)
+        return
+      }
       if (result.explanation) setExplanation(result.explanation)
       if (result.message) setMessage(result.message)
       setBusy(false)

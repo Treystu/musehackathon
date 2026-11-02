@@ -104,6 +104,32 @@ function fmtMargin(value: number | null): string | null {
   return formatMetricNumber(Math.round(value), 'number', { sweepPrecision: true })
 }
 
+/**
+ * Whether one row matches the reader's filter text.
+ *
+ * The place half matches the place-index display label ("Corbin, KY")
+ * — the string the table itself renders beside the ZIP — never the
+ * row's own name alone: production rows carry the ACS NAME label
+ * ("ZCTA5 40771") as their name, so matching row.name told a reader
+ * searching for the place they can see that it is not in the table,
+ * and told a reader who typed the raw label that it was. The join
+ * mirrors the Answer Layer's withPlaceDisplayNames (db73515): the
+ * index label wins, a ZCTA with no index entry falls back to the name
+ * the row arrived with. An all-digit filter is a ZIP prefix, the
+ * filter's original meaning; anything else is place text.
+ */
+export function sweepRowMatchesFilter(
+  row: AreaRow,
+  filter: string,
+  placeLabel?: (zip: string) => string | null,
+): boolean {
+  const f = filter.trim().toLowerCase()
+  if (!f) return true
+  if (/^\d+$/.test(f)) return row.zcta.startsWith(f)
+  const label = placeLabel?.(row.zcta)
+  return (label ?? row.name).toLowerCase().includes(f)
+}
+
 function fmt(value: number | null, unit: MetricUnit, reason?: AbsentReason): string {
   if (value === null) return reason ? absenceLabel(reason) : 'not yet imported'
   if (!isMetricDisplayable(value, unit)) return absenceLabel(reason ?? 'out-of-range')
@@ -143,10 +169,9 @@ export function SweepTable({
   const scroller = useRef<HTMLDivElement | null>(null)
 
   const visible = useMemo(() => {
-    const f = filter.trim()
-    if (!f) return rows
-    return rows.filter((r) => r.zcta.startsWith(f) || r.name.toLowerCase().includes(f.toLowerCase()))
-  }, [rows, filter])
+    if (!filter.trim()) return rows
+    return rows.filter((r) => sweepRowMatchesFilter(r, filter, placeLabel))
+  }, [rows, filter, placeLabel])
 
   // Any change to which rows are shown has to return the reader to the top.
   // Keeping the old offset would leave them looking at row 20,000 of a
@@ -189,16 +214,15 @@ export function SweepTable({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <label htmlFor="zip-filter" className="text-sm font-medium text-slate-800">
-            Filter ZIP codes
+            Filter by ZIP code or place
           </label>
           <input
             id="zip-filter"
             type="text"
             value={filter}
-            onChange={(e) => setFilter(e.target.value.replace(/\D/g, '').slice(0, 5))}
-            inputMode="numeric"
-            placeholder="787"
-            className="mt-1 w-28 rounded-md border border-slate-300 px-2 py-1 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="787, or Corbin"
+            className="mt-1 w-40 rounded-md border border-slate-300 px-2 py-1 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
           />
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -225,7 +249,9 @@ export function SweepTable({
       {visible.length === 0 ? (
         <p role="status" className="mt-3 panel px-3 py-6 text-center text-sm text-slate-600">
           {filter.trim()
-            ? `No ZIP codes start with ${filter.trim()}.`
+            ? /^\d+$/.test(filter.trim())
+              ? `No ZIP codes start with ${filter.trim()}.`
+              : `No place matches "${filter.trim()}".`
             : 'No ZIP codes loaded yet.'}
         </p>
       ) : null}
@@ -318,7 +344,7 @@ export function SweepTable({
                         <ExplainAction
                           title="this row's figures"
                           figureSetId="sweep"
-                          figures={figureInputsFromAreaRow(r)}
+                          figures={figureInputsFromAreaRow(r, undefined, placeLabel)}
                           provider={explainProvider}
                         />
                       )}

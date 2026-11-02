@@ -38,14 +38,32 @@ export function figureInputsFromMetrics(
   })
 }
 
+/**
+ * The place-index display label for a ZIP code ("Corbin, KY"), or null
+ * when the index has no entry for it — the same resolver shape the
+ * sweep table's placeLabel prop and the CSV export already use.
+ */
+export type PlaceLabelResolver = (zip: string) => string | null
+
 export function figureInputsFromAreaRow(
   row: AreaRow,
   keys?: readonly string[],
+  placeLabel?: PlaceLabelResolver,
 ): FigureInput[] {
   const allowed = keys ? new Set(keys) : null
+  // The display label, never the row's own name when a label exists:
+  // production rows carry the ACS NAME label ("ZCTA5 40771") as their
+  // name, and that label form is what used to reach the Explain
+  // provider context here — as the matching geographies and as the
+  // absence of a figure label the prose can attribute by place name.
+  // The join mirrors the Answer Layer's withPlaceDisplayNames
+  // (db73515): the index label wins, a ZCTA with no index entry falls
+  // back to the name the row arrived with, and the row is not mutated.
+  const displayLabel = placeLabel?.(row.zcta) ?? undefined
   return figureInputsFromMetrics(
     rowToMetrics(row).filter((metric) => !allowed || allowed.has(metric.key)),
-    [row.zcta, row.name],
+    [row.zcta, displayLabel ?? row.name],
+    displayLabel,
   )
 }
 
@@ -86,9 +104,10 @@ export function figureInputsFromAreaRows(
   rows: readonly AreaRow[],
   zctas: readonly string[],
   keys?: readonly string[],
+  placeLabel?: PlaceLabelResolver,
 ): FigureInput[] {
   const selected = new Set(zctas)
   return rows.flatMap((row) =>
-    selected.has(row.zcta) ? figureInputsFromAreaRow(row, keys) : [],
+    selected.has(row.zcta) ? figureInputsFromAreaRow(row, keys, placeLabel) : [],
   )
 }

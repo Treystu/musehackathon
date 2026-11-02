@@ -420,8 +420,8 @@ export default function App() {
   )
   const savedViewFigures = useCallback(
     (zips: readonly string[]) =>
-      figureInputsFromAreaRows(q.sweep, zips, ['median_gross_rent', 'median_home_value']),
-    [q.sweep],
+      figureInputsFromAreaRows(q.sweep, zips, ['median_gross_rent', 'median_home_value'], placeLabel),
+    [q.sweep, placeLabel],
   )
 
   /** Adds one ZIP code, resolving its city for the header when we have one. */

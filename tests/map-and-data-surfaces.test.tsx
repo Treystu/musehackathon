@@ -100,6 +100,29 @@ describe('map source pins', () => {
     expect(view).not.toMatch(/pinch to zoom/)
     expect(view).not.toMatch(/scroll or pinch/)
   })
+
+  it('the on-canvas copy is exactly the implemented gesture set (minor 4, verified)', () => {
+    // The full rendered hint, verbatim: drag pan (single-pointer drag
+    // in map-interactions), wheel zoom (the non-passive listener above),
+    // the + / - / reset buttons, arrow-key bin movement, Enter select,
+    // + and - zoom keys, 0 reset, click select. Nothing else is
+    // promised — in particular no pinch phrase in any separator form.
+    expect(view).toMatch(
+      /Drag to pan, scroll to zoom, or use the buttons\. Arrow keys move between areas, Enter selects one,/,
+    )
+    expect(view).toMatch(/\+ and &minus; zoom, 0 resets\. Click an area to compare it\./)
+    // The word "pinch" survives only in comments explaining its
+    // absence; strip comments and the rendered source has none.
+    const renderedOnly = view.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '')
+    expect(renderedOnly).not.toMatch(/pinch/i)
+  })
+
+  it('Methodology makes no map-gesture claims at all (minor 4, verified)', () => {
+    const methodology = read('src/ui/Methodology.tsx')
+    expect(methodology).not.toMatch(/pinch/i)
+    expect(methodology).not.toMatch(/scroll to zoom/i)
+    expect(methodology).not.toMatch(/drag to pan/i)
+  })
 })
 
 describe('empty states', () => {

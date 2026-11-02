@@ -32,6 +32,7 @@ import * as briefingRoute from '../functions/api/muse/briefing'
 import * as diagnosticsRoute from '../functions/api/muse/diagnostics'
 import * as explainRoute from '../functions/api/muse/explain'
 import * as intentRoute from '../functions/api/muse/intent'
+import * as researchRoute from '../functions/api/muse/research'
 import * as transcribeRoute from '../functions/api/muse/transcribe'
 import { onRequest as censusInjector } from '../functions/_middleware'
 import type { CensusInjectorEnv } from '../functions/_middleware'
@@ -66,6 +67,7 @@ const ROUTES: ReadonlyMap<string, RouteModule> = new Map<string, RouteModule>([
   ['/api/muse/diagnostics', diagnosticsRoute],
   ['/api/muse/explain', explainRoute],
   ['/api/muse/intent', intentRoute],
+  ['/api/muse/research', researchRoute],
   ['/api/muse/transcribe', transcribeRoute],
 ])
 

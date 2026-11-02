@@ -347,6 +347,24 @@ export interface ComposedAnswer {
    */
   notMeasurableCounties: string[]
   /**
+   * Geography readings the resolution layer made and the card must
+   * disclose in its own words: a region name read as the Census
+   * region of that name, a region this tool does not serve at region
+   * level. Carried verbatim from the caller's resolution result
+   * (answer-runner.ts) so the card and the resolution can never
+   * disagree about what a geography was read as — the views-layer
+   * contradiction class (battery D1/C: a "could not be resolved"
+   * line beside a resolved card) is what a second, divergent
+   * reading produces.
+   */
+  geographyDisclosures: string[]
+  /**
+   * The state-aggregation rule, stated on the answer whenever a
+   * state named as a comparison/aggregate geography was composed as
+   * one state-average place (STATE_AGGREGATION_METHOD), or null.
+   */
+  stateMethod: string | null
+  /**
    * The conversational stack's verification record (plan C5/C4),
    * stamped by the UI runner — core compose never sets it. `wonder`
    * is the bottom bookend's label: user-visible copy may claim Wonder
@@ -390,6 +408,38 @@ export const COUNTY_AGGREGATION_METHOD =
   'County counts are sums of their ZIP areas, with margins combined from the member margins. ' +
   'Other county figures are population-weighted averages of their ZIP areas, and their margins ' +
   'are population-weighted approximations, not official Census county margins.'
+
+/**
+ * The state rule, stated wherever a state-average place is shown.
+ * A state named as a comparison geography (battery C6: "96720 vs the
+ * Hawaii state average") is composed as ONE aggregate place over
+ * every ZIP area in the state, under the same aggregation rules as a
+ * county — counts summed, other figures population-weighted — never
+ * as the first place whose name shares the state's name (Hawaiian
+ * Acres is a place in Hawaii, not the state average). Numeral-free,
+ * like the county rule, for the same reason.
+ */
+export const STATE_AGGREGATION_METHOD =
+  'A state average here is formed from every ZIP area in the state: counts are sums of their ' +
+  'ZIP areas, and other figures are population-weighted averages of their ZIP areas, with ' +
+  'margins that are population-weighted approximations, not official Census state margins.'
+
+/**
+ * One state named as an aggregate/comparison geography, resolved by
+ * the caller: the member ZCTAs the state place aggregates over.
+ * Supplied through the pipeline input by the UI runner, which owns
+ * place-index resolution; the pipeline owns the aggregation.
+ */
+export interface StateAggregateGeography {
+  /** The geography as the intent named it, e.g. `Hawaii`. */
+  geography: string
+  /** Display label for the aggregate place, e.g. `Hawaii`. */
+  label: string
+  /** Postal code, e.g. `HI`. */
+  state: string
+  /** Every ZCTA the caller resolved to the state. */
+  zctas: readonly string[]
+}
 
 /**
  * How many candidate places one research pass may cover. Research is
@@ -965,6 +1015,10 @@ export function composeAnswer(input: {
   countyFigureNotMeasurable?: string | null
   /** Counties dropped because their deciding figure was not measurable. */
   notMeasurableCounties?: readonly string[]
+  /** Geography readings from the caller's resolution result, disclosed verbatim. */
+  geographyDisclosures?: readonly string[]
+  /** True when a state-average place was composed from a named state geography. */
+  stateSupported?: boolean
 }): ComposedAnswer {
   const { intent, screen } = input
   // Pull mode (research-first): candidates arrived from research, so
@@ -1065,6 +1119,8 @@ export function composeAnswer(input: {
     requestedCount: input.requestedCount ?? null,
     countyMethod: input.countySupported ? COUNTY_AGGREGATION_METHOD : null,
     notMeasurableCounties: [...(input.notMeasurableCounties ?? [])],
+    geographyDisclosures: [...(input.geographyDisclosures ?? [])],
+    stateMethod: input.stateSupported ? STATE_AGGREGATION_METHOD : null,
   }
 }
 
@@ -1197,6 +1253,29 @@ export interface AnswerPipelineInput {
    * the artefact existed — never approximated from place fallbacks.
    */
   countyAssignments?: ReadonlyMap<string, CountyAssignment>
+  /**
+   * States named as aggregate/comparison geographies, resolved by
+   * the caller to their member ZCTAs. When supplied, each is
+   * composed as one state-average place over its member rows (the
+   * state stage below); a state the caller did not flag here keeps
+   * the ordinary screen reading (a state-scoped sweep lists the
+   * state's places, it does not average them).
+   */
+  stateAggregates?: readonly StateAggregateGeography[]
+  /**
+   * The caller's per-geography resolution failures, from the same
+   * resolution result the geography ZCTAs came from. When supplied
+   * this list IS the answer's unresolvedGeographies — the pipeline
+   * does not recompute it from the screen, because the screen's own
+   * derivation (any non-ZIP geography is unresolved when no ZCTA set
+   * was passed, none when one was) silently drops a failed
+   * comparison side whenever another side resolved (battery C4) and
+   * contradicts a resolved card whenever resolution happened in the
+   * runner. Absent = the screen's derivation, as before.
+   */
+  unresolvedGeographies?: readonly string[]
+  /** Geography readings from the caller's resolution result, disclosed on the card. */
+  geographyDisclosures?: readonly string[]
 }
 
 function emptyAnswerFields(): Pick<
@@ -1210,6 +1289,8 @@ function emptyAnswerFields(): Pick<
   | 'unsupportedGeography'
   | 'countyMethod'
   | 'notMeasurableCounties'
+  | 'geographyDisclosures'
+  | 'stateMethod'
 > {
   return {
     researchCriteria: [],
@@ -1221,6 +1302,8 @@ function emptyAnswerFields(): Pick<
     unsupportedGeography: null,
     countyMethod: null,
     notMeasurableCounties: [],
+    geographyDisclosures: [],
+    stateMethod: null,
   }
 }
 
@@ -1289,15 +1372,46 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // returns the extracted name with its ZCTAs or it does not, and
     // a name it does not return is reported, never repaired.
     const resolvedNames = new Set(resolved.map((r) => r.name.toLowerCase()))
-    const resolvedZctas = new Set(resolved.flatMap((r) => r.zctas))
     const unresolvedCandidates = extracted.filter(
       (name) => !resolvedNames.has(name.toLowerCase()),
     )
-    const candidateRows = input.rows.filter((row) => resolvedZctas.has(row.zcta))
+    // Places count BY PLACE, not by ZIP (battery B3, measured
+    // 2026-11-02: research named three places; Corbin, KY resolved
+    // to both of its ZIP areas and both were listed and counted —
+    // "named 4" — including a split ZIP carrying no researched
+    // claim, presented under criteria it was never researched for).
+    // Each resolved candidate therefore contributes ONE
+    // representative row: the member ZIP a cited claim names
+    // outright when one does, otherwise the candidate's first ZIP
+    // that is actually among the loaded rows, otherwise its first
+    // ZIP in resolver order — the same one-ZIP-per-named-place rule
+    // lookup resolution applies. The loaded-rows preference matters:
+    // the sweep loads in chunks, so a place's first ZIP in index
+    // order may not be loaded while a later one is (the live-path
+    // fixture loads Corbin's 40771, not its 40701 — picking 40701
+    // unconditionally would drop a researched place from the card
+    // entirely, a worse failure than the split it cures). The claim
+    // that names the place still attributes to the representative
+    // by name mention in compose, so no researched claim is lost
+    // with the split ZIP.
+    const loadedZctas = new Set(input.rows.map((row) => row.zcta))
+    const representativeZctas: string[] = []
+    for (const candidate of resolved) {
+      const claimed = candidate.zctas.find(
+        (z) => loadedZctas.has(z) && research.claims.some((claim) => claim.text.includes(z)),
+      )
+      const representative =
+        claimed ?? candidate.zctas.find((z) => loadedZctas.has(z)) ?? candidate.zctas[0]
+      if (representative && !representativeZctas.includes(representative)) {
+        representativeZctas.push(representative)
+      }
+    }
+    const representativeSet = new Set(representativeZctas)
+    const candidateRows = input.rows.filter((row) => representativeSet.has(row.zcta))
     // Extraction order is the research order; rows arrive in load
     // order, so re-order by the resolved candidate sequence.
     const order = new Map<string, number>()
-    resolved.forEach((candidate, i) => candidate.zctas.forEach((z) => order.set(z, i)))
+    representativeZctas.forEach((z, i) => order.set(z, i))
     candidateRows.sort((a, b) => (order.get(a.zcta) ?? 0) - (order.get(b.zcta) ?? 0))
     // A top-N ask bounds the composed places at the asked count
     // (never above the candidate cap): "top five" answered with ten
@@ -1319,7 +1433,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       inScopeCount: input.rows.length,
       rows: cappedRows,
     }
-    const composed = composeAnswer({
+    const composedRaw = composeAnswer({
       intent: input.intent,
       screen: pullScreen,
       research,
@@ -1330,11 +1444,15 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       unsupportedGeography,
       pullMode: true,
       requestedCount,
+      geographyDisclosures: input.geographyDisclosures,
       summaryOverride:
         cappedRows.length === 0
           ? 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
           : undefined,
     })
+    const composed = input.unresolvedGeographies
+      ? { ...composedRaw, unresolvedGeographies: [...input.unresolvedGeographies] }
+      : composedRaw
     if (composed.status === 'empty') return { ...composed, stage: 'verify' }
     const verdict = verifyAnswer(composed, cappedRows)
     if (!verdict.ok) {
@@ -1419,6 +1537,74 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     }
   }
 
+  // Stage 2c (state average): a state the caller flagged as an
+  // aggregate geography (a lookup/compare side, never a sweep scope)
+  // composes as ONE state-average place over its member rows, under
+  // the county aggregation rules — the aggregator is keyed by an
+  // assignment map, and a state is one group in it. Rows the intent
+  // named outright as ZIP geographies stay individual (96720 in
+  // battery C6 is both a comparison side and a member of its state's
+  // average; it appears as itself AND inside the average, which is
+  // what "compare to the state average" means). A state whose
+  // deciding figure cannot be aggregated is dropped and disclosed,
+  // never replaced by a same-named place. Skipped on the county
+  // path: a request is composed at one aggregate level at a time.
+  let stateMeta: Map<string, { memberZctas: string[]; approximateMarginKeys: readonly string[] }> | undefined
+  let stateSupported = false
+  const pipelineDisclosures: string[] = []
+  if (!countySupported && input.stateAggregates && input.stateAggregates.length > 0) {
+    const figureKeys = [
+      ...new Set([
+        ...input.intent.metricKeys,
+        ...screen.criteria.map((c) => c.metricKey),
+      ]),
+    ]
+    const zipNamed = new Set(
+      input.intent.geographies.map((g) => g.trim()).filter((g) => /^\d{5}$/.test(g)),
+    )
+    let rows = [...effectiveScreen.rows]
+    for (const aggregate of input.stateAggregates) {
+      const memberSet = new Set(aggregate.zctas)
+      // Every member row feeds the average, including a ZIP the
+      // intent also named outright — that ZIP is a member of its
+      // state. Only the individual listing below keeps it separate.
+      const members = rows.filter((row) => memberSet.has(row.zcta))
+      if (members.length === 0) continue
+      const assignments = new Map(
+        members.map((row) => [row.zcta, { name: aggregate.label, state: aggregate.state }]),
+      )
+      const aggregation = aggregateRowsToCounties(members, assignments, figureKeys)
+      const rankKey = input.intent.metricKeys[0] ?? screen.criteria[0]?.metricKey
+      const aggRows = aggregation.rows
+        .filter((row) => {
+          if (!rankKey) return true
+          const value = row.metrics[rankKey]
+          return typeof value === 'number' && Number.isFinite(value)
+        })
+        .map((row) => ({ ...row, name: `${aggregate.label} state average` }))
+      if (aggRows.length === 0) {
+        pipelineDisclosures.push(
+          `${aggregate.label} was named as a state average, but its figures could not be ` +
+            'aggregated from the available ZIP-area figures, so no state average is shown for it.',
+        )
+        continue
+      }
+      stateSupported = true
+      stateMeta = new Map([
+        ...(stateMeta ?? new Map()),
+        ...aggRows.map(
+          (row) =>
+            [
+              row.zcta,
+              { memberZctas: row.memberZctas, approximateMarginKeys: row.approximateMarginKeys },
+            ] as const,
+        ),
+      ])
+      rows = [...rows.filter((row) => !memberSet.has(row.zcta) || zipNamed.has(row.zcta)), ...aggRows]
+    }
+    if (stateSupported) effectiveScreen = { ...effectiveScreen, rows }
+  }
+
   // Stage 3: research over the screened subset only, one pass per
   // decomposed criterion, capped at SCREENED_RESEARCH_CANDIDATE_CAP
   // places. An empty screen researches nothing — there is no subset
@@ -1443,8 +1629,14 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         : await researchScreened(input.provider, capped, input.researchQuery, signal)
   }
 
-  // Stage 4: compose.
-  const composed = composeAnswer({
+  // Stage 4: compose. The state aggregates ride the countyMeta seam:
+  // it is the generic member/approximation metadata keyed by the
+  // synthetic aggregate key, whatever level formed the aggregate.
+  const mergedMeta =
+    countyMeta || stateMeta
+      ? new Map([...(countyMeta ?? new Map()), ...(stateMeta ?? new Map())])
+      : undefined
+  const composedRaw = composeAnswer({
     intent: input.intent,
     screen: effectiveScreen,
     research,
@@ -1452,12 +1644,17 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     candidateCapApplied: research ? candidateCapApplied : false,
     geographyLevel,
     unsupportedGeography: effectiveUnsupportedGeography,
-    countyMeta,
+    countyMeta: mergedMeta,
     countySupported,
     countyFigureNotMeasurable,
     notMeasurableCounties,
+    geographyDisclosures: [...(input.geographyDisclosures ?? []), ...pipelineDisclosures],
+    stateSupported,
     summaryOverride: countyEmptySummary,
   })
+  const composed = input.unresolvedGeographies
+    ? { ...composedRaw, unresolvedGeographies: [...input.unresolvedGeographies] }
+    : composedRaw
   if (composed.status === 'empty') return { ...composed, stage: 'verify' }
 
   // Stage 5: verify, fail-closed. On the county path the figures are

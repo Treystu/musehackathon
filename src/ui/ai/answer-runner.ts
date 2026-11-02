@@ -43,12 +43,15 @@ import {
   isProximityCriterion,
   proximityFocus,
 } from '../../core/ai/nearby'
-import { stateCodeForGeography } from '../../core/ai/national-screen'
-import type { CountyIndex } from '../../core/zcta-county-index'
+import {
+  stateCodeForGeography,
+} from '../../core/ai/national-screen'
+import type { StateAggregateGeography } from '../../core/ai/answer'
+import { STATE_NAME_BY_CODE } from '../../core/sweep/states'
+import type { CountyIndex, CountyGroup } from '../../core/zcta-county-index'
 import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
 import type { AreaRow } from '../../core/plugins/acs'
 import {
-  asStateCode,
   splitStateSuffix,
   type PlaceIndex,
 } from '../../core/zcta-place-index'
@@ -69,51 +72,313 @@ export interface ResolvedAnswerGeographies {
   scopePrefixes: string[]
   /** The intent named geographies, but none of them resolved to a ZCTA. */
   unresolvable: boolean
+  /**
+   * The geographies that resolved to nothing, named individually —
+   * a comparison whose other side resolved still carries its failed
+   * side here, so the card names it as unresolved instead of the
+   * comparison silently going one-sided (battery C4: Denver County
+   * dropped without a word). `unresolvable` above stays the
+   * all-failed flag the callers' early paths use.
+   */
+  unresolvedGeographies: string[]
+  /**
+   * Readings of a geography that are not its literal name — a region
+   * read as the Census region of that name, a region not served at
+   * region level — worded for the card, so the reading is disclosed
+   * where the answer is shown, from this same result.
+   */
+  geographyDisclosures: string[]
+  /**
+   * States named as lookup/compare geographies, with the member
+   * ZCTAs the pipeline aggregates into one state-average place.
+   * Empty for sweeps: a state in a sweep is a scope, not an average.
+   */
+  stateAggregates: StateAggregateGeography[]
+  /** Counties named as geographies, expanded through the county index when one was supplied. */
+  countyGeographies: { geography: string; censusName: string; state: string; zctas: string[] }[]
+}
+
+/**
+ * Census regions and divisions, by the Census Bureau's own state
+ * lists — the only region definitions this tool serves. A region
+ * name resolves to the screen over exactly these states, disclosed
+ * on the card; it never falls through to place search, where
+ * "Midwest" is also a town in Wyoming (battery B6: that town was
+ * presented as the region's answer, honesty 0.06).
+ */
+const REGION_STATES: Readonly<Record<string, readonly string[]>> = {
+  midwest: ['IL', 'IN', 'MI', 'OH', 'WI', 'IA', 'KS', 'MN', 'MO', 'NE', 'ND', 'SD'],
+  northeast: ['CT', 'ME', 'MA', 'NH', 'RI', 'VT', 'NJ', 'NY', 'PA'],
+  south: ['DE', 'FL', 'GA', 'MD', 'NC', 'SC', 'VA', 'DC', 'WV', 'AL', 'KY', 'MS', 'TN', 'AR', 'LA', 'OK', 'TX'],
+  west: ['AZ', 'CO', 'ID', 'MT', 'NV', 'NM', 'UT', 'WY', 'AK', 'CA', 'HI', 'OR', 'WA'],
+  'new england': ['CT', 'ME', 'MA', 'NH', 'RI', 'VT'],
+  'mid-atlantic': ['NJ', 'NY', 'PA'],
+  'middle atlantic': ['NJ', 'NY', 'PA'],
+  'south atlantic': ['DE', 'FL', 'GA', 'MD', 'NC', 'SC', 'VA', 'DC', 'WV'],
+  'east south central': ['AL', 'KY', 'MS', 'TN'],
+  'west south central': ['AR', 'LA', 'OK', 'TX'],
+  'east north central': ['IL', 'IN', 'MI', 'OH', 'WI'],
+  'west north central': ['IA', 'KS', 'MN', 'MO', 'NE', 'ND', 'SD'],
+  mountain: ['AZ', 'CO', 'ID', 'MT', 'NV', 'NM', 'UT', 'WY'],
+  'mountain west': ['AZ', 'CO', 'ID', 'MT', 'NV', 'NM', 'UT', 'WY'],
+  pacific: ['AK', 'CA', 'HI', 'OR', 'WA'],
+}
+
+/**
+ * Region-shaped names with no Census definition this tool can serve
+ * at region level. They are disclosed as not served at that
+ * granularity rather than matched to a same-named place.
+ */
+const UNSERVED_REGIONS: ReadonlySet<string> = new Set([
+  'pacific northwest',
+  'southwest',
+  'southeast',
+  'northwest',
+  'great plains',
+  'great lakes',
+  'deep south',
+  'sun belt',
+  'rust belt',
+  'appalachia',
+  'new south',
+  'mid-south',
+])
+
+function normaliseGeographyName(text: string): string {
+  return text.trim().toLowerCase().replace(/^the\s+/, '').replace(/\s+/g, ' ')
+}
+
+/** The state a geography names outright — code, full name, or a "state average" form — or null. */
+function bareStateCode(text: string): string | null {
+  const trimmed = text.trim()
+  const direct = stateCodeForGeography(trimmed)
+  if (direct) return direct
+  const average = /^(.+?)(?:\s+state)?\s+average$/i.exec(trimmed)
+  if (average) return stateCodeForGeography(average[1]!)
+  return null
+}
+
+/**
+ * Splits "Name, <state>" where the state may be a code or a full
+ * name ("Boulder County, Colorado" is the intent route's county
+ * form; splitStateSuffix alone splits codes only).
+ */
+function splitStateDesignator(text: string): { name: string; state: string | null } {
+  const trimmed = text.trim()
+  const comma = trimmed.lastIndexOf(',')
+  if (comma > 0) {
+    const state = stateCodeForGeography(trimmed.slice(comma + 1))
+    if (state) return { name: trimmed.slice(0, comma).trim(), state }
+  }
+  const suffixed = splitStateSuffix(trimmed.toLowerCase())
+  return { name: suffixed.name, state: suffixed.state }
+}
+
+/** Whether a name carries a county-class legal suffix (county, parish, borough, census area, municipality). */
+const COUNTY_LIKE_RE = /\b(county|parish|borough|census area|municipality)\b/i
+
+/**
+ * Match a geography against the county index: the name part must
+ * EQUAL a county's Census name — a prefix or substring match is how
+ * a city search ends up standing a fallback ZIP in for a county.
+ * State designators in the geography itself win; a single sibling
+ * state's designator in the same intent disambiguates a county name
+ * several states share; anything still ambiguous resolves to
+ * nothing rather than to a guessed state.
+ */
+export function matchCountyGeography(
+  geography: string,
+  countyIndex: CountyIndex,
+  siblingStates: readonly string[] = [],
+): CountyGroup | null {
+  const { name, state } = splitStateDesignator(geography)
+  const wanted = name.toLowerCase()
+  let matches = countyIndex.counties.filter((c) => c.censusName.toLowerCase() === wanted)
+  if (matches.length === 0) return null
+  if (state) matches = matches.filter((c) => c.state === state)
+  else if (matches.length > 1 && siblingStates.length === 1) {
+    matches = matches.filter((c) => c.state === siblingStates[0])
+  }
+  return matches.length === 1 ? matches[0]! : null
+}
+
+/** The states an intent's geographies designate outright, for county disambiguation. */
+function siblingStateCodes(intent: ValidatedIntent): string[] {
+  const states: string[] = []
+  for (const geography of intent.geographies) {
+    const state = bareStateCode(geography) ?? splitStateDesignator(geography).state
+    if (state && !states.includes(state)) states.push(state)
+  }
+  return states
 }
 
 /**
  * Resolve an intent's geographies to ZCTAs through the place index,
  * the same authority executeIntent resolves through.
  *
- * Lookup/compare keep executeIntent's own rule — one ZIP per named
- * place, a city record preferred over a county fallback — because the
- * plain figure card answers for the place the comparison opened. A
- * sweep resolves the whole geography (every ZIP in the named city or
- * state), because the screen's job is to narrow all of it by the
- * stated criteria. A 5-digit geography is its own ZCTA and needs no
- * index. Anything that resolves to nothing is reported through
- * `unresolvable`, never guessed.
+ * Resolution order is the geography's own specificity, most specific
+ * first — measured against the battery failures each step prevents:
+ *
+ *   1. A 5-digit geography is its own ZCTA and needs no index.
+ *   2. A geography naming a county expands through the county index
+ *      to ALL of the county's member ZCTAs, in every mode (battery
+ *      C3/C4: resolution through the place index returned the single
+ *      county-fallback ZIP, whose figures were then aggregated
+ *      alone under the county name). Without a county index a
+ *      county-named geography is reported unresolved — never
+ *      approximated from the place fallback; composeAnswerForRequest
+ *      re-expands it when the caller hands the runner a county
+ *      index the resolver did not have.
+ *   3. A region name resolves to the Census region's states and is
+ *      disclosed as that reading; a region with no Census definition
+ *      here is disclosed as not served at that granularity. Neither
+ *      ever reaches place search (battery B6).
+ *   4. A bare state name widens to the state — the only widening.
+ *      In lookup/compare the state is ALSO recorded as a state
+ *      aggregate, and the pipeline composes it as one state-average
+ *      place (battery C6); in a sweep it is the screen's scope.
+ *   5. "City, ST" resolves the CITY: the state suffix only scopes
+ *      the city search (battery D2: the previous order tried the
+ *      state suffix first, so "Portland, OR" in a sweep widened to
+ *      the whole state and Eugene and Salem answered for Portland).
+ *   6. A bare place name resolves through place search: one ZIP per
+ *      named place for lookup/compare (executeIntent's own rule, a
+ *      city record preferred over a county fallback), every ZIP of
+ *      the place for a sweep.
+ *
+ * Anything that resolves to nothing is named in
+ * `unresolvedGeographies`, never guessed; `unresolvable` reports
+ * the all-failed case the early paths key on.
  */
 export function resolveAnswerGeographies(
   intent: ValidatedIntent,
   placeIndex: PlaceIndex | null,
+  countyIndex?: CountyIndex | null,
 ): ResolvedAnswerGeographies {
   const zctas = new Set<string>()
+  const unresolvedGeographies: string[] = []
+  const geographyDisclosures: string[] = []
+  const stateAggregates: StateAggregateGeography[] = []
+  const countyGeographies: ResolvedAnswerGeographies['countyGeographies'] = []
   const singleZipPerPlace = intent.mode === 'lookup' || intent.mode === 'compare'
+  const siblings = siblingStateCodes(intent)
+
+  // Every ZCTA in the state, whether or not an earlier geography
+  // already added some of them: a state aggregate's member list must
+  // be complete even when one of its ZIPs was also named outright.
+  const addStateZctas = (state: string): string[] => {
+    const all: string[] = []
+    if (!placeIndex) return all
+    for (const place of placeIndex.places) {
+      if (place.state !== state) continue
+      for (const zip of place.zips) {
+        all.push(zip)
+        zctas.add(zip)
+      }
+    }
+    return all
+  }
+
   for (const geography of intent.geographies) {
     const trimmed = geography.trim()
     if (/^\d{5}$/.test(trimmed)) {
       zctas.add(trimmed)
       continue
     }
-    if (!placeIndex) continue
-    if (!singleZipPerPlace) {
-      const state =
-        asStateCode(geography) ??
-        splitStateSuffix(trimmed.toLowerCase()).state ??
-        stateCodeForGeography(geography)
-      if (state) {
-        for (const place of placeIndex.places) {
-          if (place.state === state) {
-            for (const zip of place.zips) zctas.add(zip)
-          }
-        }
+
+    // 2. Named county — before place search, whose county-fallback
+    // record is the stand-in this step exists to replace.
+    const { name: namePart } = splitStateDesignator(trimmed)
+    if (COUNTY_LIKE_RE.test(namePart)) {
+      const group = countyIndex ? matchCountyGeography(trimmed, countyIndex, siblings) : null
+      if (group) {
+        for (const zip of group.zips) zctas.add(zip)
+        countyGeographies.push({
+          geography: trimmed,
+          censusName: group.censusName,
+          state: group.state,
+          zctas: [...group.zips],
+        })
+      } else {
+        unresolvedGeographies.push(trimmed)
+      }
+      continue
+    }
+
+    // 3. Region names.
+    const normalised = normaliseGeographyName(trimmed)
+    const regionStates = REGION_STATES[normalised]
+    if (regionStates) {
+      const added = placeIndex ? regionStates.flatMap((s) => addStateZctas(s)) : []
+      if (added.length === 0) unresolvedGeographies.push(trimmed)
+      const stateNames = regionStates
+        .map((code) => STATE_NAME_BY_CODE[code] ?? code)
+        .join(', ')
+      geographyDisclosures.push(
+        `${trimmed} was read as the Census region of that name — ${stateNames} — ` +
+          'and the results cover that region.',
+      )
+      continue
+    }
+    if (UNSERVED_REGIONS.has(normalised)) {
+      unresolvedGeographies.push(trimmed)
+      geographyDisclosures.push(
+        `${trimmed} names a region this tool does not serve at region level, ` +
+          'so it was not matched to a place with the same name.',
+      )
+      continue
+    }
+
+    // 4. Bare state.
+    const state = bareStateCode(trimmed)
+    if (state) {
+      const added = addStateZctas(state)
+      if (!placeIndex) {
+        unresolvedGeographies.push(trimmed)
         continue
       }
+      if (singleZipPerPlace) {
+        stateAggregates.push({
+          geography: trimmed,
+          label: STATE_NAME_BY_CODE[state] ?? trimmed,
+          state,
+          zctas: added,
+        })
+      }
+      continue
     }
+
+    if (!placeIndex) {
+      unresolvedGeographies.push(trimmed)
+      continue
+    }
+
+    // 5. "City, ST" — the suffix scopes the city search; it never
+    // widens to the state.
+    const designator = splitStateDesignator(trimmed)
+    if (designator.state) {
+      const hits = placeIndex.search(`${designator.name}, ${designator.state}`, 8)
+      const hit = hits.find((h) => h.isCity) ?? hits[0]
+      if (!hit) {
+        unresolvedGeographies.push(trimmed)
+        continue
+      }
+      if (singleZipPerPlace) {
+        const first = hit.zips[0]
+        if (first) zctas.add(first)
+      } else {
+        for (const zip of hit.zips) zctas.add(zip)
+      }
+      continue
+    }
+
+    // 6. Bare place name.
     const hits = placeIndex.search(geography, 8)
     const hit = hits.find((h) => h.isCity) ?? hits[0]
-    if (!hit) continue
+    if (!hit) {
+      unresolvedGeographies.push(trimmed)
+      continue
+    }
     if (singleZipPerPlace) {
       const first = hit.zips[0]
       if (first) zctas.add(first)
@@ -126,6 +391,59 @@ export function resolveAnswerGeographies(
     zctas,
     scopePrefixes,
     unresolvable: intent.geographies.length > 0 && zctas.size === 0,
+    unresolvedGeographies,
+    geographyDisclosures,
+    stateAggregates,
+    countyGeographies,
+  }
+}
+
+/**
+ * Re-expand county-named geographies against a county index the
+ * resolver did not have (the App path: the answer effect resolves
+ * with the place index alone, while composeAnswerForRequest holds
+ * the county index). Returns the resolution with county members
+ * merged in and the counties they cover removed from the unresolved
+ * list — the same resolution result, completed, so every surface
+ * downstream reads one result.
+ */
+export function expandCountyGeographies(
+  resolved: ResolvedAnswerGeographies,
+  intent: ValidatedIntent,
+  countyIndex: CountyIndex,
+): ResolvedAnswerGeographies {
+  const siblings = siblingStateCodes(intent)
+  const zctas = new Set(resolved.zctas)
+  const countyGeographies = [...resolved.countyGeographies]
+  const stillUnresolved: string[] = []
+  for (const geography of resolved.unresolvedGeographies) {
+    const { name: namePart } = splitStateDesignator(geography)
+    const group = COUNTY_LIKE_RE.test(namePart)
+      ? matchCountyGeography(geography, countyIndex, siblings)
+      : null
+    if (!group) {
+      stillUnresolved.push(geography)
+      continue
+    }
+    for (const zip of group.zips) zctas.add(zip)
+    if (!countyGeographies.some((c) => c.geography === geography)) {
+      countyGeographies.push({
+        geography,
+        censusName: group.censusName,
+        state: group.state,
+        zctas: [...group.zips],
+      })
+    }
+  }
+  if (countyGeographies.length === resolved.countyGeographies.length) return resolved
+  const scopePrefixes = [...new Set([...zctas].map((z) => z.slice(0, 2)))].sort()
+  return {
+    ...resolved,
+    zctas,
+    scopePrefixes,
+    unresolvable: intent.geographies.length > 0 && zctas.size === 0,
+    unresolvedGeographies: stillUnresolved,
+    countyGeographies,
   }
 }
 
@@ -397,7 +715,16 @@ export async function composeAnswerForRequest(input: {
    */
   stack?: ConversationalStackDeps | false
 }): Promise<ComposedAnswer | null> {
-  if (input.resolved.unresolvable) return null
+  // Complete the resolution with the county crosswalk before the
+  // unresolvable gate: the caller resolved with the place index
+  // alone (its county-named geographies are honestly unresolved
+  // there), and this runner holds the county index — a named county
+  // must expand here or the gate below would strand exactly the
+  // questions the county cure serves.
+  const resolved = input.countyIndex
+    ? expandCountyGeographies(input.resolved, input.intent, input.countyIndex)
+    : input.resolved
+  if (resolved.unresolvable) return null
   const timings: Record<string, number> = {}
   const stack = input.stack === false ? null : defaultStack(input.stack ?? undefined)
   const decisions: DecisionsRecord = stack?.decisions ?? {}
@@ -434,7 +761,14 @@ export async function composeAnswerForRequest(input: {
     runAnswerPipeline({
       intent: input.intent,
       rows,
-      geographyZctas: input.resolved.zctas.size > 0 ? input.resolved.zctas : undefined,
+      geographyZctas: resolved.zctas.size > 0 ? resolved.zctas : undefined,
+      // The pipeline reads the SAME resolution result this runner
+      // resolved from: its per-geography failures and its region
+      // readings ride in, so the card's geography lines can never
+      // contradict the resolution the card was composed from.
+      unresolvedGeographies: resolved.unresolvedGeographies,
+      geographyDisclosures: resolved.geographyDisclosures,
+      stateAggregates: resolved.stateAggregates,
       researchQuery: input.research ? query : undefined,
       // Decomposition always reads the reader's original words, never
       // the focused research query: the focus text names modes and
@@ -653,6 +987,7 @@ export async function refineAnswerForRequest(input: {
   research: boolean
   signal?: AbortSignal
   placeIndex?: PlaceIndex | null
+  countyIndex?: CountyIndex | null
   stack?: ConversationalStackDeps | false
   /** The provisional answer the decision floated over. */
   provisional: ComposedAnswer
@@ -674,6 +1009,7 @@ export async function refineAnswerForRequest(input: {
       research: input.research,
       signal: input.signal,
       placeIndex: input.placeIndex,
+      countyIndex: input.countyIndex,
       stack:
         input.stack === false
           ? false

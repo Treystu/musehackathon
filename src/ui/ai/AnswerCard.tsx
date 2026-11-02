@@ -70,13 +70,35 @@ export function droppedCriteriaLine(answer: ComposedAnswer): string | null {
   return `Not applied: ${parts.join('; ')} — those bounds can't be expressed by the screen yet, so they were not used.`
 }
 
-/** One quiet line for geographies the screen could not pin down. */
+/**
+ * One quiet line naming each geography that resolved to nothing —
+ * by name, as unresolved. A comparison is never silently one-sided
+ * (battery C4: the Denver County side of a county comparison was
+ * dropped with no disclosure because the old flag fired only when
+ * EVERY geography failed).
+ */
 export function unresolvedGeographiesLine(answer: ComposedAnswer): string | null {
   if (answer.unresolvedGeographies.length === 0) return null
   const list = answer.unresolvedGeographies.join(', ')
   return answer.unresolvedGeographies.length === 1
-    ? `The screen could not pin down ${list}, so it was not narrowed to it.`
-    : `The screen could not pin down ${list}, so it was not narrowed to them.`
+    ? `${list} could not be resolved, so it is named here as unresolved and the answer above does not cover it.`
+    : `${list} could not be resolved, so they are named here as unresolved and the answer above does not cover them.`
+}
+
+/**
+ * The geography readings the resolution layer made, disclosed
+ * verbatim: a region read as the Census region of that name, a
+ * region not served at region level. These strings come from the
+ * same resolution result the card was composed from, so the card
+ * cannot describe a geography differently from how it was resolved.
+ */
+export function geographyDisclosureLines(answer: ComposedAnswer): string[] {
+  return [...(answer.geographyDisclosures ?? [])]
+}
+
+/** The state rule, stated on the card whenever a state-average place was composed. */
+export function stateMethodLine(answer: ComposedAnswer): string | null {
+  return answer.stateMethod ?? null
 }
 
 /** One quiet line recording claims compose dropped for lacking a citation. */
@@ -280,6 +302,8 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
   const unsupportedLine = unsupportedGeographyLine(answer)
   const countyLine = countyMethodLine(answer)
   const notMeasurableLine = notMeasurableCountiesLine(answer)
+  const disclosureLines = geographyDisclosureLines(answer)
+  const stateLine = stateMethodLine(answer)
 
   return (
     <section
@@ -383,6 +407,16 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
           {countyLine}
         </p>
       )}
+      {stateLine && (
+        <p role="note" className="mt-1 text-xs text-slate-500">
+          {stateLine}
+        </p>
+      )}
+      {disclosureLines.map((line) => (
+        <p key={line} role="note" className="mt-1 text-xs text-slate-500">
+          {line}
+        </p>
+      ))}
       {notMeasurableLine && (
         <p role="note" className="mt-1 text-xs text-slate-500">
           {notMeasurableLine}

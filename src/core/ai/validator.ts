@@ -457,9 +457,17 @@ function precisionFailure(
 /* Step 5: banned constructions                                        */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Constructions withheld in EVERY context, including criteria-grounded
+ * answers: steering, personal recommendation, superlative ranking, and
+ * characterisation of a place by who lives there. A superlative is
+ * withheld even in the grounded context because it is a ranking claim
+ * beyond the reader's stated criteria — the screened figures ground
+ * "meets the bound", never "best".
+ */
 const BANNED_PATTERNS: Array<{ re: RegExp; label: string }> = [
   // ranking / superlative evaluation
-  { re: /\b(best|worst|finest|greatest|nicest|top|ranked|ranking|number one|no\.?\s*1|highest-ranked|lowest-ranked)\b/i, label: 'ranking' },
+  { re: /\b(best|worst|finest|greatest|nicest|number one|no\.?\s*1|highest-ranked|lowest-ranked|top-ranked)\b/i, label: 'ranking' },
   // recommendation
   { re: /\b(recommend(?:s|ed|ation)?|should move|should live|should buy|should rent|should choose|you should|we suggest|ideal for|perfect for)\b/i, label: 'recommendation' },
   // steering
@@ -467,10 +475,40 @@ const BANNED_PATTERNS: Array<{ re: RegExp; label: string }> = [
   // evaluative / proxy characterisation of a place
   { re: /\b(good|bad|safe|unsafe|dangerous|desirable|undesirable|sketchy)\s+(neighbourhood|neighborhood|area|district|community)\b/i, label: 'proxy characterisation' },
   { re: /\bgood neighbourhood\b|\bgood neighborhood\b/i, label: 'proxy characterisation' },
-  { re: /\b(family-friendly|family friendly|great for families|good for families|good schools?|bad schools?|up-and-coming)\b/i, label: 'proxy characterisation' },
-  { re: /\b(mostly|predominantly|mainly|largely)\s+(renters?|tenants?|owners?|families|black|white|hispanic|latino|asian|minority|ethnic)\b/i, label: 'proxy characterisation' },
-  { re: /\b(renter|tenant|owner|black|white|hispanic|latino|asian|minority|ethnic)[-\s]+(area|neighbourhood|neighborhood|community|district)\b/i, label: 'proxy characterisation' },
+  { re: /\b(family-friendly|family friendly|great for families|good for families|up-and-coming)\b/i, label: 'proxy characterisation' },
+  { re: /\b(mostly|predominantly|mainly|largely)\s+(renters?|tenants?|owners?|families|black|white|hispanic|latino|asian|minority|ethnic|religious|christian|muslim|jewish|immigrant|foreign-born)\b/i, label: 'proxy characterisation' },
+  { re: /\b(renter|tenant|owner|black|white|hispanic|latino|asian|minority|ethnic|christian|muslim|jewish|immigrant)[-\s]+(area|neighbourhood|neighborhood|community|district)\b/i, label: 'proxy characterisation' },
 ]
+
+/**
+ * Constructions banned only in the strict (figure-prose) context.
+ * In a criteria-grounded research answer these report the reader's own
+ * stated criteria from cited sources — a school criterion the Census
+ * cannot serve is exactly what the research stage exists to answer —
+ * so the citation gate, not this scan, is their grounding mechanism.
+ * Figure prose (explain / briefing) keeps the strict scan: it is a
+ * reading of shown figures and has no school criterion to report.
+ */
+const STRICT_ONLY_PATTERNS: Array<{ re: RegExp; label: string }> = [
+  { re: /\btop\b|\branked\b|\branking\b/i, label: 'ranking' },
+  { re: /\b(good schools?|bad schools?)\b/i, label: 'proxy characterisation' },
+]
+
+export interface BannedConstructionContext {
+  /**
+   * True when the prose is a criteria-grounded answer or the research
+   * behind one: it names places against the reader's own stated
+   * criteria, with the deciding figures or cited sources shown.
+   * Rescoped 2026-11-02 (owner directive, Jev-gated proceed): the
+   * shipped "never rank or recommend" posture withheld even naming
+   * the places that meet the reader's criteria. Naming those places
+   * passes now; the BANNED_PATTERNS above still withhold in this
+   * context — steering or characterising by race, ethnicity, religion,
+   * or national origin, personal recommendation, and any superlative
+   * or ranking claim the criteria do not ground.
+   */
+  criteriaGrounded?: boolean
+}
 
 /**
  * The banned-construction scan on its own, for prose the numeral
@@ -483,9 +521,17 @@ const BANNED_PATTERNS: Array<{ re: RegExp; label: string }> = [
  * shipped privacy text claims mechanical gates. Returns the matched
  * construction's label, or null when the prose is clean.
  */
-export function findBannedConstruction(prose: string): string | null {
+export function findBannedConstruction(
+  prose: string,
+  context?: BannedConstructionContext,
+): string | null {
   for (const { re, label } of BANNED_PATTERNS) {
     if (re.test(prose)) return label
+  }
+  if (!context?.criteriaGrounded) {
+    for (const { re, label } of STRICT_ONLY_PATTERNS) {
+      if (re.test(prose)) return label
+    }
   }
   return null
 }

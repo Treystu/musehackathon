@@ -75,9 +75,13 @@ export async function handleResearch(
     // and the shipped privacy text claims mechanical gates. Numeral
     // provenance does not apply (the prose legitimately cites web
     // figures), so the validator's banned-construction step is the
-    // gate: ranking, recommendation, steering, or proxy
-    // characterisation withholds the findings, recorded by class.
-    if (findBannedConstruction(result.prose)) {
+    // gate. Rescoped the same day for criteria-grounded answers: the
+    // prose may name the screened places that meet the reader's own
+    // stated criteria, while steering or characterising by race,
+    // ethnicity, religion, or national origin, personal
+    // recommendation, and superlative ranking still withhold the
+    // findings, recorded by class.
+    if (findBannedConstruction(result.prose, { criteriaGrounded: true })) {
       accountError(deps, 'banned_construction')
       return { status: 200, body: { withheld: true, failure: 'banned_construction' } }
     }

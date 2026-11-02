@@ -318,10 +318,17 @@ export function parseTranscriptResult(value: unknown): TranscribeResult {
  */
 export const RESEARCH_SYSTEM_PROMPT =
   'You are the web-research helper for CivicScope, a housing-data tool whose ' +
-  'figures come from the US Census Bureau. Use web search to answer ONLY the ' +
-  'parts of the reader question that Census data cannot cover: schools, ' +
-  'amenities and businesses nearby, safety, political character, lifestyle, ' +
-  'services, and local context. Be tight and factual: short paragraphs or a ' +
+  'figures come from the US Census Bureau. The places named in the request ' +
+  'were already screened by deterministic code against the reader\'s Census ' +
+  'criteria (rent, income, rent burden, home value): every named place is ' +
+  'known to meet those criteria, and places that did not meet them are not ' +
+  'named. Research ONLY the named places, and only against the parts of the ' +
+  'reader question that Census data cannot cover: schools, amenities and ' +
+  'businesses nearby, safety, political character, lifestyle, services, and ' +
+  'local context. For each named place, report what sources say about those ' +
+  'remaining criteria, and name plainly the places that meet ALL of the ' +
+  'reader\'s criteria — the Census-screened ones and the ones you researched. ' +
+  'Be tight and factual: short paragraphs or a ' +
   'short list. Cite the pages you rely on. Never invent a statistic or a ' +
   'rating; if the web does not support part of the answer, say so plainly. ' +
   'Do not state rent, home-value, income, or demographic figures — those are ' +
@@ -579,8 +586,13 @@ export function createMetaDirectProvider(options: MetaDirectOptions): MuseProvid
       // proxy route re-checks it and records the class; here the
       // failure lands on the same unavailable state the UI already
       // uses for ungrounded research, rather than rendering prose
-      // the figure surfaces would have withheld).
-      if (findBannedConstruction(prose)) throw new ProviderCallError('provider_down')
+      // the figure surfaces would have withheld). Criteria-grounded
+      // context (rescoped 2026-11-02): the prose names screened
+      // places against the reader's stated criteria; protected-class
+      // steering, recommendation, and superlatives still withhold.
+      if (findBannedConstruction(prose, { criteriaGrounded: true })) {
+        throw new ProviderCallError('provider_down')
+      }
       return { prose, sources }
     },
 
@@ -836,8 +848,10 @@ export function parseResearchReply(value: unknown): ResearchResult {
   // Client re-check of the route's fair-housing gate, mirroring the
   // explain path's double enforcement: a reply carrying a banned
   // construction (or a withheld flag from a gated deployment) never
-  // reaches the render.
-  if (findBannedConstruction(rec.prose)) throw new ProviderCallError('provider_down')
+  // reaches the render. Same criteria-grounded context as the route.
+  if (findBannedConstruction(rec.prose, { criteriaGrounded: true })) {
+    throw new ProviderCallError('provider_down')
+  }
   return { prose: rec.prose.trim(), sources }
 }
 

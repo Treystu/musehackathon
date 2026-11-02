@@ -54,6 +54,7 @@ import type { AreaRow } from '../../core/plugins/acs'
 import {
   splitStateSuffix,
   type PlaceIndex,
+  type PlaceSuggestion,
 } from '../../core/zcta-place-index'
 
 /**
@@ -84,8 +85,9 @@ export interface ResolvedAnswerGeographies {
   /**
    * Readings of a geography that are not its literal name — a region
    * read as the Census region of that name, a region not served at
-   * region level — worded for the card, so the reading is disclosed
-   * where the answer is shown, from this same result.
+   * region level, a multi-ZIP place served by one representative
+   * ZIP in lookup/compare — worded for the card, so the reading is
+   * disclosed where the answer is shown, from this same result.
    */
   geographyDisclosures: string[]
   /**
@@ -246,6 +248,13 @@ function siblingStateCodes(intent: ValidatedIntent): string[] {
  *      city record preferred over a county fallback), every ZIP of
  *      the place for a sweep.
  *
+ * Steps 5/6 in lookup/compare serve ONE ZIP for a place that may
+ * span many: that ZIP stands in for the whole named place, and the
+ * shortfall is recorded in geographyDisclosures at the moment it is
+ * taken (battery D1, granularity_shortfall_unstated: "Seattle"
+ * answered by 98101 alone, with nothing on the card stating that
+ * one ZIP area was standing in for the city).
+ *
  * Anything that resolves to nothing is named in
  * `unresolvedGeographies`, never guessed; `unresolvable` reports
  * the all-failed case the early paths key on.
@@ -262,6 +271,31 @@ export function resolveAnswerGeographies(
   const countyGeographies: ResolvedAnswerGeographies['countyGeographies'] = []
   const singleZipPerPlace = intent.mode === 'lookup' || intent.mode === 'compare'
   const siblings = siblingStateCodes(intent)
+
+  // Take a place-search hit's ZIPs under the mode's rule. In
+  // lookup/compare that is one representative ZIP; when the place
+  // spans more than one ZIP area, the served ZIP is standing in for
+  // the whole place, so the granularity shortfall is recorded as a
+  // disclosure from this same resolution result (battery D1) — the
+  // count is the place index's own ZIP list for the place, and the
+  // line names the ZIP that will actually be served. A sweep takes
+  // every ZIP of the place, so no shortfall arises and none is
+  // recorded; a single-ZIP place has no shortfall to state.
+  const addPlaceHit = (geographyLabel: string, hit: PlaceSuggestion) => {
+    if (!singleZipPerPlace) {
+      for (const zip of hit.zips) zctas.add(zip)
+      return
+    }
+    const first = hit.zips[0]
+    if (!first) return
+    zctas.add(first)
+    if (hit.zips.length > 1) {
+      const line =
+        `${geographyLabel} spans ${hit.zips.length} ZIP areas; the answer shows the one ` +
+        `resolved ZIP area for it (${first}), not the whole ${hit.isCity ? 'city' : 'place'}.`
+      if (!geographyDisclosures.includes(line)) geographyDisclosures.push(line)
+    }
+  }
 
   // Every ZCTA in the state, whether or not an earlier geography
   // already added some of them: a state aggregate's member list must
@@ -363,12 +397,7 @@ export function resolveAnswerGeographies(
         unresolvedGeographies.push(trimmed)
         continue
       }
-      if (singleZipPerPlace) {
-        const first = hit.zips[0]
-        if (first) zctas.add(first)
-      } else {
-        for (const zip of hit.zips) zctas.add(zip)
-      }
+      addPlaceHit(trimmed, hit)
       continue
     }
 
@@ -379,12 +408,7 @@ export function resolveAnswerGeographies(
       unresolvedGeographies.push(trimmed)
       continue
     }
-    if (singleZipPerPlace) {
-      const first = hit.zips[0]
-      if (first) zctas.add(first)
-    } else {
-      for (const zip of hit.zips) zctas.add(zip)
-    }
+    addPlaceHit(trimmed, hit)
   }
   const scopePrefixes = [...new Set([...zctas].map((z) => z.slice(0, 2)))].sort()
   return {

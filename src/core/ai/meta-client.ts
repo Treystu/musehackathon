@@ -369,6 +369,24 @@ export function createLiveProvider(options: LiveProviderOptions = {}): MuseProvi
     ? createMetaDirectProvider({ ...options.direct, fetchImpl: doFetch })
     : null
 
+  /**
+   * BYO is a visitor-key path, not a generic second attempt. The direct
+   * provider is configured even for visitors who never stored a key; in that
+   * state its first act is to throw bad_key, which would replace the proxy's
+   * real shutdown or breaker answer with a sign-in claim. Measured live on
+   * 2026-11-01: keyless browser sessions saw "could not sign in" during
+   * breaker windows while the proxy itself had answered breaker_open. The
+   * fallback is therefore available only when a key is actually retrievable.
+   */
+  const directKeyAvailable = (): boolean => {
+    if (!options.direct) return false
+    try {
+      return Boolean(options.direct.getApiKey())
+    } catch {
+      return false
+    }
+  }
+
   async function viaProxy<T>(path: string, body: unknown, signal: AbortSignal): Promise<T> {
     let res: Response
     try {
@@ -410,7 +428,7 @@ export function createLiveProvider(options: LiveProviderOptions = {}): MuseProvi
         return { intent: reply.intent as IntentResult['intent'] }
       } catch (e) {
         const code = e instanceof ProviderCallError ? e.code : null
-        if (!code || !BYO_FALLBACK_ERRORS.has(code) || !direct) throw e
+        if (!code || !BYO_FALLBACK_ERRORS.has(code) || !direct || !directKeyAvailable()) throw e
       }
       return direct.intent(req, signal)
     },
@@ -440,7 +458,7 @@ export function createLiveProvider(options: LiveProviderOptions = {}): MuseProvi
         return reply
       } catch (e) {
         const code = e instanceof ProviderCallError ? e.code : null
-        if (!code || !BYO_FALLBACK_ERRORS.has(code) || !direct) throw e
+        if (!code || !BYO_FALLBACK_ERRORS.has(code) || !direct || !directKeyAvailable()) throw e
       }
       return direct.explain(req, signal)
     },
@@ -468,7 +486,7 @@ export function createLiveProvider(options: LiveProviderOptions = {}): MuseProvi
         return reply
       } catch (e) {
         const code = e instanceof ProviderCallError ? e.code : null
-        if (!code || !BYO_FALLBACK_ERRORS.has(code) || !direct) throw e
+        if (!code || !BYO_FALLBACK_ERRORS.has(code) || !direct || !directKeyAvailable()) throw e
       }
       return direct.briefing(req, signal)
     },

@@ -62,11 +62,11 @@ const EXPLAIN_REQUEST: ExplainRequest = {
 
 const KEY = 'k'.repeat(40)
 
-function provider(fetchImpl: typeof fetch, withByo = true) {
+function provider(fetchImpl: typeof fetch, withByo = true, storedKey: string | null = KEY) {
   return createLiveProvider({
     fetchImpl,
     direct: withByo
-      ? { baseUrl: META_API_BASE, model: MUSE_SPARK_MODEL, getApiKey: () => KEY }
+      ? { baseUrl: META_API_BASE, model: MUSE_SPARK_MODEL, getApiKey: () => storedKey }
       : undefined,
   })
 }
@@ -141,6 +141,27 @@ describe('live provider: BYO fallback', () => {
     expect(body.response_format.json_schema.schema.properties.metricKeys.items.enum).toContain(
       'median_gross_rent',
     )
+  })
+
+  it('does not convert a proxy shutdown into bad_key when BYO is configured but no key is stored', async () => {
+    const { impl, calls } = fakeFetch([{ status: 503, body: { error: 'breaker_open' } }])
+    await expect(
+      provider(impl, true, null).intent(INTENT_REQUEST, new AbortController().signal),
+    ).rejects.toMatchObject({ code: 'breaker_open' })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toBe('/api/muse/intent')
+  })
+
+  it('surfaces the proxy error for briefing too when no BYO key is stored', async () => {
+    const { impl, calls } = fakeFetch([{ status: 429, body: { error: 'credits_exhausted' } }])
+    await expect(
+      provider(impl, true, null).briefing(
+        { figureSetId: 'x', values: [{ key: 'households', value: 3400 }] },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: 'credits_exhausted' })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toBe('/api/muse/briefing')
   })
 
   it('does not fall back for an error that is not a shutdown', async () => {

@@ -8,7 +8,8 @@ import { DISPLAYABLE_KEYS } from '../core/ai/intent-schema'
 import type { ValidatedIntent } from '../core/ai/provider'
 import { asStateCode, loadPlaceIndex, splitStateSuffix, type PlaceIndex, type PlaceSuggestion } from '../core/zcta-place-index'
 import { FairHousingNotice } from './FairHousingNotice'
-import { GuidedTour, TourNotice, shouldShowTour } from './GuidedTour'
+import { GuidedTour } from './GuidedTour'
+import { HelpTip } from './ai/HelpTip'
 import { applyFigureFilters, FIGURE_FILTERS } from '../core/figure-filters'
 import { decodeUrl, urlForSelection } from '../core/url-state'
 import { SimilarityPanel } from './SimilarityPanel'
@@ -139,17 +140,15 @@ export default function App() {
    */
   const [placeIndex, setPlaceIndex] = useState<PlaceIndex | null | undefined>(undefined)
   /**
-   * First-visit state.
-   *
-   * Read during the first render rather than in an effect, so the notice cannot
-   * appear a frame late and shift the layout under someone who has already
-   * started typing. `shouldShowTour()` is a pure localStorage read, which is why
-   * the initialiser can call it without a try/catch of its own.
-   *
-   * The notice is dismissed by the reader or by opening the dialog; either records
-   * that it has been seen, and only the dialog can be reopened.
+   * Tour dialog state. The dialog opens only when asked for (the header's
+   * "How this works" button); there is no standing first-visit notice card
+   * any more — it stood on every task surface and read as clutter on the
+   * owner's phone review (2026-11-02), so the fact it carried (this
+   * deployment is pre-keyed) moved behind the Ask pill's help tip and onto
+   * the Methodology view, and the notice mount came off entirely. The
+   * TourNotice component and its dismissal persistence remain in
+   * GuidedTour.tsx for any surface that legitimately hosts a tour entry.
    */
-  const [noticeOpen, setNoticeOpen] = useState(() => shouldShowTour())
   const [tourOpen, setTourOpen] = useState(false)
   const statusRef = useRef<HTMLParagraphElement>(null)
 
@@ -615,9 +614,22 @@ export default function App() {
   const searchPanel = (
     <>
       <section aria-labelledby="search-heading" className="panel panel-padded">
-        <h2 id="search-heading" className="text-sm font-semibold text-slate-900">
-          Look up a ZIP code or a city
-        </h2>
+        <div className="flex items-center gap-1.5">
+          <h2 id="search-heading" className="text-sm font-semibold text-slate-900">
+            Look up a ZIP code or a city
+          </h2>
+          {/* The how-it-resolves paragraph lives behind the help tip
+              (owner phone review, 2026-11-02): the lookup section is a
+              task surface, so its explanation is on request, not
+              standing prose. Text verbatim from the paragraph it
+              replaces. */}
+          <HelpTip label="About looking up a place">
+            <p>
+              A five-digit ZIP code goes straight to that area. A city name offers every ZIP code inside it, so you
+              can pick the neighbourhood rather than whichever one comes first.
+            </p>
+          </HelpTip>
+        </div>
         <form onSubmit={submit} className="mt-3 flex flex-wrap gap-2">
           <label htmlFor="place" className="sr-only">
             US ZIP code, or city and state
@@ -646,11 +658,6 @@ export default function App() {
             Add to comparison
           </button>
         </form>
-
-        <p className="mt-2 text-xs text-slate-600">
-          A five-digit ZIP code goes straight to that area. A city name offers every ZIP code inside it, so you can
-          pick the neighbourhood rather than whichever one comes first.
-        </p>
 
         {placeError && (
           <p className="mt-2 rounded-md bg-amber-50 p-3 text-sm text-amber-900" role="alert">
@@ -731,13 +738,7 @@ export default function App() {
             opens by itself: the first visit gets an inline notice, and this
             dialog appears only when someone asks for it.
           */}
-          <GuidedTour
-            open={tourOpen}
-            onDismiss={() => {
-              setTourOpen(false)
-              setNoticeOpen(false)
-            }}
-          />
+          <GuidedTour open={tourOpen} onDismiss={() => setTourOpen(false)} />
 
           <header className="sticky top-0 z-40 border-b border-slate-200 bg-white">
             <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-2 sm:px-6">
@@ -798,17 +799,6 @@ export default function App() {
       </header>
 
       <main id="main" className="mx-auto max-w-7xl px-4 py-6 sm:py-10">
-        {noticeOpen && (
-          <div className="mx-auto max-w-3xl">
-            <TourNotice
-              onOpen={() => {
-                setTourOpen(true)
-                setNoticeOpen(false)
-              }}
-              onDismiss={() => setNoticeOpen(false)}
-            />
-          </div>
-        )}
         {view === 'methodology' ? (
           <Methodology />
         ) : view === 'map' ? (
@@ -904,11 +894,14 @@ export default function App() {
             </div>
             {mode === 'ask' && (
               <div className="hero-glow anim-rise anim-rise-1 mx-auto max-w-3xl px-2 pb-4 pt-2">
-                {/* The hero mark: the pin at display size above the
-                    question box, the way a search page centers its mark
-                    over the box. Decorative — the header h1 names the
-                    product. */}
-                <img src="/favicon.svg" alt="" className="mx-auto mb-3 h-14 w-14" />
+                {/* The hero mark, kept small (owner phone review,
+                    2026-11-02): at display size (56px) plus the display
+                    title and the example chips it pushed the search pill
+                    below the fold on a 412x915 phone. The mark is now
+                    header-scale, and the title and chips were compacted
+                    with it in AskPanel. Decorative — the header h1 names
+                    the product. */}
+                <img src="/favicon.svg" alt="" className="mx-auto mb-2 h-8 w-8" />
                 <AskPanel
                   provider={HOUSE_PROVIDER}
                   figures={askFigures}

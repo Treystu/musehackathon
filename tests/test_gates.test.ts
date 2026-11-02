@@ -502,3 +502,87 @@ describe('gate: map colour scale reads correctly', () => {
     expect(table, 'the margin is rendered through fmtMargin').toMatch(/&plusmn;\{marginText\}/)
   })
 })
+
+/**
+ * The owner's phone review of the declutter build (2026-11-02, 412x915):
+ * "still cluttered, confusing" — five majors, each a standing card or a
+ * competing control on a task surface. These pin the resolutions at the
+ * source level, in the pattern of the gates above, because this repo has
+ * no DOM test environment for layout.
+ */
+describe('gate: phone review majors (2026-11-02)', () => {
+  it('mounts no first-visit notice card on any task surface', () => {
+    // The TourNotice card stood at the top of main on Ask AND Map (and
+    // duplicated the header's own "How this works" button). The fact it
+    // carried lives behind the Ask pill's help tip instead.
+    const app = codeOnly(read('src/ui/App.tsx'))
+    expect(app, 'the notice card must not be mounted in the shell').not.toMatch(/<TourNotice/)
+    expect(app, 'the shell must not import the notice').not.toMatch(/TourNotice/)
+    const ask = codeOnly(read('src/ui/ai/AskPanel.tsx'))
+    expect(ask, 'the shared-key fact must sit inside the pill help tip').toMatch(
+      /<HelpTip label="About the wording helper"[\s\S]*?censusLoadSentence\(\)/,
+    )
+  })
+
+  it('orders the Ask hero title, then the pill, then the example chips', () => {
+    // Chips-before-pill pushed the pill out of a 412x915 viewport
+    // entirely. DOM order is the fold: title -> form -> chips.
+    const ask = codeOnly(read('src/ui/ai/AskPanel.tsx'))
+    const title = ask.indexOf('id="ask-heading"')
+    const pill = ask.indexOf('<form onSubmit={submit}')
+    const chips = ask.indexOf('aria-label="Example questions"')
+    expect(title).toBeGreaterThan(-1)
+    expect(pill).toBeGreaterThan(title)
+    expect(chips).toBeGreaterThan(pill)
+    expect(ask, 'the title must be one-line title size, not display size').not.toMatch(/text-5xl/)
+  })
+
+  it('mounts the methodology Q&A on the Methodology view only', () => {
+    const briefing = codeOnly(read('src/ui/ai/BriefingView.tsx'))
+    expect(briefing, 'BriefingView must not mount a second question box').not.toMatch(
+      /<MethodologyQa \/>/,
+    )
+    const methodology = codeOnly(read('src/ui/Methodology.tsx'))
+    expect(methodology, 'the Q&A belongs on Methodology').toMatch(/<MethodologyQa \/>/)
+    expect(briefing, 'the QA disclosure must sit behind a help tip, verbatim via the constant').toMatch(
+      /<HelpTip label="About these answers">[\s\S]*?\{DISCLOSURE_TEXT\}/,
+    )
+    // Scoped to the MethodologyQa function: BriefingPackView's own pack
+    // note legitimately keeps the house-disclosure styling.
+    const qa = briefing.slice(
+      briefing.indexOf('export function MethodologyQa'),
+      briefing.indexOf('export function BriefingView'),
+    )
+    expect(qa, 'no standing disclosure paragraph inside the QA box').not.toMatch(/house-disclosure/)
+  })
+
+  it('keeps the briefing and ZIP-lookup paragraphs behind help tips', () => {
+    const briefing = codeOnly(read('src/ui/ai/BriefingView.tsx'))
+    expect(briefing).toMatch(/<HelpTip label="About briefing packs">/)
+    const app = codeOnly(read('src/ui/App.tsx'))
+    expect(app).toMatch(/<HelpTip label="About looking up a place">/)
+    expect(app, 'the lookup paragraph must not stand under the form').not.toMatch(
+      /<p className="mt-2 text-xs text-slate-600">\s*A five-digit ZIP code goes straight/,
+    )
+  })
+
+  it('gives the comparison matrix a sticky label column and a silent scroll fade', () => {
+    // At 412px the third area column was cut mid-figure with no sign the
+    // table scrolls. Sticky labels keep the rows readable mid-scroll;
+    // the fade is the affordance — a class marker, decorative, no text.
+    const comparison = codeOnly(read('src/ui/Comparison.tsx'))
+    expect(comparison, 'the header label cell must stick').toMatch(
+      /scope="col" className="sticky left-0[^"]*">Figure</,
+    )
+    expect(comparison, 'the row label cells must stick').toMatch(
+      /scope="row" className="sticky left-0/,
+    )
+    expect(comparison, 'sticky cells need a solid background to scroll over').toMatch(
+      /sticky left-0[^"]*bg-white/,
+    )
+    expect(comparison, 'the edge fade affordance must be present').toMatch(/comparison-scroll-fade/)
+    expect(comparison, 'the fade must be decorative, not a sentence').toMatch(
+      /aria-hidden="true"[\s\S]{0,200}comparison-scroll-fade|comparison-scroll-fade[\s\S]{0,200}aria-hidden/,
+    )
+  })
+})

@@ -24,6 +24,7 @@ import {
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../core/ai/proxy-errors'
 import { AgentHandoff } from './AgentHandoff'
+import { censusLoadSentence } from '../GuidedTour'
 import { HelpTip } from './HelpTip'
 import { ByoOffer } from './ByoOffer'
 import { ClarificationPanel, type ClarificationCandidates } from './ClarificationPanel'
@@ -483,41 +484,23 @@ export function AskPanel({
   return (
     <section aria-labelledby="ask-heading">
       {/*
-        Hero composition (competition layer, 2026-11-01): the heading is
-        display-size and centered, the welcome and examples center under
-        it, and the question box below is the visual anchor. The heading
-        text stays exactly "Ask CivicScope" — the accent span is
-        presentation only.
+        Hero composition (compacted, owner phone review 2026-11-02): the
+        heading is one line at title size, the question box follows
+        immediately, and the examples sit BELOW the box in compact form.
+        Measured reason: at display size (text-5xl heading + 56px hero
+        mark in App + four 44px chips above the box) the pill landed
+        below the fold on a 412x915 phone — the reader met decoration
+        before the one control the page exists for. The heading text
+        stays exactly "Ask CivicScope" — the accent span is presentation
+        only, and a test pins the heading.
       */}
       <h2
         id="ask-heading"
-        className="text-center text-4xl font-light tracking-tight text-slate-900 sm:text-5xl"
+        className="text-center text-2xl font-light tracking-tight text-slate-900 sm:text-3xl"
       >
         Ask <span className="font-medium text-[rgb(var(--accent))]">CivicScope</span>
       </h2>
-      {/* No welcome prose (owner rule, 2026-11-02: explain nothing —
-          the surface is heading, examples, and the question box; the
-          examples themselves carry the invitation, and each one stays
-          inside the intent envelope the app can run, so a tapped
-          example succeeds rather than stranding the reader in a
-          clarification). */}
-      <div className="mt-5 flex flex-wrap justify-center gap-2" aria-label="Example questions">
-        {EXAMPLE_PROMPTS.map((example) => (
-          <button
-            key={example}
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              setText(example)
-              void runQuery(example)
-            }}
-            className="min-h-[44px] rounded-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
-          >
-            {example}
-          </button>
-        ))}
-      </div>
-      <form onSubmit={submit} className="mx-auto mt-6 max-w-2xl">
+      <form onSubmit={submit} className="mx-auto mt-4 max-w-2xl">
         <label htmlFor="ask-input" className="sr-only">
           Ask in plain language
         </label>
@@ -551,6 +534,13 @@ export function AskPanel({
             <div className="mt-2">
               <Disclosure />
             </div>
+            {/* The shared-key fact the first-visit notice card used to
+                carry standing on this surface (owner phone review,
+                2026-11-02: the card came off every task surface; the
+                fact lives here and on Methodology instead). The sentence
+                is the tour notice's own, from its single source in
+                GuidedTour, so the two cannot drift apart. */}
+            <p className="mt-2">{censusLoadSentence()}</p>
           </HelpTip>
           <button type="submit" disabled={busy} className="btn-primary shrink-0">
             Ask
@@ -566,6 +556,31 @@ export function AskPanel({
           recorder={micRecorder}
           storage={micStorage}
         />
+      </div>
+      {/* No welcome prose (owner rule, 2026-11-02: explain nothing —
+          the examples themselves carry the invitation, and each one
+          stays inside the intent envelope the app can run, so a tapped
+          example succeeds rather than stranding the reader in a
+          clarification). Compact form (owner phone review, 2026-11-02):
+          below the question box, small type and padding, wrapping in at
+          most two rows at phone width — they are shortcuts duplicating
+          the typed path, so they sit at 36px rather than the 44px of a
+          primary control; the box itself keeps its full-size targets. */}
+      <div className="mt-4 flex flex-wrap justify-center gap-1.5" aria-label="Example questions">
+        {EXAMPLE_PROMPTS.map((example) => (
+          <button
+            key={example}
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setText(example)
+              void runQuery(example)
+            }}
+            className="min-h-[36px] rounded-full border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 hover:bg-slate-100 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+          >
+            {example}
+          </button>
+        ))}
       </div>
       {errorNote && (
         <p role="status" aria-live="polite" className="mt-3 text-sm text-slate-700">

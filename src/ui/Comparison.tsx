@@ -72,7 +72,21 @@ export function Comparison({
                 </p>
               </HelpTip>
             </div>
-            <div className="mt-3 overflow-x-auto">
+            {/*
+              Phone form (owner phone review, 2026-11-02): at 412px the
+              matrix's third area column was cut mid-figure at the screen
+              edge ("96…", "$2,") with nothing indicating the table
+              scrolls. Two deliberate treatments, no text (explain-nothing
+              forbids a "swipe to see more" sentence):
+              - the label column is sticky, so row labels stay readable
+                while the figures scroll horizontally under them;
+              - a silent edge fade on the scroll container's right edge
+                signals that more columns sit off-screen.
+              The matrix stays a matrix — side-by-side is this surface's
+              purpose, so it is not rebuilt as stacked cards.
+            */}
+            <div className="relative mt-3">
+              <div className="overflow-x-auto">
               {/*
                 table-words + a min-width on the label column: the global
                 overflow-wrap:anywhere rule let auto layout crush this
@@ -86,7 +100,7 @@ export function Comparison({
                 </caption>
                 <thead>
                   <tr className="border-b border-slate-300">
-                    <th scope="col" className="min-w-[10rem] py-2 pr-4 font-semibold text-slate-800">Figure</th>
+                    <th scope="col" className="sticky left-0 z-10 min-w-[10rem] bg-white py-2 pr-4 font-semibold text-slate-800">Figure</th>
                     {entries.map((d) => {
                       const where = placeLabel?.(d.zcta) ?? d.label ?? d.zcta
                       return (
@@ -101,7 +115,7 @@ export function Comparison({
                 <tbody>
                   {comparableRows.map((row) => (
                     <tr key={row.key} className="border-b border-slate-200 align-top">
-                      <th scope="row" className="min-w-[10rem] max-w-64 py-3 pr-4 font-medium text-slate-800">
+                      <th scope="row" className="sticky left-0 min-w-[10rem] max-w-64 bg-white py-3 pr-4 font-medium text-slate-800">
                         {row.label}
                         {row.note && <span className="mt-1 block text-xs font-normal text-slate-600">{row.note}</span>}
                       </th>
@@ -127,6 +141,14 @@ export function Comparison({
                   ))}
                 </tbody>
               </table>
+              </div>
+              {/* The silent scroll affordance: a fade, not a sentence.
+                  Decorative and pointer-transparent — the scroll itself
+                  is the interaction, on the container beneath it. */}
+              <div
+                aria-hidden="true"
+                className="comparison-scroll-fade pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-white to-transparent"
+              />
             </div>
           </section>
         )}

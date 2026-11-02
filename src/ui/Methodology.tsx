@@ -4,6 +4,7 @@ import { CENSUS_ATTRIBUTION } from '../core/censusKey'
 import { METRIC_DEFS_BY_KEY, METRIC_KEYS, tableOfMetric, VINTAGE } from '../core/plugins/acs'
 import { isSortableMetricKey } from '../core/sortable-surface'
 import { DiagnosticsPanel } from './ai/DiagnosticsPanel'
+import { MethodologyQa } from './ai/BriefingView'
 
 /**
  * The methodology page is generated from the plugin registry and the scoring
@@ -131,6 +132,16 @@ export function Methodology() {
           </p>
         </div>
       </section>
+
+      {/*
+        The methodology Q&A box lives here and only here (owner phone
+        review, 2026-11-02): it was previously mounted inside
+        BriefingView, which put a second question box on the Explore
+        surface competing with Ask. Questions about the data — where a
+        figure comes from, why it is missing — belong on the page that
+        exists to answer them.
+      */}
+      <MethodologyQa />
 
       {/*
         The meter section (owner directive, 2026-11-02): the meter's

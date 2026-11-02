@@ -12,6 +12,7 @@ import { answerMethodologyQuestion, type QaResult } from '../../core/ai/methodol
 import type { MuseProvider } from '../../core/ai/provider'
 import { DISCLOSURE_TEXT } from '../../core/ai/validator'
 import { ExplainBox } from './ExplainBox'
+import { HelpTip } from './HelpTip'
 import type { BriefingFigure } from '../../core/ai/briefing'
 
 export interface BriefingOutcome {
@@ -151,7 +152,18 @@ export function MethodologyQa() {
 
   return (
     <section aria-label="Methodology questions" className="mt-6 border-t border-slate-200 pt-4">
-      <h3 className="text-sm font-semibold text-slate-900">Ask about the data</h3>
+      <div className="flex items-center gap-1.5">
+        <h3 className="text-sm font-semibold text-slate-900">Ask about the data</h3>
+        {/* The figures/wording disclosure (DISCLOSURE_TEXT, pinned
+            verbatim in validator tests) sits behind this tip, not as a
+            standing paragraph under the box (owner phone review,
+            2026-11-02). The HelpTip panel stays in the DOM, so the
+            pinned text remains present on the surface exactly as
+            written — it is revealed on request instead of standing. */}
+        <HelpTip label="About these answers">
+          <p>{DISCLOSURE_TEXT}</p>
+        </HelpTip>
+      </div>
       <p className="mt-1 text-sm text-slate-700">
         Where a figure comes from, how current it is, why it is missing, what is
         covered. Questions about the figures themselves belong to search.
@@ -176,9 +188,6 @@ export function MethodologyQa() {
           {result.text}
         </p>
       )}
-      <p role="note" className="house-disclosure mt-3">
-        {DISCLOSURE_TEXT}
-      </p>
     </section>
   )
 }
@@ -235,12 +244,20 @@ export function BriefingView({
 
   return (
     <section aria-label="Briefing pack and methodology">
-      <h2 className="text-sm font-semibold text-slate-900">Briefing pack</h2>
-      <p className="mt-1 text-sm text-slate-700">
-        A pack for the places you have open: every figure is re-checked against
-        its source when the pack is generated, and generation refuses if any
-        figure does not come back exactly as shown.
-      </p>
+      <div className="flex items-center gap-1.5">
+        <h2 className="text-sm font-semibold text-slate-900">Briefing pack</h2>
+        {/* The how-a-pack-is-checked paragraph lives behind the help
+            tip at the heading (owner phone review, 2026-11-02): the
+            briefing section is a task surface, so its explanation is on
+            request, not standing prose. Text verbatim from the
+            paragraph it replaces. */}
+        <HelpTip label="About briefing packs">
+          <p>
+            A pack for the places you have open: every figure is re-checked against its source when the pack is
+            generated, and generation refuses if any figure does not come back exactly as shown.
+          </p>
+        </HelpTip>
+      </div>
       {figures.length === 0 ? (
         <p role="status" className="mt-2 text-sm text-slate-600">
           Open a place first — a pack is built from the figures in your view.
@@ -276,7 +293,12 @@ export function BriefingView({
         </div>
       )}
       {outcome?.pack && <BriefingPackView pack={outcome.pack} />}
-      <MethodologyQa />
+      {/* MethodologyQa is NOT mounted here any more (owner phone
+          review, 2026-11-02): mounted inside BriefingView it put a
+          second question box on the Explore surface, competing with
+          Ask — the one-primary-action violation the owner named. It
+          is mounted on the Methodology view only (src/ui/Methodology.tsx),
+          which is where questions about the data belong. */}
     </section>
   )
 }

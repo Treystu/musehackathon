@@ -227,15 +227,30 @@ export function GuidedTour({ open, onDismiss }: { open: boolean; onDismiss: () =
  * keystrokes, so a reader who wants a ZIP code can simply type. Its only jobs are
  * to say what the tool is and to offer the longer explanation.
  */
+/**
+ * The country-wide load sentence, following the key the app is actually
+ * running on: on a deployment with a shared application key (the hackathon
+ * portal) the full load works without a personal key, and saying it "needs
+ * a free Census API key" next to a fully loaded table reads as a
+ * contradiction (seen live 2026-11-01). With no key at all the original
+ * sentence is the accurate one.
+ *
+ * Exported because the sentence now has two homes: the tour notice and the
+ * Ask pill's help tip, which carries the shared-key fact since the standing
+ * notice card came off the task surfaces (owner phone review, 2026-11-02).
+ * One function, so the two homes cannot drift into contradicting each other.
+ */
+export function censusLoadSentence(): string {
+  const keySource = getCensusKeySource()
+  return keySource === 'shared'
+    ? "Loading all 33,791 at once works here too: this site runs on the project's shared Census key, and adding your own key is optional."
+    : keySource === 'personal'
+      ? 'Loading all 33,791 at once works with the Census key stored in this browser.'
+      : 'Loading all 33,791 at once needs a free Census API key, which stays in this browser.'
+}
+
 export function TourNotice({ onOpen, onDismiss }: { onOpen: () => void; onDismiss: () => void }) {
   const headingId = useId()
-  // The load sentence follows the key the app is actually running on:
-  // on a deployment with a shared application key (the hackathon
-  // portal) the full load works without a personal key, and saying it
-  // "needs a free Census API key" next to a fully loaded table reads
-  // as a contradiction (seen live 2026-11-01). With no key at all the
-  // original sentence is the accurate one.
-  const keySource = getCensusKeySource()
   // Dismiss must mean dismiss: the dialog path records "seen" in
   // finish(), but the notice's own Dismiss button only closed the
   // in-memory state in App, so the notice returned on the next visit.
@@ -245,12 +260,7 @@ export function TourNotice({ onOpen, onDismiss }: { onOpen: () => void; onDismis
     rememberTour()
     onDismiss()
   }
-  const loadSentence =
-    keySource === 'shared'
-      ? "Loading all 33,791 at once works here too: this site runs on the project's shared Census key, and adding your own key is optional."
-      : keySource === 'personal'
-        ? 'Loading all 33,791 at once works with the Census key stored in this browser.'
-        : 'Loading all 33,791 at once needs a free Census API key, which stays in this browser.'
+  const loadSentence = censusLoadSentence()
   return (
     <aside
       aria-labelledby={headingId}

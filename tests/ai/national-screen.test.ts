@@ -117,6 +117,28 @@ describe('rescueNationalScreen', () => {
     expect(rescued?.clarificationNeeded).toBe(false)
   })
 
+  it('rescues a reply whose only geographies are country-level names', () => {
+    // Observed live (2026-11-01): the model attaches "America" as a
+    // geography to the placeless question. A country name is not a
+    // place the app can open, so the screen still completes directly.
+    for (const geo of ['America', 'United States', 'the country', 'USA']) {
+      const rescued = rescueNationalScreen(
+        intent({ geographies: [geo] }),
+        'where is the cheapest rent in America?',
+      )
+      expect(rescued?.mode).toBe('sweep_filter')
+      expect(rescued?.geographies).toEqual([])
+      expect(rescued?.metricKeys).toEqual(['median_gross_rent'])
+    }
+    // A real place anywhere in the list keeps the clarification.
+    expect(
+      rescueNationalScreen(intent({ geographies: ['America', 'Texas'] }), 'cheapest rent in America'),
+    ).toBeNull()
+    expect(
+      rescueNationalScreen(intent({ geographies: ['Texas'] }), 'cheapest rent in Texas'),
+    ).toBeNull()
+  })
+
   it('does not touch a reply that names a place, a measure, or runs already', () => {
     expect(
       rescueNationalScreen(intent({ geographies: ['Springfield'] }), 'cheapest rent in Springfield'),

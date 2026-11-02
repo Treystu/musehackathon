@@ -64,6 +64,38 @@ describe('national screen at the Ask surface', () => {
     expect(container.querySelector('[aria-label="Clarify the request"]')).toBeNull()
   })
 
+  it('rescues the live reply shape: a valid clarified intent naming neither place nor measure', async () => {
+    // The shape the live route returns for this query (observed
+    // 2026-11-01, three consecutive probes): a valid lookup intent,
+    // clarified, with empty geographies and metricKeys. The rescue must
+    // fire on the valid path too, not only on the shape-invalid path.
+    const provider = createStubProvider({
+      async intent() {
+        return {
+          intent: {
+            mode: 'lookup',
+            geographies: [],
+            metricKeys: [],
+            filters: [],
+            clarificationNeeded: true,
+          } as never,
+        }
+      },
+    })
+    render(<AskPanel provider={provider} />)
+    typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'where is the cheapest rent in America?')
+    await submit(container.querySelector('form') as HTMLFormElement)
+
+    expect(container.textContent).toContain(
+      'No place was named, so this screens the whole country by median gross rent, lowest first.',
+    )
+    const run = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Run this request',
+    )
+    expect(run).toBeDefined()
+    expect(container.querySelector('[aria-label="Clarify the request"]')).toBeNull()
+  })
+
   it('does not rescue a shape-invalid reply for an ordinary question', async () => {
     const provider = createStubProvider({
       async intent() {

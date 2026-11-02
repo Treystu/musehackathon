@@ -93,20 +93,54 @@ export function isNationalScreen(intent: ValidatedIntent): boolean {
 }
 
 /**
+ * Country-level geography names a reply may attach to a placeless
+ * question ("cheapest rent in America" came back with geographies
+ * ["America"] in live replies, 2026-11-01). They are not places the app
+ * can open, and leaving one in the intent also blocks the clarification
+ * panel's own placeless completion, which requires no named place —
+ * the reader would have to remove a bogus chip before the measure pick
+ * can finish the screen. Matched normalised (lowercase, trimmed,
+ * single spaces). Anything not on this list is a real place and keeps
+ * its clarification.
+ */
+const COUNTRY_GEOGRAPHIES: ReadonlySet<string> = new Set([
+  'america',
+  'united states',
+  'united states of america',
+  'usa',
+  'u.s.',
+  'u.s.a.',
+  'us',
+  'the united states',
+  'the us',
+  'the country',
+  'the nation',
+  'the whole country',
+  'entire country',
+  'nationwide',
+  'countrywide',
+])
+
+function isCountryGeography(name: string): boolean {
+  return COUNTRY_GEOGRAPHIES.has(name.toLowerCase().trim().replace(/\s+/g, ' '))
+}
+
+/**
  * Rescue a clarified reply into a national screen when the reply names
- * neither a place nor a measure and the reader's words carry the
- * superlative reading. Anything else returns null and the clarification
- * stands. The constructed intent is built only from allowlisted keys —
- * superlativeMeasure returns registry keys or null — and isFilterLegal
- * is re-checked here so a future phrase entry cannot widen the surface
- * by accident.
+ * no real place (at most country-level names) and no measure, and the
+ * reader's words carry the superlative reading. Anything else returns
+ * null and the clarification stands. The constructed intent is built
+ * only from allowlisted keys — superlativeMeasure returns registry keys
+ * or null — and isFilterLegal is re-checked here so a future phrase
+ * entry cannot widen the surface by accident.
  */
 export function rescueNationalScreen(
   intent: ValidatedIntent,
   queryText: string | undefined,
 ): ValidatedIntent | null {
   if (!intent.clarificationNeeded) return null
-  if (intent.geographies.length > 0 || intent.metricKeys.length > 0) return null
+  if (intent.metricKeys.length > 0) return null
+  if (!intent.geographies.every(isCountryGeography)) return null
   if (typeof queryText !== 'string' || queryText.trim() === '') return null
   const metricKey = superlativeMeasure(queryText)
   if (metricKey === null || !isFilterLegal(metricKey)) return null

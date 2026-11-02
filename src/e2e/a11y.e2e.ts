@@ -53,13 +53,24 @@ afterAll(async () => {
   await browser?.close()
 })
 
-/** Returns to the explore view so each test starts from a known state. */
+/**
+ * Returns to the explore view's DATA surface so each test starts from a
+ * known state. The early return this helper used to take — header Explore
+ * already carrying aria-current — left the page on the Ask mode, where
+ * #place does not exist: the "explore view" axe audit was auditing the
+ * Ask landing, and the tests that need the lookup (skip link, focus
+ * indicator, margins) timed out waiting for it. The explore view holds
+ * two modes; the data mode is the one this file's assertions describe,
+ * so the helper now switches to it whenever the lookup is absent.
+ */
 async function gotoExplore() {
   const explore = page.locator('button:has-text("Explore")')
-  if ((await explore.count()) > 0 && (await explore.first().getAttribute('aria-current')) === 'page') {
-    return
+  if ((await explore.count()) > 0 && (await explore.first().getAttribute('aria-current')) !== 'page') {
+    await explore.first().click()
   }
-  if ((await explore.count()) > 0) await explore.first().click()
+  if ((await page.locator('#place').count()) === 0) {
+    await page.locator('button:has-text("Explore the data")').first().click()
+  }
   await page.waitForSelector('#place', { timeout: 15000 })
   await page.waitForTimeout(300)
 }

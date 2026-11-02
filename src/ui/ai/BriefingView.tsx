@@ -23,12 +23,25 @@ export interface BriefingOutcome {
   errorState?: ErrorState
 }
 
+/** Error states worth one automatic wait-and-retry (see requestBriefingPack). */
+const AUTO_RETRYABLE: ReadonlySet<string> = new Set([
+  'breaker_open',
+  'provider_down',
+  'rate_limited',
+])
+
+export interface BriefingRetryOptions {
+  /** Delay before the single automatic retry; tests inject ~0. */
+  retryDelayMs?: number
+  sleep?: (ms: number) => Promise<void>
+}
+
 /**
  * Pack generation as one call, mirroring requestValidatedExplanation:
  * verification failure is a distinct outcome from a provider error,
  * because the reader must see WHICH figure failed its source check.
  */
-export async function requestBriefingPack(
+async function requestBriefingPackOnce(
   provider: MuseProvider,
   req: BriefingPackRequest,
   resolveFigure: FigureResolver,
@@ -55,6 +68,34 @@ export async function requestBriefingPack(
       errorState,
     }
   }
+}
+
+/**
+ * Pack generation with exactly one automatic retry on the transient
+ * failure classes, mirroring AutoExplain's posture on the Ask surface
+ * (same error set, same 15 s wait). The retry is a fresh whole request,
+ * which is the layer that helps against the failure measured live on
+ * 2026-11-02: a single request failed closed as breaker_open in ~1 s
+ * while a concurrent sibling request succeeded and diagnostics read a
+ * closed breaker immediately after — a one-request bad draw, not an
+ * outage. A genuinely down upstream still ends at the same honest
+ * unavailable outcome after the second attempt. Verification failures
+ * and withheld narratives never retry: neither is transient, and a
+ * refused figure must stay refused.
+ */
+export async function requestBriefingPack(
+  provider: MuseProvider,
+  req: BriefingPackRequest,
+  resolveFigure: FigureResolver,
+  options: BriefingRetryOptions = {},
+): Promise<BriefingOutcome> {
+  const first = await requestBriefingPackOnce(provider, req, resolveFigure)
+  if (!first.errorState || !AUTO_RETRYABLE.has(first.errorState)) return first
+  const sleep =
+    options.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  await sleep(options.retryDelayMs ?? 15_000)
+  return requestBriefingPackOnce(provider, req, resolveFigure)
 }
 
 export function BriefingPackView({ pack }: { pack: BriefingPack }) {

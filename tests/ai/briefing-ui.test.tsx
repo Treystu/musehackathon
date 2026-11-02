@@ -5,7 +5,7 @@ import {
   type BriefingFigure,
   type FigureResolver,
 } from '../../src/core/ai/briefing'
-import { createStubProvider } from '../../src/core/ai/provider'
+import { createStubProvider, deterministicBriefingProse } from '../../src/core/ai/provider'
 import type { SourceRef } from '../../src/core/types'
 import { BriefingPackView, MethodologyQa, requestBriefingPack } from '../../src/ui/ai/BriefingView'
 import { BriefingPanel } from '../../src/ui/ai/BriefingPanel'
@@ -57,9 +57,74 @@ describe('requestBriefingPack', () => {
         throw Object.assign(new Error('provider_down'), { code: 'provider_down' })
       },
     })
-    const outcome = await requestBriefingPack(provider, REQ, HONEST)
+    const outcome = await requestBriefingPack(provider, REQ, HONEST, { retryDelayMs: 0 })
     expect(outcome.message).toContain('unavailable right now')
     expect(outcome.errorState).toBe('provider_down')
+  })
+
+  it('retries once on a retryable failure and returns the pack', async () => {
+    let calls = 0
+    const provider = createStubProvider({
+      async briefing(req) {
+        calls += 1
+        if (calls === 1) {
+          throw Object.assign(new Error('breaker_open'), { code: 'breaker_open' })
+        }
+        return { prose: deterministicBriefingProse(req) }
+      },
+    })
+    const outcome = await requestBriefingPack(provider, REQ, HONEST, { retryDelayMs: 0 })
+    expect(calls).toBe(2)
+    expect(outcome.pack?.verifiedCount).toBe(1)
+    expect(outcome.message).toBeUndefined()
+  })
+
+  it('gives up after the single retry when the failure persists', async () => {
+    let calls = 0
+    const provider = createStubProvider({
+      async briefing() {
+        calls += 1
+        throw Object.assign(new Error('provider_down'), { code: 'provider_down' })
+      },
+    })
+    const outcome = await requestBriefingPack(provider, REQ, HONEST, { retryDelayMs: 0 })
+    expect(calls).toBe(2)
+    expect(outcome.message).toContain('unavailable right now')
+    expect(outcome.errorState).toBe('provider_down')
+  })
+
+  it('never retries a non-retryable failure', async () => {
+    let calls = 0
+    const provider = createStubProvider({
+      async briefing() {
+        calls += 1
+        throw Object.assign(new Error('bad_key'), { code: 'bad_key' })
+      },
+    })
+    const outcome = await requestBriefingPack(provider, REQ, HONEST, { retryDelayMs: 0 })
+    expect(calls).toBe(1)
+    expect(outcome.errorState).toBe('bad_key')
+  })
+
+  it('never retries a verification failure', async () => {
+    let providerCalls = 0
+    let resolverCalls = 0
+    const provider = createStubProvider({
+      async briefing(req) {
+        providerCalls += 1
+        return { prose: deterministicBriefingProse(req) }
+      },
+    })
+    // Verification runs before the provider call, so a refused figure
+    // means zero provider calls; a retry would re-run the resolver.
+    const tampered: FigureResolver = async () => {
+      resolverCalls += 1
+      return { value: 1, marginOfError: 90 }
+    }
+    const outcome = await requestBriefingPack(provider, REQ, tampered, { retryDelayMs: 0 })
+    expect(providerCalls).toBe(0)
+    expect(resolverCalls).toBe(1)
+    expect(outcome.verificationFailures?.[0]?.reason).toBe('value_mismatch')
   })
 })
 

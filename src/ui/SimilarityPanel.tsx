@@ -46,6 +46,7 @@ import {
 import type { AreaRow } from '../core/plugins/acs'
 import type { MuseProvider } from '../core/ai/provider'
 import { ExplainAction } from './ai/ExplainAction'
+import { HelpTip } from './ai/HelpTip'
 import { figureInputsFromAreaRow } from './ai/figure-input'
 
 const FLAG_KEY = 'civicscope.similarity.v1.enabled'
@@ -192,11 +193,16 @@ export function SimilarityPanel({
 
       {!enabled ? (
         <div className="mt-2">
-          <p className="text-xs text-slate-600">
-            This is off because a similarity result is a ranking: it only runs when you ask for it. It starts
-            with equal weights and a 0.10 distance cut-off; you can change both. Results are ordered
-            alphabetically rather than by closeness, and no protected-class measure can be weighted.
-          </p>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-slate-700">Why this is off</span>
+            <HelpTip label="Why similar-ZIP search is off by default">
+              <p>
+                This is off because a similarity result is a ranking: it only runs when you ask for it. It starts
+                with equal weights and a 0.10 distance cut-off; you can change both. Results are ordered
+                alphabetically rather than by closeness, and no protected-class measure can be weighted.
+              </p>
+            </HelpTip>
+          </div>
           <button
             type="button"
             onClick={() => persistEnabled(true)}
@@ -207,12 +213,17 @@ export function SimilarityPanel({
         </div>
       ) : (
         <div className="mt-2">
-          <p className="text-xs text-slate-600">
-            Weighted by the sliders you set, compared against the {sweep.length.toLocaleString('en-US')} areas
-            already loaded in this browser. Distance is each figure's share of the country's actual loaded range,
-            not a fixed scale. Results are alphabetical — the tool does not pick which match comes first — and an
-            area that does not publish all the compared figures is left out rather than scored on a subset.
-          </p>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-slate-700">How matches are found</span>
+            <HelpTip label="How similar-ZIP matching works">
+              <p>
+                Weighted by the sliders you set, compared against the {sweep.length.toLocaleString('en-US')} areas
+                already loaded in this browser. Distance is each figure's share of the country's actual loaded range,
+                not a fixed scale. Results are alphabetical — the tool does not pick which match comes first — and an
+                area that does not publish all the compared figures is left out rather than scored on a subset.
+              </p>
+            </HelpTip>
+          </div>
 
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {SIMILARITY_METRICS.map((metric) => (
@@ -264,7 +275,6 @@ export function SimilarityPanel({
               className="mt-1 w-32 min-h-[44px] rounded-md border border-slate-300 px-2 py-1 font-mono text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
             />
           </label>
-          <p className="text-xs text-slate-500">Enter a ZIP code that is loaded above.</p>
 
           {originZip.length === 5 && !origin && (
             <p className="mt-2 rounded-md bg-amber-50 p-3 text-sm text-amber-900" role="alert">

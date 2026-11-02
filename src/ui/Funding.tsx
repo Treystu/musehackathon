@@ -22,6 +22,8 @@
  * promised here.
  */
 
+import { HelpTip } from './ai/HelpTip'
+
 export interface DonationRoute {
   label: string
   href: string
@@ -43,10 +45,18 @@ export const DONATION_ROUTES: DonationRoute[] = [
 export function FundingSection() {
   return (
     <section aria-labelledby="funding-heading" className="mt-6 panel panel-padded">
-      <h2 id="funding-heading" className="text-sm font-semibold text-slate-900">
-        This tool is free, and stays free
-      </h2>
-      <p className="mt-1 text-sm text-slate-700">
+      {/*
+        Explain-nothing presentation (2026-11-02): the heading and the
+        donation buttons are the surface — the buttons are its action, so
+        they stay visible — and every prose paragraph, disclaimers included
+        and wording unchanged, lives behind the HelpTip.
+      */}
+      <div className="flex items-center gap-1.5">
+        <h2 id="funding-heading" className="text-sm font-semibold text-slate-900">
+          This tool is free, and stays free
+        </h2>
+        <HelpTip label="About funding and donations">
+      <p className="text-sm text-slate-700">
         CivicScope carries no advertising, sells no listings, and takes no payment for placement in any result.
         It runs on free hosting and free government data, so there is nothing for a sponsor to buy.
       </p>
@@ -54,6 +64,8 @@ export function FundingSection() {
         If it saved you time or answered a question you could not otherwise afford to answer, you can chip in
         towards hosting. These are voluntary gifts to the person who maintains it.
       </p>
+        </HelpTip>
+      </div>
 
       <ul className="mt-3 flex flex-wrap gap-2">
         {DONATION_ROUTES.map((route) => (
@@ -74,9 +86,12 @@ export function FundingSection() {
         The disclaimer is not boilerplate. It is the difference between "support
         this project" and an implied sale, and the Fair Housing posture of the
         whole app rests on there being no transaction attached to a result. So it
-        says plainly that a gift buys nothing.
+        says plainly that a gift buys nothing. It sits behind its own HelpTip
+        beside the buttons it qualifies, wording unchanged.
       */}
-      <p className="mt-3 text-xs text-slate-600">
+      <div className="mt-3">
+        <HelpTip label="What a contribution does and does not buy">
+      <p className="text-xs text-slate-600">
         Contributions are voluntary gifts to an individual, not payment for a service, and are not
         tax-deductible. They buy nothing: no priority support, no guarantees, and no promise about future
         features. No contribution can change any figure, ranking or result on this site.
@@ -87,6 +102,8 @@ export function FundingSection() {
         funds are the maintainer&rsquo;s. That is a weaker guarantee than a collective would give, and it is
         stated here rather than implied away &mdash; see <code>docs/governance.md</code> for the full position.
       </p>
+        </HelpTip>
+      </div>
     </section>
   )
 }

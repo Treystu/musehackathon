@@ -58,9 +58,24 @@ export function SearchAutocomplete({
 
   const expanded = open && suggestions.length > 0
 
+  /*
+   * The two quiet states under the field. Until now an unmatched query and a
+   * still-loading index looked identical — an empty space under the input —
+   * so a reader could not tell "no such city" from "wait". Each now gets one
+   * line, in the same dropdown shell, and the no-results line only appears
+   * once loading has finished, which is what keeps the two distinguishable.
+   */
+  const showLoading = open && loading && !isZip && value.trim().length >= 2
+  const showNoResults =
+    open && !loading && !isZip && value.trim().length >= 2 && suggestions.length === 0
+
   // Announce the count rather than relying on the option text being read, which
   // is unreliable while the list is changing under a cursor.
   useEffect(() => {
+    if (showNoResults) {
+      setAnnouncement('No matching city.')
+      return
+    }
     if (!expanded) {
       setAnnouncement('')
       return
@@ -68,7 +83,7 @@ export function SearchAutocomplete({
     setAnnouncement(
       suggestions.length === 1 ? '1 suggestion available.' : `${suggestions.length} suggestions available.`,
     )
-  }, [expanded, suggestions.length])
+  }, [expanded, suggestions.length, showNoResults])
 
   // A changed query invalidates the highlighted row. Without this, ArrowDown after
   // editing lands on an arbitrary option of the new list.
@@ -168,6 +183,18 @@ export function SearchAutocomplete({
       <p role="status" aria-live="polite" className="sr-only">
         {announcement}
       </p>
+
+      {showNoResults && (
+        <p className="absolute z-30 mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 shadow-lg">
+          No matching city.
+        </p>
+      )}
+
+      {showLoading && !expanded && (
+        <p className="absolute z-30 mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 shadow-lg">
+          Loading cities…
+        </p>
+      )}
 
       {expanded && (
         <ul

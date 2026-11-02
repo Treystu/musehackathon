@@ -5,6 +5,7 @@ import type { DrillState } from '../core/useHousingQuery'
 import { comparableMetricRows } from '../core/comparison'
 import { MAX_EXPLAIN_VALUES, type MuseProvider } from '../core/ai/provider'
 import { ExplainAction } from './ai/ExplainAction'
+import { HelpTip } from './ai/HelpTip'
 import { figureInputFromMetric, figureInputsFromMetrics } from './ai/figure-input'
 
 /**
@@ -60,13 +61,17 @@ export function Comparison({
       <div className="mt-3 space-y-4">
         {entries.length > 1 && comparableRows.length > 0 && (
           <section aria-labelledby="comparison-matrix-heading" className="panel panel-padded">
-            <h3 id="comparison-matrix-heading" className="text-sm font-semibold text-slate-900">
-              Compare shared figures side by side
-            </h3>
-            <p className="mt-1 text-xs text-slate-600">
-              Measures published for every selected area, from the same source and vintage. Margins of error sit
-              beside each estimate. Figures describe differences; nothing here ranks or recommends an area.
-            </p>
+            <div className="flex items-center gap-1.5">
+              <h3 id="comparison-matrix-heading" className="text-sm font-semibold text-slate-900">
+                Compare shared figures side by side
+              </h3>
+              <HelpTip label="About the comparison table">
+                <p>
+                  Measures published for every selected area, from the same source and vintage. Margins of error sit
+                  beside each estimate. Figures describe differences; nothing here ranks or recommends an area.
+                </p>
+              </HelpTip>
+            </div>
             <div className="mt-3 overflow-x-auto">
               {/*
                 table-words + a min-width on the label column: the global
@@ -198,15 +203,19 @@ export function Comparison({
             )}
 
             {d.hasSchools && (
-              <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-600">
-                <span className="font-medium text-slate-700">About school data here:</span> district staffing
-                and enrollment figures cover all 50 states. Near this location, the national source can show
-                up to eight nearest public schools within 3 km with a reportable 2019 four-year graduation-rate
-                midpoint; many records instead contain a published range, and missing or suppressed outcomes
-                are omitted.
-                NYC&rsquo;s separate DOE directory still supplies named-school enrollment, graduation and
-                attendance figures from 2018–19. Neither source is a school-quality rating.
-              </p>
+              <div className="mt-4 flex items-center gap-1.5 border-t border-slate-100 pt-3">
+                <span className="text-xs font-medium text-slate-700">About school data here</span>
+                <HelpTip label="About school data here">
+                  <p>
+                    District staffing and enrollment figures cover all 50 states. Near this location, the national
+                    source can show up to eight nearest public schools within 3 km with a reportable 2019 four-year
+                    graduation-rate midpoint; many records instead contain a published range, and missing or
+                    suppressed outcomes are omitted. NYC&rsquo;s separate DOE directory still supplies named-school
+                    enrollment, graduation and attendance figures from 2018–19. Neither source is a school-quality
+                    rating.
+                  </p>
+                </HelpTip>
+              </div>
             )}
           </article>
           )

@@ -31,6 +31,7 @@ import {
   type SavedSearch,
 } from '../core/saved-searches'
 import { ExplainAction } from './ai/ExplainAction'
+import { HelpTip } from './ai/HelpTip'
 import type { FigureInput } from './ai/FigureCard'
 
 const num = new Intl.NumberFormat('en-US')
@@ -79,13 +80,17 @@ export function SavedSearches({
 
   return (
     <section aria-labelledby="saved-heading" className="mt-4 panel panel-padded">
-      <h2 id="saved-heading" className="text-sm font-semibold text-slate-900">
-        Saved comparisons
-      </h2>
-      <p className="mt-1 text-xs text-slate-600">
-        Kept in this browser only. A saved comparison is a set of ZIP codes and nothing else — never an ordering or a
-        filter.
-      </p>
+      <div className="flex items-center gap-1.5">
+        <h2 id="saved-heading" className="text-sm font-semibold text-slate-900">
+          Saved comparisons
+        </h2>
+        <HelpTip label="About saved comparisons">
+          <p>
+            Kept in this browser only. A saved comparison is a set of ZIP codes and nothing else — never an ordering or a
+            filter.
+          </p>
+        </HelpTip>
+      </div>
 
       {canSave && (
         <form

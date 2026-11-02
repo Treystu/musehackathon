@@ -70,6 +70,7 @@ import type { AreaRow } from '../core/plugins/acs'
 import type { MuseProvider } from '../core/ai/provider'
 import { FairHousingNotice } from './FairHousingNotice'
 import { ExplainAction } from './ai/ExplainAction'
+import { HelpTip } from './ai/HelpTip'
 import { figureInputsFromAreaRows } from './ai/figure-input'
 import { useMapCanvasInteractions, useMapViewport } from './map-interactions'
 
@@ -208,6 +209,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
 
   const {
     hover,
+    focused,
     onKeyDown,
     onMouseMove,
     onMouseLeave,
@@ -280,10 +282,29 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
     ctx.textBaseline = 'middle'
     const labelling = radius >= LABEL_MIN_RADIUS
     for (const bin of geoms) {
+      const isFocused = focused !== null && bin === focused
       // A cell with no figure at all is left undrawn rather than painted grey.
       // The empty space IS the information — a grey hexagon read as a failure,
-      // and painting a placeholder implied data existed where none did.
-      if (bin.value === null) continue
+      // and painting a placeholder implied data existed where none did. The
+      // one exception is the keyboard-focused cell: focus the reader cannot
+      // see is focus that does not exist, so its outline is drawn even here.
+      if (bin.value === null) {
+        if (isFocused) {
+          const r = radius
+          ctx.beginPath()
+          HEX_CORNERS.forEach(([dx, dy], i) => {
+            const x = bin.cx + dx * r
+            const y = bin.cy + dy * r
+            if (i === 0) ctx.moveTo(x, y)
+            else ctx.lineTo(x, y)
+          })
+          ctx.closePath()
+          ctx.strokeStyle = '#0f172a'
+          ctx.lineWidth = 2.5
+          ctx.stroke()
+        }
+        continue
+      }
       const r = radius
       const isSelected = bin.zctas.some((z) => selectedZctas.includes(z))
       const color = binFor(bins, bin.value)?.color ?? NO_DATA_COLOR
@@ -299,9 +320,17 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
       ctx.fill()
 
       const pale = isLight(color)
-      ctx.strokeStyle = isSelected ? '#0f172a' : pale ? '#ffffff' : 'rgba(255,255,255,0.32)'
-      ctx.lineWidth = isSelected ? 2.5 : 0.75
+      // The keyboard-focused cell gets a two-tone outline (dark ring, light
+      // halo) so it reads against both ends of the ramp, where any single
+      // colour would vanish at one end.
+      ctx.strokeStyle = isFocused ? '#0f172a' : isSelected ? '#0f172a' : pale ? '#ffffff' : 'rgba(255,255,255,0.32)'
+      ctx.lineWidth = isFocused ? 3 : isSelected ? 2.5 : 0.75
       ctx.stroke()
+      if (isFocused) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
 
       /*
        * A small asterisk marks a hexagon whose ZIP codes are only partly
@@ -335,7 +364,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
       ctx.fillStyle = pale ? '#0f172a' : '#ffffff'
       ctx.fillText(text, bin.cx, bin.cy)
     }
-  }, [assets, fit, viewport, geoms, bins, selectedZctas, outlinePath])
+  }, [assets, fit, viewport, geoms, bins, selectedZctas, outlinePath, focused])
 
   useEffect(() => {
     draw()
@@ -343,16 +372,25 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
 
   const covered = useMemo(() => geoms.filter((g) => g.value !== null).length, [geoms])
 
+  // The bin the info card describes: the pointer's bin when there is one,
+  // otherwise the keyboard-focused bin, so a keyboard reader gets the same
+  // figure, count and median note a hover shows.
+  const activeBin = hover ?? focused
+
   return (
     <section aria-labelledby={headingId} className="mt-8 panel panel-padded">
-      <h2 id={headingId} className="section-title">
-        Map
-      </h2>
-      <p className="section-note mt-1">
-        One hexagon per area, coloured by the figure chosen below. A hexagon covering several ZIP codes shows
-        their median; zoom in and each hexagon becomes a single ZIP code with its own published figure. Every
-        figure is also in the screening table.
-      </p>
+      <div className="flex items-center gap-1.5">
+        <h2 id={headingId} className="section-title">
+          Map
+        </h2>
+        <HelpTip label="About the map">
+          <p>
+            One hexagon per area, coloured by the figure chosen below. A hexagon covering several ZIP codes shows
+            their median; zoom in and each hexagon becomes a single ZIP code with its own published figure. Every
+            figure is also in the screening table. Alaska, Hawaii and Puerto Rico are drawn as insets.
+          </p>
+        </HelpTip>
+      </div>
 
       {/*
         The metric picker is a select, not the radio list it used to be. The
@@ -362,13 +400,20 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
         "Households" — while the legend below the map named the metric
         actually in force ("Rent burden"). A select keeps the chosen figure,
         the map and the legend on one screen, so the three cannot appear to
-        disagree. The chosen figure's own explanation sits under the select,
-        because touch has no hover to carry it.
+        disagree. The chosen figure's own explanation sits behind the HelpTip
+        beside the label, per the explain-nothing rule.
       */}
       <div className="mt-3">
-        <label htmlFor={metricId} className="text-sm font-semibold text-slate-900">
-          What the colour shows
-        </label>
+        <div className="flex items-center gap-1.5">
+          <label htmlFor={metricId} className="text-sm font-semibold text-slate-900">
+            What the colour shows
+          </label>
+          <HelpTip label="About this figure">
+            <p>
+              One scale for every figure: darker = higher. {active.blurb}
+            </p>
+          </HelpTip>
+        </div>
         <select
           id={metricId}
           value={metric}
@@ -381,9 +426,6 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
             </option>
           ))}
         </select>
-        <p className="mt-1 max-w-3xl text-[0.8125rem] leading-snug text-slate-600">
-          One scale for every figure: darker = higher. {active.blurb}
-        </p>
       </div>
 
       {loadError ? (
@@ -412,23 +454,23 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
           onClick={onClick}
           className="block w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
         />
-        {hover ? (
+        {activeBin ? (
           <div
             className="pointer-events-none absolute z-10 max-w-xs rounded-md border border-slate-300 bg-white p-2 text-xs shadow-sm"
             style={{
-              left: Math.min(hover.cx + 12, viewport.width - 180),
-              top: Math.min(hover.cy + 12, viewport.height - 90),
+              left: Math.min(activeBin.cx + 12, viewport.width - 180),
+              top: Math.min(activeBin.cy + 12, viewport.height - 90),
             }}
           >
             <p className="font-semibold text-slate-900">
-              {hover.value === null
+              {activeBin.value === null
                 ? NO_DATA_LABEL
-                : formatValue(hover.value, unit)}
+                : formatValue(activeBin.value, unit)}
             </p>
             <p className="text-slate-700">
-              {hover.count === 1 ? hover.zctas[0] : `${hover.count} ZIP codes`}
-              {hover.withValue < hover.count
-                ? `, ${hover.withValue} with a figure`
+              {activeBin.count === 1 ? activeBin.zctas[0] : `${activeBin.count} ZIP codes`}
+              {activeBin.withValue < activeBin.count
+                ? `, ${activeBin.withValue} with a figure`
                 : ''}
             </p>
             {/*
@@ -441,11 +483,11 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
               9, 30, 45, 64 and 2,086: the answer is that 45 IS the median, and
               the hover owed them the word.
             */}
-            {hover.count > 1 && hover.withValue > 1 && hover.value !== null ? (
-              <p className="text-slate-600">Median of the {hover.withValue} with a figure, not a sum or average.</p>
+            {activeBin.count > 1 && activeBin.withValue > 1 && activeBin.value !== null ? (
+              <p className="text-slate-600">Median of the {activeBin.withValue} with a figure, not a sum or average.</p>
             ) : null}
-            {hover.zctas.length <= 4 ? (
-              <p className="text-slate-600">{hover.zctas.join(', ')}</p>
+            {activeBin.zctas.length <= 4 ? (
+              <p className="text-slate-600">{activeBin.zctas.join(', ')}</p>
             ) : null}
           </div>
         ) : null}
@@ -481,9 +523,15 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
             <span aria-hidden="true">&#8634;</span>
           </button>
         </div>
+        {/*
+          This copy states exactly the gestures that are implemented — no
+          more. It previously promised pinch zoom, which the single-pointer
+          drag handling never delivered (see map-interactions.ts for why
+          pinch stays out).
+        */}
         <p className="pointer-events-none absolute bottom-2 left-2 max-w-[22rem] rounded bg-white/85 px-2 py-1 text-[11px] leading-snug text-slate-600 backdrop-blur">
-          Drag to pan, scroll or pinch to zoom, or use the buttons. Arrow keys pan, + and &minus; zoom, 0
-          resets. Click an area to compare it.
+          Drag to pan, scroll to zoom, or use the buttons. Arrow keys move between areas, Enter selects one,
+          + and &minus; zoom, 0 resets. Click an area to compare it.
         </p>
       </div>
 
@@ -519,8 +567,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
         <p className="mt-1 text-[0.8125rem] leading-snug text-slate-600">
           {loading
             ? 'Still loading. An asterisk marks a hexagon whose ZIP codes are only partly loaded, so its figure is the median of what has arrived so far rather than of everything.'
-            : `Loaded ${covered.toLocaleString('en-US')} of ${geoms.length.toLocaleString('en-US')} areas with a figure; areas left blank have no figure published.`}{' '}
-          Alaska, Hawaii and Puerto Rico are drawn as insets.
+            : `Loaded ${covered.toLocaleString('en-US')} of ${geoms.length.toLocaleString('en-US')} areas with a figure; areas left blank have no figure published.`}
         </p>
       </div>
 
@@ -538,6 +585,19 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
       <p className="sr-only" role="status" aria-live="polite">
         {summary}
       </p>
+
+      {/*
+        The keyboard-focused bin, announced as it moves: without this, arrow
+        keys would change an outline a screen-reader user cannot see and say
+        nothing, which is the canvas-silence problem again in miniature.
+      */}
+      {focused ? (
+        <p className="sr-only" role="status" aria-live="polite">
+          {focused.count === 1 ? `Area ${focused.zctas[0]}` : `Area covering ${focused.count} ZIP codes`}:{' '}
+          {focused.value === null ? NO_DATA_LABEL : formatValue(focused.value, unit)}. Press Enter to compare
+          it.
+        </p>
+      ) : null}
 
       {/*
         Schools, and why this map does not rank them.

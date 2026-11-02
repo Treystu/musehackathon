@@ -3,17 +3,27 @@
  * The links are kept on the shared notice so every data-bearing screen offers
  * the same maintained federal and state/local paths instead of a hand-curated
  * state-law list that can silently go stale.
+ *
+ * Presentation (explain-nothing rule, 2026-11-02): the surface itself carries
+ * only the heading and the Equal Housing Opportunity line. The full notice —
+ * wording unchanged, because this text is conformity-sensitive — lives behind
+ * the HelpTip, whose panel is always in the DOM, so the text remains present
+ * on the surface for pins, find-in-page and screen readers exactly as before.
  */
+import { HelpTip } from './ai/HelpTip'
+
 export function FairHousingNotice() {
   return (
     <aside
       className="rounded-lg border border-slate-300 bg-white p-4 text-sm"
       aria-labelledby="fh-heading"
     >
-      <h2 id="fh-heading" className="text-sm font-semibold text-slate-900">
-        How to read this data
-      </h2>
-      <ul className="mt-2 list-disc space-y-1.5 pl-5 text-slate-700">
+      <div className="flex items-center justify-between gap-2">
+        <h2 id="fh-heading" className="text-sm font-semibold text-slate-900">
+          How to read this data
+        </h2>
+        <HelpTip label="How to read this data and fair housing contacts" align="right">
+      <ul className="list-disc space-y-1.5 pl-5 text-slate-700">
         <li>
           Every figure here describes a <strong>Census-defined area</strong> — a ZIP code tabulation area or
           census tract. It does not describe any individual, household, property, or its occupants.
@@ -34,7 +44,6 @@ export function FairHousingNotice() {
           religion, sex, disability, and familial status. State and local protections may also apply.
         </li>
       </ul>
-      <p className="mt-3 font-medium text-slate-800">Equal Housing Opportunity</p>
       <p className="mt-3 text-slate-700">
         If you believe you have experienced housing discrimination, you can contact HUD, a HUD Fair Housing
         Assistance Program partner, or the Department of Justice:
@@ -85,6 +94,9 @@ export function FairHousingNotice() {
         HUD&rsquo;s directory lists participating agencies. It is a starting point for local help, not a complete
         statement of the law in any state or city.
       </p>
+        </HelpTip>
+      </div>
+      <p className="mt-1 font-medium text-slate-800">Equal Housing Opportunity</p>
     </aside>
   )
 }

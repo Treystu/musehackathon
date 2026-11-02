@@ -211,11 +211,24 @@ export function SweepTable({
             Export CSV
           </button>
           <p className="text-xs text-slate-600">
-            {formatMetricNumber(visible.length, 'count')} of {formatMetricNumber(rows.length, 'count')} ZIP codes shown. Select areas to compare
-            them side by side.
+            {formatMetricNumber(visible.length, 'count')} of {formatMetricNumber(rows.length, 'count')} ZIP codes shown.
           </p>
         </div>
       </div>
+
+      {/*
+        The zero-row state: a filter that matches nothing (or a screen that
+        has not loaded a row yet) used to render an empty bordered box with a
+        caption claiming thousands of areas, which reads as a broken table
+        rather than as an answer. One quiet line says which case it is.
+      */}
+      {visible.length === 0 ? (
+        <p role="status" className="mt-3 panel px-3 py-6 text-center text-sm text-slate-600">
+          {filter.trim()
+            ? `No ZIP codes start with ${filter.trim()}.`
+            : 'No ZIP codes loaded yet.'}
+        </p>
+      ) : null}
 
       {/*
         A scroll container of fixed height with a spacer of the full list height,
@@ -223,6 +236,7 @@ export function SweepTable({
         semantics, so a screen reader still reads a table with a header row and
         row headers; only the number of mounted rows is bounded.
       */}
+      {visible.length > 0 ? (
       <div
         ref={scroller}
         onScroll={(e) => setStart(Math.floor((e.target as HTMLDivElement).scrollTop / ROW_HEIGHT) - OVERSCAN)}
@@ -230,9 +244,8 @@ export function SweepTable({
       >
         <table className="w-full min-w-[760px] text-left text-sm">
           <caption className="px-3 py-2 text-left text-xs text-slate-600">
-            US ZIP code tabulation areas, American Community Survey 5-year estimates. The table starts in
-            ascending ZIP code order; figure columns can be sorted individually. It holds {formatMetricNumber(visible.length, 'count')}
-            areas in total and is scrolled rather than truncated, so every ZIP code is reachable.
+            US ZIP code tabulation areas, American Community Survey 5-year estimates. {formatMetricNumber(visible.length, 'count')}
+            areas in total, scrolled rather than truncated, so every ZIP code is reachable.
           </caption>
           <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 backdrop-blur">
             <tr>
@@ -330,6 +343,7 @@ export function SweepTable({
           </tbody>
         </table>
       </div>
+      ) : null}
     </div>
   )
 }

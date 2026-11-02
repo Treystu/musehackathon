@@ -40,7 +40,7 @@ import { HelpTip } from './HelpTip'
 import { ClarificationPanel, type ClarificationCandidates } from './ClarificationPanel'
 import { IntentEditor } from './IntentEditor'
 import { ExplainOnAsk } from './ExplainOnAsk'
-import { MicInput, type MicRecorder } from './MicInput'
+import { MicInput, type MicRecognizer, type MicRecorder } from './MicInput'
 import { StagedStatus } from './StagedStatus'
 import { AskSessionStore, type PanelResearchState } from './session-store'
 import { pickAckOpener, researchAck } from './ack'
@@ -48,10 +48,7 @@ import type { ExplanationState } from './ExplainBox'
 import type { FigureInput } from './FigureCard'
 
 export const SPOKEN_NUMBER_MISMATCH_NOTE =
-  'A number in what was heard does not match the understood request, so nothing was run. The words are in the box above: check the numbers, then choose Ask.'
-
-export const LOW_CONFIDENCE_TRANSCRIPT_NOTE =
-  'That speech was not clear enough to trust, especially its numbers. The words are in the box above: check and edit them, then choose Ask. Nothing has run.'
+  'A number in what was heard does not match the understood request, so nothing was run. The words stand in the box above, where they can be corrected; a request runs only on the numbers actually said.'
 
 export const EMPTY_TRANSCRIPT_NOTE =
   'No speech was captured. The typed box above still works fully, or try speaking again.'
@@ -399,10 +396,11 @@ export function Disclosure() {
 
 /**
  * Ask panel. Text is the primary path; mic (Item 12) is an equal main
- * input beside it — consent-gated in MicInput. An accepted transcript
+ * input beside it — consent-gated in MicInput. A final transcript
  * takes the same path as typed text and runs the same way (auto-run,
- * 2026-11-01); the guards are the confidence threshold, the
- * spoken-number check in accept(), and the editable text the words
+ * 2026-11-01; atomic voice submission, 2026-11-02 — no confidence
+ * gate and no review step in front of the run); the guards are the
+ * spoken-number check in accept() and the editable text the words
  * land in. BYO recovery is wired here as the byoProvider retry call
  * path only — no ByoOffer mounts on this surface (owner ruling F-E:
  * zero key/setup content in the judged flow, exhausted states
@@ -434,6 +432,7 @@ export function AskPanel({
   explanation,
   onExplain,
   micRecorder,
+  micRecognizer,
   micStorage,
   parseRetryDelaysMs = PARSE_RETRY_DELAYS_MS,
   session: sessionProp,
@@ -503,6 +502,8 @@ export function AskPanel({
   onExplain?: (intent: ValidatedIntent) => void
   /** Test/port injection for the mic recorder; defaults to the browser recorder. */
   micRecorder?: MicRecorder | null
+  /** Test/port injection for the mic recognizer; takes precedence over micRecorder. */
+  micRecognizer?: MicRecognizer | null
   /** Test/port injection for mic consent storage; defaults to browser storage. */
   micStorage?: MicStorage
   /** Wait-out schedule for retryable parse failures; tests inject ~0. */
@@ -971,26 +972,39 @@ export function AskPanel({
   }
 
   /**
-   * Mic path. The transcript is assessed before it can become a query:
-   * low-confidence or empty speech goes to clarification with the words
-   * left in the editable text box. An accepted transcript runs the
+   * Mic path (atomic submission, owner ruling 2026-11-02). This is
+   * called once per utterance, with the FINAL transcript only —
+   * interim words arrive through handleInterimTranscript and are
+   * never submitted. A non-empty final transcript is the submission:
+   * it stands in the editable text box as the question and runs the
    * exact same auto-run intent path as typed text, plus spoken-number
-   * validation in accept() — speech gets no execution path of its own.
+   * validation in accept() — speech gets no execution path of its
+   * own, and no review or approval step sits in front of the run.
+   * Correction happens after, through the box and the understood-
+   * request controls. An empty final transcript submits nothing and
+   * lands in the quiet note below; voice mode does not activate —
+   * no question ran.
    */
   function handleTranscript(result: TranscribeResult) {
     const assessment = assessTranscript(result)
     setText(assessment.transcript)
     if (assessment.kind === 'clarify') {
       setCaughtError(null)
-      setNote(
-        assessment.reason === 'empty'
-          ? EMPTY_TRANSCRIPT_NOTE
-          : LOW_CONFIDENCE_TRANSCRIPT_NOTE,
-      )
+      setNote(EMPTY_TRANSCRIPT_NOTE)
       return
     }
     onVoiceModeChange?.(true)
     void runQuery(assessment.transcript, assessment.transcript)
+  }
+
+  /**
+   * Interim voice words, display-only: they stream into the question
+   * box as they are heard so the reader watches the question form.
+   * Nothing here submits, parses, or activates voice mode — only the
+   * final transcript (handleTranscript) does.
+   */
+  function handleInterimTranscript(transcript: string) {
+    setText(transcript)
   }
 
   /**
@@ -1078,6 +1092,8 @@ export function AskPanel({
             provider.transcribe({ audio, mimeType }, new AbortController().signal)
           }
           onTranscript={handleTranscript}
+          onInterimTranscript={handleInterimTranscript}
+          recognizer={micRecognizer}
           recorder={micRecorder}
           storage={micStorage}
         />

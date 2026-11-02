@@ -19,12 +19,19 @@ export const MIC_CONSENT_STORAGE_KEY = 'civicscope.micConsent.v1'
 export const MIC_CONSENT_EVENT = 'civicscope:mic-consent-changed'
 
 /**
- * Below this transcription confidence a transcript is never accepted as
- * a query as-is: it is shown to the user for checking (clarification),
- * because a mis-heard number silently substituted into a request is the
- * mic path's characteristic failure.
+ * Voice submission is atomic (owner ruling, 2026-11-02): the final
+ * transcript of an utterance IS the submission — it is never held for
+ * a review-and-approve click, at any confidence. An earlier threshold
+ * (0.8) routed low-confidence transcripts to a check-then-Ask state;
+ * that state was the verify click the owner removed. The failure it
+ * guarded against — a mis-heard number silently substituted into a
+ * request — is still guarded where it can actually bite: the
+ * spoken-number check in the Ask path fails closed on any numeral the
+ * parse altered or dropped, whatever the confidence was. Words are
+ * correctable after submission (the transcript stands in the editable
+ * box and the understood request stays adjustable); numerals never
+ * run unverified.
  */
-export const TRANSCRIPT_CONFIDENCE_THRESHOLD = 0.8
 
 export interface MicStorage {
   getItem(key: string): string | null
@@ -144,28 +151,24 @@ export function revokeMicConsent(storage?: MicStorage): void {
 
 export type TranscriptAssessment =
   | { kind: 'accept'; transcript: string }
-  | { kind: 'clarify'; transcript: string; reason: 'empty' | 'low_confidence' }
+  | { kind: 'clarify'; transcript: string; reason: 'empty' }
 
 /**
- * Decide what a transcription result may become. An accepted transcript
- * becomes the query text and takes the ordinary Ask path (auto-run,
- * 2026-11-01) — speech has no execution path of its own, and the
- * spoken-number check still gates what a transcript can run. A
- * low-confidence or empty transcript goes to clarification instead of
- * being silently substituted for a query.
+ * Decide what a final transcription result may become. Any non-empty
+ * final transcript is accepted and becomes the query text, taking the
+ * ordinary Ask path (auto-run, 2026-11-01; atomic submission,
+ * 2026-11-02) — speech has no execution path of its own, and the
+ * spoken-number check still gates what a transcript can run. Only an
+ * empty result clarifies, and it clarifies into the quiet state: no
+ * words were captured, so there is nothing to submit and nothing to
+ * review. Confidence is deliberately not consulted here (see the
+ * ruling note above); interim results never reach this function at
+ * all — the recognizer hands over final results only.
  */
 export function assessTranscript(result: TranscribeResult): TranscriptAssessment {
   const transcript = typeof result?.transcript === 'string' ? result.transcript : ''
   if (transcript.trim() === '') {
     return { kind: 'clarify', transcript, reason: 'empty' }
-  }
-  const confidence = result?.confidence
-  if (
-    typeof confidence !== 'number' ||
-    !Number.isFinite(confidence) ||
-    confidence < TRANSCRIPT_CONFIDENCE_THRESHOLD
-  ) {
-    return { kind: 'clarify', transcript, reason: 'low_confidence' }
   }
   return { kind: 'accept', transcript }
 }

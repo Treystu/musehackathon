@@ -6,7 +6,6 @@ import {
   hasMicConsent,
   revokeMicConsent,
   spokenNumberFigures,
-  TRANSCRIPT_CONFIDENCE_THRESHOLD,
   type MicStorage,
 } from '../../src/core/ai/mic'
 import type { ValidatedIntent } from '../../src/core/ai/provider'
@@ -49,33 +48,31 @@ describe('mic consent (first use)', () => {
   })
 })
 
-describe('transcript assessment', () => {
-  it('accepts a clear transcript at or above the threshold', () => {
+describe('transcript assessment (atomic submission, 2026-11-02)', () => {
+  it('accepts a clear final transcript', () => {
     expect(assessTranscript({ transcript: 'rent in Hilo', confidence: 0.95 }).kind).toBe('accept')
-    expect(
-      assessTranscript({ transcript: 'rent in Hilo', confidence: TRANSCRIPT_CONFIDENCE_THRESHOLD }).kind,
-    ).toBe('accept')
   })
 
-  it('low confidence goes to clarification, never substitution', () => {
+  it('accepts a low-confidence final transcript: no review gate stands before submission', () => {
+    // Owner ruling, 2026-11-02: end of utterance submits at any
+    // confidence; the words are correctable after, in the box. The
+    // pre-cure behaviour (clarify + "then choose Ask") was the verify
+    // click this pin exists to keep removed.
     const a = assessTranscript({ transcript: 'rent in hilo under too thousand', confidence: 0.4 })
-    expect(a.kind).toBe('clarify')
-    if (a.kind === 'clarify') expect(a.reason).toBe('low_confidence')
-    // The heard words are preserved verbatim for the user to check.
+    expect(a.kind).toBe('accept')
     expect(a.transcript).toBe('rent in hilo under too thousand')
   })
 
-  it('empty or whitespace speech goes to clarification as empty', () => {
+  it('accepts a final transcript whose confidence is missing or non-finite', () => {
+    expect(assessTranscript({ transcript: 'rent', confidence: Number.NaN }).kind).toBe('accept')
+  })
+
+  it('empty or whitespace speech goes to clarification as empty, and nothing else does', () => {
     for (const transcript of ['', '   ']) {
       const a = assessTranscript({ transcript, confidence: 0.99 })
       expect(a.kind).toBe('clarify')
       if (a.kind === 'clarify') expect(a.reason).toBe('empty')
     }
-  })
-
-  it('a missing or non-finite confidence is treated as low confidence', () => {
-    const nan = assessTranscript({ transcript: 'rent', confidence: Number.NaN })
-    expect(nan.kind).toBe('clarify')
   })
 })
 

@@ -313,7 +313,11 @@ export const RESEARCH_SYSTEM_PROMPT =
   'short list. Cite the pages you rely on. Never invent a statistic or a ' +
   'rating; if the web does not support part of the answer, say so plainly. ' +
   'Do not state rent, home-value, income, or demographic figures — those are ' +
-  'shown separately from Census data and must never come from the web.'
+  'shown separately from Census data and must never come from the web. ' +
+  'Report what sources say about the criteria the reader asked about; do ' +
+  'not characterize places by race, ethnicity, religion, or national ' +
+  'origin, and do not rank or steer readers toward or away from places by ' +
+  'who lives there.'
 
 export interface ResearchSourceLike {
   title: string

@@ -281,7 +281,7 @@ describe('Ask surface completion', () => {
 
   it('keeps key entry in settings, off the Ask surface', () => {
     const ask = renderToStaticMarkup(
-      <AskPanel provider={createStubProvider()} onOpenSettings={() => {}} />,
+      <AskPanel provider={createStubProvider()} />,
     )
     expect(ask).not.toContain('type="password"')
     expect(ask).not.toContain('Meta key')

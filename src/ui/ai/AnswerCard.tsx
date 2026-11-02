@@ -8,6 +8,7 @@ import { METRIC_DEFS_BY_KEY } from '../../core/civicscope-registry'
 import { formatMetricNumber } from '../metric-format'
 import { ResultMap } from '../map/ResultMap'
 import { HelpTip } from './HelpTip'
+import { measureLabel } from './plain-labels'
 
 /**
  * The composed answer, rendered as the primary result of an Ask
@@ -187,7 +188,17 @@ function CriterionEvidenceList({ answer }: { answer: ComposedAnswer }) {
       <ul className="mt-1 space-y-1">
         {answer.criterionEvidence.map((evidence, i) => (
           <li key={i} className="text-sm text-slate-700">
-            <span className="font-medium text-slate-900">{evidence.criterion}</span>
+            {/*
+              The stored criterion for a Census entry is its metric
+              key, kept as a key because spoken-answer.ts matches it
+              against verified figure keys — so the plain label is
+              mapped here, at render (defect F-B-ANSWER-CARD,
+              2026-11-02: this list rendered "median_gross_rent"
+              verbatim). measureLabel passes a value with no registry
+              entry through unchanged, so researched criteria (the
+              reader's own catalog labels) render as stored.
+            */}
+            <span className="font-medium text-slate-900">{measureLabel(evidence.criterion)}</span>
             {' — '}
             {EVIDENCE_STATUS_LABELS[evidence.status] ?? evidence.status}. {evidence.detail}
           </li>

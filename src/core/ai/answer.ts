@@ -152,6 +152,7 @@ import {
   classifyMetricKey,
   type CountyAssignment,
 } from '../county-aggregate'
+import { METRIC_DEFS_BY_KEY } from '../civicscope-registry'
 import type { AreaRow } from '../plugins/acs'
 import type { MuseProvider, ResearchResult, ValidatedIntent } from './provider'
 import {
@@ -261,7 +262,21 @@ export interface ResearchCriterion {
 
 export type CriterionEvidenceStatus = 'met' | 'partially_measured' | 'not_measurable'
 
-/** Per-criterion evidence: what serves each stated criterion, honestly labelled. */
+/**
+ * Per-criterion evidence: what serves each stated criterion, honestly labelled.
+ *
+ * The stored `criterion` value is an identifier, not display text: a
+ * Census entry carries its metric key (median_gross_rent) and a
+ * researched entry carries its catalog label (School quality) —
+ * measured consumers match on the stored value as a key
+ * (spoken-answer.ts looks a Census criterion's verified figure up by
+ * `f.key === evidence.criterion`, and answer-runner.ts matches the
+ * proximity entry by its research label), so the key is never
+ * rewritten here. Reader-facing seams map it through
+ * criterionDisplayLabel instead: the AnswerCard evidence list and
+ * the compose summary's prose below (defect F-B-ANSWER-CARD,
+ * 2026-11-02: the card rendered the raw key verbatim).
+ */
 export interface CriterionEvidence {
   criterion: string
   kind: 'census' | 'research'
@@ -946,6 +961,20 @@ export function filterBannedSentences(prose: string): { prose: string; dropped: 
 /* Per-criterion evidence                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The reader-facing label for a stored criterion value: a metric key
+ * maps to the registry's plain label for it (median_gross_rent ->
+ * "Median gross rent", the same label plain-labels.ts serves the UI
+ * from this registry), and a value with no registry entry — a
+ * researched criterion's label, "County-level geography" — passes
+ * through unchanged. Used ONLY where a criterion value is composed
+ * into prose or rendered: the stored field stays the key (see
+ * CriterionEvidence), because spoken-answer.ts matches on it.
+ */
+export function criterionDisplayLabel(criterion: string): string {
+  return METRIC_DEFS_BY_KEY.get(criterion)?.label ?? criterion
+}
+
 const NUMERAL_IN_CLAIM_RE =
   /\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i
 
@@ -1289,7 +1318,12 @@ export function composeAnswer(input: {
             ? 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.'
             : screen.criteria.length === 0
               ? 'The places named here are shown with their Census figures for the measures in this request.'
-              : `The places named here meet the stated Census criteria, with the deciding figures shown from Census data. Not measured here: ${unmeasuredLabels.join(', ')}.`)
+              : // The summary is prose and renders verbatim everywhere
+                // (card, spoken headline), so the labels joined here are
+                // mapped to plain language at this composition seam —
+                // the stored criterion values stay metric keys for the
+                // consumers that match on them (F-B-ANSWER-CARD).
+                `The places named here meet the stated Census criteria, with the deciding figures shown from Census data. Not measured here: ${unmeasuredLabels.map(criterionDisplayLabel).join(', ')}.`)
   return {
     status,
     stage: 'compose',

@@ -37,7 +37,6 @@ import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../co
 import type { ProxyError } from '../../core/ai/proxy-errors'
 import { censusLoadSentence } from '../GuidedTour'
 import { HelpTip } from './HelpTip'
-import { ByoOffer } from './ByoOffer'
 import { ClarificationPanel, type ClarificationCandidates } from './ClarificationPanel'
 import { IntentEditor } from './IntentEditor'
 import { ExplainOnAsk } from './ExplainOnAsk'
@@ -394,8 +393,10 @@ export function Disclosure() {
  * takes the same path as typed text and runs the same way (auto-run,
  * 2026-11-01); the guards are the confidence threshold, the
  * spoken-number check in accept(), and the editable text the words
- * land in. BYO recovery is wired here via ByoOffer
- * (settings/shutoff entry) + byoProvider retry.
+ * land in. BYO recovery is wired here as the byoProvider retry call
+ * path only — no ByoOffer mounts on this surface (owner ruling F-E:
+ * zero key/setup content in the judged flow, exhausted states
+ * included).
  *
  * Union hand-merge (Panel B1): the CivicScope panel (diagnostics
  * counters, execution note, ExplainAction wiring) carries the Entire
@@ -419,7 +420,6 @@ export function AskPanel({
   onVoiceModeChange,
   proxyError,
   clarificationCandidates,
-  onOpenSettings,
   figures,
   explanation,
   onExplain,
@@ -470,7 +470,6 @@ export function AskPanel({
   onVoiceModeChange?: (active: boolean) => void
   proxyError?: ProxyError | null
   clarificationCandidates?: ClarificationCandidates
-  onOpenSettings?: () => void
   figures?: readonly FigureInput[]
   explanation?: ExplanationState
   onExplain?: (intent: ValidatedIntent) => void
@@ -1085,10 +1084,21 @@ export function AskPanel({
       {proxyError && (
         <p className="mt-2 text-sm text-slate-600">{manualFallbackNote()}</p>
       )}
-      <ByoOffer error={proxyError ?? caughtError} onOpenSettings={onOpenSettings} />
-      {/* No AgentHandoff mount here — owner ruling F-E (2026-11-02)
-          took the agent setup surface out of the Ask flow entirely;
-          it lives on the Methodology view only. */}
+      {/* No ByoOffer mount here — owner ruling F-E (2026-11-02) is
+          absolute: zero key/setup content in the judged flow, and the
+          offer's own-key text ("If you have your own Meta key, you
+          can add it in settings") still rendered on this surface in
+          the credits_exhausted / budget_exhausted state (F-E residual,
+          found by the P4 re-run on the shipped build). That state now
+          shows only the honest exhausted note (PROXY_ERROR_COPY via
+          the error line above). The ByoOffer component itself stays:
+          no production surface mounts it after this removal (its only
+          remaining mounts are its direct component tests in
+          ask-completion, which pin its shutoff-only contract), and
+          BYO also stays as a call path here — the byoProvider retry
+          above is a provider seam, not reader-facing key content.
+          No AgentHandoff mount here either — the agent setup surface
+          lives on the Methodology view only. */}
       {intent && (
         <>
           <IntentEditor intent={intent} onChange={handleIntentChange} />

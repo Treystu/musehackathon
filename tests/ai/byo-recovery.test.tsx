@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { defaultMeterConfig, Meter } from '../../src/core/ai/meter'
 import { clearMetaKey, hasMetaKey, setMetaKey } from '../../src/core/ai/meta-key'
 import {
@@ -69,7 +69,12 @@ function askControls() {
 }
 
 describe('BYO recovery on credits_exhausted', () => {
-  it('caught credits_exhausted renders the offer with copy intact', async () => {
+  it('caught credits_exhausted shows the honest exhausted note and no own-key content', async () => {
+    // Owner ruling F-E is absolute (P4b, 2026-11-02): zero key/setup
+    // content in the judged flow, exhausted states included — the
+    // ByoOffer mount that used to render its own-key text here from
+    // the catch is removed, and the honest exhausted note
+    // (PROXY_ERROR_COPY) is what the state shows.
     const sharedCalls: IntentRequest[] = []
     const provider = createStubProvider({
       async intent(req) {
@@ -77,19 +82,20 @@ describe('BYO recovery on credits_exhausted', () => {
         throw creditsError()
       },
     })
-    render(<AskPanel provider={provider} onOpenSettings={() => {}} />)
+    render(<AskPanel provider={provider} />)
 
     const { input, form } = askControls()
     typeInto(input, 'rent in Hilo')
     await submitForm(form)
 
     expect(sharedCalls).toHaveLength(1)
-    // Credits copy still present …
+    // The honest exhausted note is present …
     expect(container.textContent).toContain('shared allowance')
-    // … and the offer now renders from the catch, not only from the prop.
-    const offer = container.querySelector('aside[aria-label="Optional personal key"]')
-    expect(offer).not.toBeNull()
-    expect(offer?.textContent).toContain('Open key settings')
+    expect(container.textContent).toContain('used up for now')
+    // … and no own-key content renders with it.
+    expect(container.querySelector('aside[aria-label="Optional personal key"]')).toBeNull()
+    expect(container.textContent).not.toContain('your own Meta key')
+    expect(container.textContent).not.toContain('Open key settings')
   })
 
   it('settings flow stores a stub key and the next Ask goes BYO-direct with the meter untouched', async () => {
@@ -172,26 +178,26 @@ describe('BYO recovery on credits_exhausted', () => {
     expect(setMetaKey('x')).toBe(false)
   })
 
-  it('clicking Open key settings fires the settings handoff', async () => {
-    const onOpenSettings = vi.fn()
+  it('the exhausted Ask state offers no settings handoff (F-E: BYO lives outside the judged flow)', async () => {
+    // This replaces the pre-F-E pin that clicked an "Open key
+    // settings" button on the Ask surface: under the absolute ruling
+    // there is no such button on Ask in any state, so there is no
+    // handoff to fire. Key entry stays on the settings surface
+    // (ByoSettings, exercised directly in this file and in
+    // ask-completion).
     const provider = createStubProvider({
       async intent() {
         throw creditsError()
       },
     })
-    render(<AskPanel provider={provider} onOpenSettings={onOpenSettings} />)
+    render(<AskPanel provider={provider} />)
     const { input, form } = askControls()
     typeInto(input, 'rent in Hilo')
     await submitForm(form)
 
-    const button = container.querySelector(
-      'aside[aria-label="Optional personal key"] button',
-    ) as HTMLButtonElement
-    expect(button).not.toBeNull()
-    act(() => {
-      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    expect(onOpenSettings).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('aside[aria-label="Optional personal key"]')).toBeNull()
+    expect(container.textContent).not.toContain('Open key settings')
+    expect(container.textContent).toContain('shared allowance')
   })
 
   it('budget_exhausted retries BYO-direct like credits_exhausted', async () => {
@@ -243,9 +249,11 @@ describe('BYO recovery on credits_exhausted', () => {
 
     expect(byoCalls).toHaveLength(1)
     expect(container.textContent).toContain('shared allowance')
-    expect(
-      container.querySelector('aside[aria-label="Optional personal key"]'),
-    ).not.toBeNull()
+    // The BYO retry is a call path and still ran above; what the
+    // reader sees is the honest shared copy only — no offer renders
+    // on the Ask surface in the exhausted state (ruling F-E, P4b).
+    expect(container.querySelector('aside[aria-label="Optional personal key"]')).toBeNull()
+    expect(container.textContent).not.toContain('your own Meta key')
     expect(container.textContent).not.toContain('Run this request')
   })
 })

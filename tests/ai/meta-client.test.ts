@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ProviderCallError,
   createLiveProvider,
+  createMetaDirectProvider,
   mapMetaFailure,
   META_API_BASE,
   MUSE_SPARK_MODEL,
@@ -91,6 +92,32 @@ describe('live provider: proxy path', () => {
     expect(result.prose).toBe('')
     // The class travels as a closed enum so diagnostics can count it.
     expect(result.withholdClass).toBe('invented_numeral')
+  })
+
+  it('names places by label in the direct explain prompt, never by ZIP', async () => {
+    const { impl, calls } = fakeFetch([
+      { body: { choices: [{ message: { content: 'In Hilo, HI, the median gross rent is 1346.' } }] } },
+    ])
+    const direct = createMetaDirectProvider({
+      fetchImpl: impl,
+      baseUrl: META_API_BASE,
+      model: MUSE_SPARK_MODEL,
+      getApiKey: () => KEY,
+    })
+    const result = await direct.explain(
+      {
+        figureSetId: 'comparison',
+        values: [{ key: 'median_gross_rent', value: 1346, marginOfError: 52, label: 'Hilo, HI' }],
+      },
+      new AbortController().signal,
+    )
+    expect(result.prose).toContain('Hilo, HI')
+    const messages = (calls[0]!.body as { messages: Array<{ role: string; content: string }> }).messages
+    const user = messages.find((m) => m.role === 'user')!
+    expect(user.content).toContain('Hilo, HI — median_gross_rent: 1346 plus or minus 52')
+    expect(user.content).not.toContain('96720')
+    const system = messages.find((m) => m.role === 'system')!
+    expect(system.content).toContain('Refer to each place by the')
   })
 
   it('refuses an over-long query before spending a request', async () => {

@@ -82,6 +82,45 @@ describe('explain route', () => {
     expect(r.body.prose).toContain('42')
   })
 
+  it('accepts a place label, passes it to the provider, and validates prose naming the place', async () => {
+    const seen: unknown[] = []
+    const d = deps({
+      async explain(request) {
+        seen.push(request)
+        return { prose: 'In Hilo, HI, the median gross rent is 1,346, plus or minus 52.' }
+      },
+    })
+    const r = await handleExplain(
+      req({
+        figureSetId: 'f1',
+        values: [{ key: 'median_gross_rent', value: 1346, marginOfError: 52, label: 'Hilo, HI' }],
+      }),
+      d,
+    )
+    expect(r.status).toBe(200)
+    expect(r.body.prose).toContain('Hilo, HI')
+    expect(r.body.withheld).toBeUndefined()
+    expect(seen).toEqual([
+      {
+        figureSetId: 'f1',
+        values: [{ key: 'median_gross_rent', value: 1346, marginOfError: 52, label: 'Hilo, HI' }],
+      },
+    ])
+  })
+
+  it('rejects a malformed place label before reserving', async () => {
+    const d = deps()
+    for (const label of [96720, '', 'x'.repeat(81)]) {
+      const r = await handleExplain(
+        req({ figureSetId: 'f1', values: [{ key: 'median_gross_rent', value: 1346, label }] }),
+        d,
+      )
+      expect(r.status, JSON.stringify(label)).toBe(400)
+      expect(r.body.error).toBe('shape_invalid')
+    }
+    expect(d.meter.snapshot().requests).toBe(0)
+  })
+
   it('returns validated prose and settles the meter', async () => {
     const d = deps({
       async explain() {

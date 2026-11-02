@@ -172,7 +172,7 @@ export function Comparison({
                 <ExplainAction
                   title="this area's figures"
                   figureSetId="drilldown"
-                  figures={figureInputsFromMetrics(d.metrics, [d.zcta, d.label])}
+                  figures={figureInputsFromMetrics(d.metrics, [d.zcta, d.label], where ?? (d.label || undefined))}
                   provider={explainProvider}
                 />
               </div>

@@ -21,6 +21,7 @@ export function valuesForExplanation(figures: readonly FigureInput[]): ExplainRe
         key: figure.key,
         value: suppressed ? null : figure.value,
         marginOfError: suppressed ? undefined : figure.marginOfError,
+        label: figure.label,
       }
     })
 }

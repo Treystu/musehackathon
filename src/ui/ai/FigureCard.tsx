@@ -5,6 +5,14 @@ export interface FigureInput {
   suppressed?: boolean
   /** Local matching hints; these are not included in an ExplainRequest. */
   geographies?: readonly string[]
+  /**
+   * Display name of the place this figure belongs to, when the view
+   * knows it. Carried into the ExplainRequest so explanation prose can
+   * attribute the figure to its place by name (never by ZIP — a ZIP in
+   * the prompt is a numeral the figure validator cannot tell apart
+   * from an invented figure; same rule as the briefing path).
+   */
+  label?: string
   source: string
   publisher: string
   dataset: string

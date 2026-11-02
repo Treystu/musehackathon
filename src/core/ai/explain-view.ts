@@ -43,6 +43,10 @@ export interface ViewFigureForExplain {
   value: number | null
   marginOfError?: number
   vintage?: string
+  /** Display name of the figure's place, when the view knows it; the
+   * explain prompt names places by label so prose can attribute
+   * figures to places (never a raw ZIP — see ExplainRequest). */
+  label?: string
 }
 
 export interface ViewExplanation {
@@ -76,6 +80,7 @@ export function explainRequestForView(
       key: f.key,
       value: f.value,
       marginOfError: f.marginOfError,
+      label: f.label,
     })),
   }
 }

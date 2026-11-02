@@ -167,7 +167,9 @@ const EXPLAIN_SYSTEM_PROMPT = [
   'Use only numbers that appear in the supplied figures. Do not compute or introduce any number.',
   'Do not rank places, recommend a place, or describe people. Do not call any place good, bad, safe,',
   'or desirable. If a margin of error is wide relative to the figure, say the estimate is uncertain.',
-  'Never claim a difference is real when the margins of error overlap. Plain prose only.',
+  'Never claim a difference is real when the margins of error overlap. Refer to each place by the',
+  'name printed before its figures, and do not write any number that is not one of',
+  'the supplied figures. Plain prose only.',
 ].join(' ')
 
 const BRIEFING_SYSTEM_PROMPT = [
@@ -219,7 +221,11 @@ function explainUserPrompt(req: ExplainRequest): string {
         ? ` plus or minus ${v.marginOfError}`
         : ' (no margin published)'
     const value = v.value === null ? 'no reportable value' : String(v.value)
-    return `- ${v.key}: ${value}${moe}`
+    // Name the place by its label only, exactly as the briefing prompt
+    // does. A raw ZIP here is a numeral the figure validator cannot
+    // tell from an invented figure.
+    const place = v.label ? `${v.label} — ` : ''
+    return `- ${place}${v.key}: ${value}${moe}`
   })
   return [`Figure set: ${req.figureSetId}`, 'Figures:', ...rows].join('\n')
 }

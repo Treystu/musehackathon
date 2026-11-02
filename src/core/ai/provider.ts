@@ -34,7 +34,22 @@ export interface IntentResult {
 
 export interface ExplainRequest {
   figureSetId: string
-  values: { key: string; value: number | null; marginOfError?: number }[]
+  values: {
+    key: string
+    value: number | null
+    marginOfError?: number
+    /**
+     * Display name of the place the figure belongs to, when the view
+     * knows it. The explain prompt names places by label so the prose
+     * can attribute figures to places; a raw ZIP never enters the
+     * prompt (it is a numeral the figure validator cannot tell apart
+     * from an invented figure — the same rule the briefing path
+     * follows, found live 2026-11-01; explain carried no labels at
+     * all before 2026-11-02, so its prose could not attribute a
+     * figure to its place).
+     */
+    label?: string
+  }[]
 }
 /** The same request ceiling enforced by the explain proxy parser. */
 export const MAX_EXPLAIN_VALUES = 24

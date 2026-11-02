@@ -20,7 +20,7 @@ const ACTUAL_COST_MICRO = 800
 const ACTUAL_TOKENS_IN = 128
 const ACTUAL_TOKENS_OUT = 128
 
-const VALUE_FIELDS = new Set(['key', 'value', 'marginOfError'])
+const VALUE_FIELDS = new Set(['key', 'value', 'marginOfError', 'label'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -41,10 +41,17 @@ function parseValues(raw: unknown): ExplainRequest['values'] | null {
     ) {
       return null
     }
+    if (
+      item.label !== undefined &&
+      (typeof item.label !== 'string' || item.label.length === 0 || item.label.length > 80)
+    ) {
+      return null
+    }
     values.push({
       key: item.key,
       value: item.value,
       marginOfError: item.marginOfError,
+      label: item.label as string | undefined,
     })
   }
   return values

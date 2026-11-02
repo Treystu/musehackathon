@@ -28,6 +28,16 @@ describe('Explain action input and validator gate', () => {
     ])
   })
 
+  it('carries the figure place label into the request so prose can attribute figures to places', () => {
+    expect(valuesForExplanation([
+      { ...figure('median_gross_rent', 1346, 52), label: 'Hilo, HI' },
+      { ...figure('median_gross_rent', 2946, 338), label: 'East Honolulu, HI' },
+    ])).toEqual([
+      { key: 'median_gross_rent', value: 1346, marginOfError: 52, label: 'Hilo, HI' },
+      { key: 'median_gross_rent', value: 2946, marginOfError: 338, label: 'East Honolulu, HI' },
+    ])
+  })
+
   it('caps each provider request at the shared explain ceiling', () => {
     const values = valuesForExplanation(Array.from({ length: 25 }, () => figure('median_gross_rent', 1450)))
     expect(values).toHaveLength(24)

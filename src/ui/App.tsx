@@ -183,6 +183,7 @@ export default function App() {
         figureInputsFromMetrics(
           detail.metrics,
           [detail.zcta, detail.label, placeLabel(detail.zcta) ?? ''].filter(Boolean),
+          placeLabel(detail.zcta) ?? (detail.label || undefined),
         ),
       ),
     [q.drilldowns, placeLabel],

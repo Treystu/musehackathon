@@ -8,6 +8,7 @@ import type { FigureInput } from './FigureCard'
 export function figureInputFromMetric(
   metric: MetricValue,
   geographies: readonly string[] = [],
+  label?: string,
 ): FigureInput | null {
   if (!isKnownFigureKey(metric.key)) return null
   return {
@@ -16,6 +17,7 @@ export function figureInputFromMetric(
     marginOfError: metric.quality.marginOfError,
     suppressed: metric.quality.suppressed,
     geographies,
+    label,
     source: metric.source.citation ?? metric.source.dataset,
     publisher: metric.source.publisher,
     dataset: metric.source.dataset,
@@ -28,9 +30,10 @@ export function figureInputFromMetric(
 export function figureInputsFromMetrics(
   metrics: readonly MetricValue[],
   geographies: readonly string[] = [],
+  label?: string,
 ): FigureInput[] {
   return metrics.flatMap((metric) => {
-    const figure = figureInputFromMetric(metric, geographies)
+    const figure = figureInputFromMetric(metric, geographies, label)
     return figure ? [figure] : []
   })
 }

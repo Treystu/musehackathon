@@ -318,7 +318,14 @@
     background-color: rgb(var(--accent-dark));
   }
   .btn-primary:disabled {
-    opacity: 0.6;
+    /* Measured 2026-11-02 (axe, a11y.e2e explore audit): the old
+       opacity: 0.6 fade blended the accent over the page to #3483eb,
+       putting the white label at 3.75:1 — below the 4.5:1 AA floor —
+       whenever the Ask button sat disabled during a busy state. The
+       disabled step is now the solid darker accent (white on #174ea6
+       measures ~7.9:1); the state change is carried by the darker
+       step plus the disabled attribute itself, not by a fade. */
+    background-color: rgb(var(--accent-dark));
   }
 
   .btn-secondary {

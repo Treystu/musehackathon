@@ -127,6 +127,23 @@ describe('legend model — ends carry the figures', () => {
     expect(legend.singleText).toBe('One place in this answer.')
     expect(legend.highest).toBeNull()
   })
+
+  it('two places sharing one value: no gradient, and the wording counts both places (closing A3)', () => {
+    // Tucson, AZ 85701 + Brownsville, TX 78520, both $300,000 home
+    // value — the A3 shape. No range exists, so no gradient is
+    // claimed, but the text must not say "One place" for two places.
+    const places = [
+      place('85701', 'Tucson, AZ', [['median_home_value', 300000]]),
+      place('78520', 'Brownsville, TX', [['median_home_value', 300000]]),
+    ]
+    const legend = legendModel(places, 'median_home_value')
+    expect(legend.single).toBe(true)
+    expect(legend.highest).toBeNull()
+    expect(legend.lowest).toBeNull()
+    expect(legend.singleText).not.toContain('One place')
+    expect(legend.singleText).toContain('2 places')
+    expect(legend.singleText).toContain('$300,000')
+  })
 })
 
 describe('color scale — continuous, darker = higher', () => {
@@ -144,9 +161,57 @@ describe('color scale — continuous, darker = higher', () => {
   })
 })
 
-describe('mode detection', () => {
-  it('a national-level answer renders centroid mode', () => {
-    expect(resultMapMode(answer({ geographyLevel: 'national', places: SEATTLE }))).toBe('national')
+describe('mode detection — from the actual places, not the question scope', () => {
+  it('B2 shape: one place at national question level renders scoped, not national', () => {
+    // Demo question 1's answer: exactly one locality, Hilo, HI 96720,
+    // under a national-level question (closing battery cluster B2 —
+    // result_map_mode_keyed_to_question_scope).
+    const places = [place('96720', 'Hilo, HI', [['median_gross_rent', 1600]])]
+    const points = new Map([['96720', { lon: -155.09, lat: 19.64 }]])
+    expect(resultMapMode(answer({ geographyLevel: 'national', places }), points)).toBe('choropleth')
+    expect(resultMapMode(answer({ geographyLevel: 'national', places }))).toBe('choropleth')
+  })
+
+  it('B3 shape: dispersed HI/KY/TX places at national level stay national', () => {
+    const places = [
+      place('96720', 'Hilo, HI', [['median_gross_rent', 1600]]),
+      place('40701', 'Corbin, KY', [['median_gross_rent', 650]]),
+      place('78520', 'Brownsville, TX', [['median_gross_rent', 950]]),
+    ]
+    const points = new Map([
+      ['96720', { lon: -155.09, lat: 19.64 }],
+      ['40701', { lon: -84.09, lat: 36.95 }],
+      ['78520', { lon: -97.5, lat: 25.9 }],
+    ])
+    expect(resultMapMode(answer({ geographyLevel: 'national', places }), points)).toBe('national')
+    // Without centroids the 3-state national-level set still resolves
+    // national via the level hint (the only unmeasurable case).
+    expect(resultMapMode(answer({ geographyLevel: 'national', places }))).toBe('national')
+  })
+
+  it('two nearby places at national question level render scoped (same county-scale cluster)', () => {
+    const places = [
+      place('96720', 'Hilo, HI', [['median_gross_rent', 1600]]),
+      place('96749', 'Keaau, HI', [['median_gross_rent', 1450]]),
+    ]
+    const points = new Map([
+      ['96720', { lon: -155.09, lat: 19.64 }],
+      ['96749', { lon: -155.04, lat: 19.62 }],
+    ])
+    expect(resultMapMode(answer({ geographyLevel: 'national', places }), points)).toBe('choropleth')
+  })
+
+  it('a local multi-place set at national level renders scoped — the level does not override the places', () => {
+    // This replaces the pre-P6b pin that asserted the defective
+    // behaviour itself (a Seattle-only set rendering national purely
+    // because geographyLevel said so).
+    const points = new Map([
+      ['98101', { lon: -122.33, lat: 47.61 }],
+      ['98103', { lon: -122.34, lat: 47.68 }],
+      ['98115', { lon: -122.31, lat: 47.68 }],
+    ])
+    expect(resultMapMode(answer({ geographyLevel: 'national', places: SEATTLE }), points)).toBe('choropleth')
+    expect(resultMapMode(answer({ geographyLevel: 'national', places: SEATTLE }))).toBe('choropleth')
   })
 
   it('a coast-to-coast place set renders centroid mode by span', () => {
@@ -193,6 +258,14 @@ describe('county guard — a county figure is never painted onto member ZCTAs', 
 
   it('county answers resolve to county mode', () => {
     expect(resultMapMode(a)).toBe('county')
+  })
+
+  it('a single county place still resolves to county mode — the one merged outline, as P2c left it', () => {
+    // County is checked before the single-place scoped rule, so the
+    // P6b actual-places cure cannot demote a county answer into a
+    // choropleth of its synthetic key.
+    expect(resultMapMode(answer({ geographyLevel: 'county', places: [county] }))).toBe('county')
+    expect(resultMapMode(answer({ geographyLevel: 'national', places: [county] }))).toBe('county')
   })
 
   it('the colored set contains exactly the county key — no member ZCTA is assigned the county figure', () => {

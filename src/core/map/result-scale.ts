@@ -180,7 +180,14 @@ export interface LegendModel {
  * highest and lowest places' own AnswerFigure values, formatted as
  * the card formats them — not just "darker = higher". With one place,
  * or one distinct value, there is no range to state and the legend
- * says so in words instead of printing the same figure twice.
+ * says so in words instead of printing the same figure twice. The
+ * wording counts the places truthfully: "One place in this answer."
+ * is only for a literal single place — the closing battery (cluster
+ * A, case A3, on be13e7e) measured two places sharing one figure
+ * (Tucson + Brownsville, both $300,000) being described by that
+ * single-place text (failure mode legend_single_value_wording), so
+ * the multi-place single-value case names its own count and the
+ * shared figure, which is that place's own figure by reference.
  */
 export function legendModel(places: readonly AnswerPlace[], metricKey: string): LegendModel {
   const label = metricLabel(metricKey)
@@ -199,8 +206,15 @@ export function legendModel(places: readonly AnswerPlace[], metricKey: string): 
   const sorted = [...withFigure].sort((a, b) => a.figure.value - b.figure.value)
   const lowest = sorted[0]!
   const highest = sorted[sorted.length - 1]!
-  if (withFigure.length === 1 || highest.figure.value === lowest.figure.value) {
+  if (withFigure.length === 1) {
     return { ...base, single: true, singleText: 'One place in this answer.' }
+  }
+  if (highest.figure.value === lowest.figure.value) {
+    return {
+      ...base,
+      single: true,
+      singleText: `${withFigure.length} places in this answer share the same ${label.toLowerCase()} — ${formatAnswerFigure(lowest.figure)}.`,
+    }
   }
   const end = (word: string, x: { place: AnswerPlace; figure: AnswerFigure }): LegendEnd => ({
     placeName: x.place.name,
@@ -236,40 +250,71 @@ export function stateOfPlaceName(name: string): string | null {
 }
 
 /**
- * Which mode an answer renders in.
+ * Which mode an answer renders in — derived from the ACTUAL PLACES in
+ * the answer, not from the scope of the question that produced it.
  *
- * County answers are their own mode before anything else: a county
- * figure must never be painted onto member ZCTAs. National answers
- * (the answer's own level, or a place set that spans more than
- * NATIONAL_LON_SPAN_DEGREES of longitude, or places in at least
- * NATIONAL_STATE_COUNT states) render as centroid markers, not a
- * choropleth — a two-state metro stays a choropleth, because the
- * thresholds are span/state-count based, not state-count alone
- * (spec section 4.5). `points`, when the caller has centroids, is
- * keyed by place zcta.
+ * Why: the closing battery (cluster B, case B2, on be13e7e) measured
+ * the previous rule returning 'national' from the answer's
+ * geographyLevel before any check of the places themselves. B2's
+ * answer holds exactly one locality (Hilo, HI 96720) yet rendered the
+ * country frame with a value circle — failure mode
+ * result_map_mode_keyed_to_question_scope, result_map_scope_mismatch
+ * 0.98. A local answer does not become national because its question
+ * was asked at national scope.
+ *
+ * The rule, in order (all inputs are the answer's own places):
+ * 1. County answers are their own mode before anything else: a county
+ *    figure must never be painted onto member ZCTAs.
+ * 2. A single place is one area by definition: scoped (choropleth).
+ * 3. When the caller supplies centroids (`points`, keyed by place
+ *    zcta — ResultMap always loads them before calling), the span is
+ *    MEASURED over those places: a longitude span over
+ *    NATIONAL_LON_SPAN_DEGREES, or at least NATIONAL_STATE_COUNT
+ *    distinct states in the place names, is genuinely dispersed and
+ *    renders as national centroid markers; anything at or under the
+ *    span threshold is a scoped viewport and renders as a choropleth,
+ *    whatever geographyLevel says. Measured anchors: B2 (one place,
+ *    span 0) is scoped; B3 (Hilo, HI / Corbin, KY / a Texas place,
+ *    span about 71 degrees of longitude) is national; a two-state
+ *    metro (Kansas City, span under 0.1 degrees) stays a choropleth,
+ *    because the thresholds are span/state-count based, not
+ *    state-count alone (spec section 4.5).
+ * 4. Only when no span can be measured (fewer than two places have a
+ *    centroid in `points`, or `points` was not supplied) does
+ *    geographyLevel remain, as a hint for the one case the place
+ *    names cannot settle: a set spread over 2–3 states could be one
+ *    metro or several regions. A single-state set needs no hint — it
+ *    is one scoped area even when the question was national.
  */
 export function resultMapMode(
   answer: ComposedAnswer,
   points?: ReadonlyMap<string, { lon: number; lat: number }>,
 ): ResultMapMode {
   if (answer.geographyLevel === 'county' || answer.places.some((p) => p.memberZctas)) return 'county'
-  if (answer.geographyLevel === 'national') return 'national'
+  if (answer.places.length <= 1) return 'choropleth'
   const states = new Set(
     answer.places.map((p) => stateOfPlaceName(p.name)).filter((s): s is string => s !== null),
   )
   if (states.size >= NATIONAL_STATE_COUNT) return 'national'
+  let minLon = Infinity
+  let maxLon = -Infinity
+  let measured = 0
   if (points) {
-    let minLon = Infinity
-    let maxLon = -Infinity
     for (const place of answer.places) {
       const point = points.get(place.zcta)
       if (!point) continue
+      measured += 1
       if (point.lon < minLon) minLon = point.lon
       if (point.lon > maxLon) maxLon = point.lon
     }
-    if (Number.isFinite(minLon) && maxLon - minLon > NATIONAL_LON_SPAN_DEGREES) return 'national'
   }
-  return 'choropleth'
+  if (measured >= 2) {
+    return maxLon - minLon > NATIONAL_LON_SPAN_DEGREES ? 'national' : 'choropleth'
+  }
+  // No measurable span: a single-state set is scoped on its own
+  // evidence; only a 2–3 state set falls back to the level hint.
+  if (states.size <= 1) return 'choropleth'
+  return answer.geographyLevel === 'national' ? 'national' : 'choropleth'
 }
 
 /**

@@ -35,6 +35,35 @@ const CENTROID_POINTS = [
 let tigerwebCalls = 0
 let tigerwebStatus = 200
 
+/**
+ * A small square polygon at a deterministic centre per ZCTA. The
+ * committed fixture holds Seattle geometry only; the mixed-map pins
+ * (P2e) need Hawaii shapes, and a square is enough geometry for the
+ * projection fit and the element counts those pins assert.
+ */
+function syntheticSquare(zcta: string) {
+  const seed = Number(zcta.slice(3)) % 90
+  const lon = -155.05 - seed * 0.01
+  const lat = 19.55 + seed * 0.004
+  const h = 0.02
+  return {
+    type: 'Feature',
+    properties: { ZCTA5: zcta },
+    geometry: {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [lon - h, lat - h],
+          [lon + h, lat - h],
+          [lon + h, lat + h],
+          [lon - h, lat + h],
+          [lon - h, lat - h],
+        ],
+      ],
+    },
+  }
+}
+
 function installFetchStub() {
   tigerwebCalls = 0
   tigerwebStatus = 200
@@ -45,7 +74,10 @@ function installFetchStub() {
       if (tigerwebStatus !== 200) return new Response('upstream failure', { status: tigerwebStatus })
       const where = new URL(url).searchParams.get('where') ?? ''
       const asked = where.match(/\d{5}/g) ?? []
-      const features = FIXTURE_FEATURES.filter((f) => asked.includes(f.properties.ZCTA5))
+      const features: unknown[] = FIXTURE_FEATURES.filter((f) => asked.includes(f.properties.ZCTA5))
+      for (const zcta of asked) {
+        if (/^96[78]\d{2}$/.test(zcta)) features.push(syntheticSquare(zcta))
+      }
       return new Response(JSON.stringify({ type: 'FeatureCollection', features }), {
         status: 200,
         headers: { 'Content-Type': 'application/geo+json' },
@@ -252,6 +284,75 @@ describe('ResultMap — county mode', () => {
       expect(container.querySelector(`svg [data-result-place="${member}"]`)).toBeNull()
     }
     expect(container.textContent).toContain('the county it overlaps most')
+  }, 30000)
+})
+
+describe('ResultMap — mixed aggregate + plain place (P2e)', () => {
+  // The C6 shape from the closing battery (cluster C, on be13e7e): a
+  // state-average aggregate over 6 Hawaii ZIP areas beside Hilo
+  // itself as a plain place. Before P2e the county-mode renderer drew
+  // only the merged outline — Hilo had no element — while the status
+  // line claimed the map showed 2 places.
+  const HAWAII_MEMBERS = ['96720', '96740', '96749', '96760', '96761', '96778']
+  const stateAverage = () =>
+    place('county:HI:Hawaii', 'Hawaii state average', [['median_rent_burden_pct', 32.31]], HAWAII_MEMBERS)
+  const burdenCriteria = [{ metricKey: 'median_rent_burden_pct', bound: 'atMost' as const, value: 35, intentOp: 'lt' as const }]
+
+  it('C6 shape: the aggregate outline and Hilo each render as their own element with their own figure', async () => {
+    const hilo = place('96720', 'Hilo, HI', [['median_rent_burden_pct', 32]])
+    render(
+      <ResultMap
+        answer={answer({
+          criteria: burdenCriteria,
+          geographyLevel: 'state',
+          places: [stateAverage(), hilo],
+          screenedCount: 2,
+        })}
+      />,
+    )
+    await startMap()
+    await flushUntil(() => container.querySelectorAll('svg [data-result-place]').length === 2)
+
+    const elements = [...container.querySelectorAll('svg [data-result-place]')]
+    expect(elements).toHaveLength(2)
+    // Draw order: the aggregate's merged outline first, the
+    // individual place on top of it.
+    expect(elements[0]!.getAttribute('data-result-place')).toBe('county:HI:Hawaii')
+    expect(elements[1]!.getAttribute('data-result-place')).toBe('96720')
+    // Each element is labelled with its OWN figure — Hilo's 32, not
+    // the state average's 32.31 — and colored by it.
+    expect(elements[0]!.getAttribute('aria-label')).toBe('Hawaii state average: 32.31')
+    expect(elements[1]!.getAttribute('aria-label')).toBe('Hilo, HI, 96720: 32')
+    expect(elements[0]!.getAttribute('fill')).not.toBe(elements[1]!.getAttribute('fill'))
+    // The status count equals the number of rendered elements.
+    expect(container.textContent).toContain('The map shows 2 places from this answer')
+    // Hilo is a member of the aggregate, so its polygon came with
+    // the outline load — no second geometry fetch.
+    expect(tigerwebCalls).toBe(1)
+  }, 30000)
+
+  it('mixed county + outside place: a plain place outside the aggregate renders too, with its geometry fetched', async () => {
+    const honolulu = place('96813', 'Honolulu, HI', [['median_rent_burden_pct', 36]])
+    render(
+      <ResultMap
+        answer={answer({
+          criteria: burdenCriteria,
+          geographyLevel: 'state',
+          places: [stateAverage(), honolulu],
+          screenedCount: 2,
+        })}
+      />,
+    )
+    await startMap()
+    await flushUntil(() => container.querySelectorAll('svg [data-result-place]').length === 2)
+
+    const elements = [...container.querySelectorAll('svg [data-result-place]')]
+    expect(elements.map((e) => e.getAttribute('data-result-place'))).toEqual(['county:HI:Hawaii', '96813'])
+    expect(elements[1]!.getAttribute('aria-label')).toBe('Honolulu, HI, 96813: 36')
+    expect(container.textContent).toContain('The map shows 2 places from this answer')
+    // Honolulu is not an aggregate member: one fetch for the outline
+    // members, one scoped fetch for the plain place's own ZCTA.
+    expect(tigerwebCalls).toBe(2)
   }, 30000)
 })
 

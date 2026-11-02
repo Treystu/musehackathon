@@ -282,6 +282,37 @@ describe('county guard — a county figure is never painted onto member ZCTAs', 
   })
 })
 
+describe('mixed aggregate + plain place — the model keeps both, each with its own figure (P2e)', () => {
+  // The C6 shape (closing battery cluster C, on be13e7e): the Hawaii
+  // state average as an aggregate place over 6 member ZCTAs, beside
+  // Hilo (96720) as a plain place — 96720 is BOTH a member of the
+  // aggregate and a card place in its own right.
+  const aggregate = place(
+    'county:HI:Hawaii',
+    'Hawaii state average',
+    [['median_rent_burden_pct', 32.31]],
+    ['96720', '96740', '96749', '96760', '96761', '96778'],
+  )
+  const hilo = place('96720', 'Hilo, HI', [['median_rent_burden_pct', 32]])
+  const a = answer({ geographyLevel: 'state', places: [aggregate, hilo], screenedCount: 2 })
+
+  it('a mixed answer still resolves to county mode (the aggregate rule fires first)', () => {
+    expect(resultMapMode(a)).toBe('county')
+  })
+
+  it('the colored set holds both places: the aggregate AND Hilo, Hilo with its own 32, not the average 32.31', () => {
+    const colored = resultMapPlaces(a.places, 'median_rent_burden_pct')
+    expect(colored.map((p) => p.key)).toEqual(['county:HI:Hawaii', '96720'])
+    expect(colored[0]!.isCounty).toBe(true)
+    expect(colored[0]!.figure?.value).toBe(32.31)
+    expect(colored[1]!.isCounty).toBe(false)
+    expect(colored[1]!.figure?.value).toBe(32)
+    // Figures by reference, both of them: the map may emit exactly
+    // the two card figures and nothing else.
+    expect(new Set(emittedFigureValues(a, 'median_rent_burden_pct'))).toEqual(new Set([32.31, 32]))
+  })
+})
+
 describe('screening coverage line (P6 step 5)', () => {
   it('is silent when the screen, the answer, and the map all cover the same places', () => {
     const a = answer({ places: SEATTLE, screenedCount: 3 })

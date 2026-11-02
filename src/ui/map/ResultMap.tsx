@@ -23,7 +23,13 @@
  *     place-set, never on the metric, so a switch cannot refetch.
  *   - County answers draw ONE merged outline per county (member ZCTA
  *     geometry combined into a single path carrying the county's
- *     figure); member ZCTAs are never individually colored.
+ *     figure); member ZCTAs are never individually colored. A MIXED
+ *     answer — an aggregate beside plain places — still draws every
+ *     plain place as its own element on top of the aggregate
+ *     outlines, with its own figure: the closing battery (cluster C,
+ *     case C6, on be13e7e) measured the state-average answer drawing
+ *     only the merged outline while its status line claimed 2 places,
+ *     leaving Hilo (96720) with no element at all.
  *   - National answers draw area circles by value at the places'
  *     centroids — no state/county/hex geometry carries a value.
  *   - Micro-ZCTAs (building-scale polygons that project to a few
@@ -66,6 +72,7 @@ import {
   screeningCoverageLine,
   RESULT_MAP_PLACE_CAP,
   type ResultMapMode,
+  type ResultMapPlace,
 } from '../../core/map/result-scale'
 import { NO_DATA_COLOR } from '../../core/map/scale'
 import { formatMetricNumber } from '../metric-format'
@@ -303,16 +310,42 @@ export function ResultMap({
         return
       }
       try {
-        const geometry =
-          mode === 'county'
-            ? await loadCountyOutlineGeometry(
-                shown.flatMap((p) => p.memberZctas ?? []),
-                { signal: controller.signal },
-              )
-            : await loadResultGeometry(
-                shown.map((p) => p.zcta),
-                { signal: controller.signal },
-              )
+        let geometry: ResultGeometry
+        if (mode === 'county') {
+          // County mode loads the aggregates' member geometry for the
+          // merged outlines AND, for a mixed answer, the plain places'
+          // own geometry — the pre-P2e load fetched members only, so
+          // a plain place beside an aggregate (C6's Hilo) had no
+          // polygon to draw and silently vanished from the map. A
+          // plain place that is itself a member of an aggregate is
+          // already in hand from the outline load and is not refetched;
+          // only uncovered plain ZCTAs cost a second, scoped-style load.
+          const memberZctas = shown.flatMap((p) => p.memberZctas ?? [])
+          const plainZctas = shown.filter((p) => !p.memberZctas).map((p) => p.zcta)
+          geometry =
+            memberZctas.length > 0
+              ? await loadCountyOutlineGeometry(memberZctas, { signal: controller.signal })
+              : await loadResultGeometry(plainZctas, { signal: controller.signal })
+          if (controller.signal.aborted) return
+          const uncovered = plainZctas.filter((z) => !geometry.features.has(z))
+          if (memberZctas.length > 0 && uncovered.length > 0) {
+            const plain = await loadResultGeometry(uncovered, { signal: controller.signal })
+            if (controller.signal.aborted) return
+            const features = new Map(geometry.features)
+            for (const [zcta, feature] of plain.features) features.set(zcta, feature)
+            geometry = {
+              features,
+              missing: [...geometry.missing, ...plain.missing],
+              simplified: geometry.simplified || plain.simplified,
+              bytes: geometry.bytes + plain.bytes,
+            }
+          }
+        } else {
+          geometry = await loadResultGeometry(
+            shown.map((p) => p.zcta),
+            { signal: controller.signal },
+          )
+        }
         if (controller.signal.aborted) return
         if (geometry.features.size === 0) {
           setLoad({ kind: 'failed' })
@@ -388,10 +421,28 @@ export function ResultMap({
   const missingKeys =
     load.kind === 'ready' && load.geometry
       ? shown.filter((p) => {
-          if (load.mode === 'county') return false
+          // Aggregates have no single boundary to miss (their outline
+          // is merged from members); a plain place — in choropleth
+          // mode, or beside an aggregate in a mixed county answer —
+          // with no returned boundary gets the dot + disclosure.
+          if (p.memberZctas) return false
           return !load.geometry!.features.has(p.zcta)
         })
       : []
+  // The status line's count: the number of elements the map actually
+  // renders, computed from the same geometry the renderer consults —
+  // an aggregate renders when at least one member polygon is in hand,
+  // a plain place renders as a polygon or, failing that, a centroid
+  // dot. Counting `shown` instead is what let the C6 status line
+  // claim 2 places over a 1-element map. National mode draws from the
+  // centroid cloud, not this geometry, so its count stays `shown`.
+  const renderedCount =
+    load.kind === 'ready' && load.geometry && load.mode !== 'national'
+      ? shown.filter((p) => {
+          if (p.memberZctas) return p.memberZctas.some((z) => load.geometry!.features.has(z))
+          return load.geometry!.features.has(p.zcta) || load.centroids.has(p.zcta)
+        }).length
+      : shown.length
   const dotLine =
     missingKeys.length > 0
       ? `${missingKeys.length} ${missingKeys.length === 1 ? 'place is' : 'places are'} shown as dots \u2014 the Census Bureau publishes no area boundary for them. Their figures are in the answer above.`
@@ -448,6 +499,83 @@ export function ResultMap({
     </div>
   ) : null
 
+  /**
+   * One plain place's element: its polygon, a centroid dot for a
+   * micro-ZCTA, or a centroid dot when the Census Bureau publishes no
+   * boundary — always colored by the place's own figure. Shared by
+   * the choropleth renderer and the county renderer, where a mixed
+   * answer's plain places get exactly the scoped treatment.
+   */
+  const renderPlaceElement = (place: ResultMapPlace) => {
+    if (load.kind !== 'ready' || !load.geometry || !fit) return null
+    const feature = load.geometry!.features.get(place.zcta)
+    if (!feature) {
+      const centroid = load.centroids.get(place.zcta)
+      const at = centroid ? fit.project(centroid.lon, centroid.lat) : null
+      if (!at) return null
+      return (
+        <circle
+          key={place.key}
+          cx={at[0]}
+          cy={at[1]}
+          r={7}
+          fill={place.figure ? colorForValue(place.figure.value, min, max) : NO_DATA_COLOR}
+          stroke="#ffffff"
+          strokeWidth={1.5}
+        />
+      )
+    }
+    const bounds = fit.boundsFor(feature)
+    const boundsArea = bounds ? (bounds[1][0] - bounds[0][0]) * (bounds[1][1] - bounds[0][1]) : 0
+    if (boundsArea < MICRO_BOUNDS_AREA) {
+      // Building-scale ZCTA: sub-pixel as a polygon at metro zoom
+      // in every probe variant, so it gets the centroid-dot
+      // treatment (spec 4.6) in the place's own color.
+      const [lon, lat] = geoCentroid(feature as never)
+      const at = fit.project(lon, lat)
+      if (!at) return null
+      return (
+        <circle
+          key={place.key}
+          cx={at[0]}
+          cy={at[1]}
+          r={7}
+          fill={place.figure ? colorForValue(place.figure.value, min, max) : NO_DATA_COLOR}
+          stroke="#ffffff"
+          strokeWidth={1.5}
+          tabIndex={0}
+          data-result-place={place.key}
+          aria-label={`${place.name}, ${place.zcta}: ${place.formatted ?? 'no figure for this measure'}`}
+          onMouseEnter={() => setActiveKey(place.key)}
+          onFocus={() => setActiveKey(place.key)}
+          onClick={() => onSelect?.(place.zcta)}
+        />
+      )
+    }
+    const d = fit.pathFor(feature)
+    if (!d) return null
+    const isActive = activeKey === place.key
+    return (
+      <path
+        key={place.key}
+        d={d}
+        fill={place.figure ? colorForValue(place.figure.value, min, max) : NO_DATA_COLOR}
+        stroke={isActive ? '#0f172a' : '#ffffff'}
+        strokeWidth={isActive ? 3 : 1}
+        tabIndex={0}
+        data-result-place={place.key}
+        aria-label={`${place.name}, ${place.zcta}: ${place.formatted ?? 'no figure for this measure'}`}
+        className="cursor-pointer focus:outline-none"
+        onMouseEnter={() => setActiveKey(place.key)}
+        onFocus={() => setActiveKey(place.key)}
+        onClick={() => onSelect?.(place.zcta)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onSelect?.(place.zcta)
+        }}
+      />
+    )
+  }
+
   const renderChoropleth = () => {
     if (load.kind !== 'ready' || !load.geometry || !fit) return null
     return (
@@ -459,53 +587,39 @@ export function ResultMap({
         aria-label="Map of the places in this answer"
         onKeyDown={onSvgKeyDown}
       >
-        {mapPlaces.map((place) => {
-          if (place.isCounty) return null
-          const feature = load.geometry!.features.get(place.zcta)
-          if (!feature) {
-            const centroid = load.centroids.get(place.zcta)
-            const at = centroid ? fit.project(centroid.lon, centroid.lat) : null
-            if (!at) return null
-            return (
-              <circle
-                key={place.key}
-                cx={at[0]}
-                cy={at[1]}
-                r={7}
-                fill={place.figure ? colorForValue(place.figure.value, min, max) : NO_DATA_COLOR}
-                stroke="#ffffff"
-                strokeWidth={1.5}
-              />
-            )
-          }
-          const bounds = fit.boundsFor(feature)
-          const boundsArea = bounds ? (bounds[1][0] - bounds[0][0]) * (bounds[1][1] - bounds[0][1]) : 0
-          if (boundsArea < MICRO_BOUNDS_AREA) {
-            // Building-scale ZCTA: sub-pixel as a polygon at metro zoom
-            // in every probe variant, so it gets the centroid-dot
-            // treatment (spec 4.6) in the place's own color.
-            const [lon, lat] = geoCentroid(feature as never)
-            const at = fit.project(lon, lat)
-            if (!at) return null
-            return (
-              <circle
-                key={place.key}
-                cx={at[0]}
-                cy={at[1]}
-                r={7}
-                fill={place.figure ? colorForValue(place.figure.value, min, max) : NO_DATA_COLOR}
-                stroke="#ffffff"
-                strokeWidth={1.5}
-                tabIndex={0}
-                data-result-place={place.key}
-                aria-label={`${place.name}, ${place.zcta}: ${place.formatted ?? 'no figure for this measure'}`}
-                onMouseEnter={() => setActiveKey(place.key)}
-                onFocus={() => setActiveKey(place.key)}
-                onClick={() => onSelect?.(place.zcta)}
-              />
-            )
-          }
-          const d = fit.pathFor(feature)
+        {mapPlaces.map((place) => (place.isCounty ? null : renderPlaceElement(place)))}
+      </svg>
+    )
+  }
+
+  const renderCounty = () => {
+    if (load.kind !== 'ready' || !load.geometry || !fit) return null
+    const aggregates = mapPlaces.filter((p) => p.isCounty)
+    const plains = mapPlaces.filter((p) => !p.isCounty)
+    return (
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${INTERNAL_W} ${INTERNAL_H}`}
+        className="block w-full"
+        role="group"
+        aria-label={
+          plains.length > 0
+            ? 'Map of the counties and places in this answer'
+            : 'Map of the counties in this answer'
+        }
+        onKeyDown={onSvgKeyDown}
+      >
+        {aggregates.map((place) => {
+          // ONE path per county: every member's subpaths combined
+          // into a single element with a single fill — the county's
+          // figure. No member ZCTA is ever an element of its own.
+          const d = place.memberZctas
+            .map((z) => {
+              const feature = load.geometry!.features.get(z)
+              return feature ? fit.pathFor(feature) : null
+            })
+            .filter((x): x is string => x !== null)
+            .join(' ')
           if (!d) return null
           const isActive = activeKey === place.key
           return (
@@ -517,63 +631,20 @@ export function ResultMap({
               strokeWidth={isActive ? 3 : 1}
               tabIndex={0}
               data-result-place={place.key}
-              aria-label={`${place.name}, ${place.zcta}: ${place.formatted ?? 'no figure for this measure'}`}
+              aria-label={`${place.name}: ${place.formatted ?? 'no figure for this measure'}`}
               className="cursor-pointer focus:outline-none"
               onMouseEnter={() => setActiveKey(place.key)}
               onFocus={() => setActiveKey(place.key)}
-              onClick={() => onSelect?.(place.zcta)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') onSelect?.(place.zcta)
-              }}
             />
           )
         })}
-      </svg>
-    )
-  }
-
-  const renderCounty = () => {
-    if (load.kind !== 'ready' || !load.geometry || !fit) return null
-    return (
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${INTERNAL_W} ${INTERNAL_H}`}
-        className="block w-full"
-        role="group"
-        aria-label="Map of the counties in this answer"
-        onKeyDown={onSvgKeyDown}
-      >
-        {mapPlaces
-          .filter((p) => p.isCounty)
-          .map((place) => {
-            // ONE path per county: every member's subpaths combined
-            // into a single element with a single fill — the county's
-            // figure. No member ZCTA is ever an element of its own.
-            const d = place.memberZctas
-              .map((z) => {
-                const feature = load.geometry!.features.get(z)
-                return feature ? fit.pathFor(feature) : null
-              })
-              .filter((x): x is string => x !== null)
-              .join(' ')
-            if (!d) return null
-            const isActive = activeKey === place.key
-            return (
-              <path
-                key={place.key}
-                d={d}
-                fill={place.figure ? colorForValue(place.figure.value, min, max) : NO_DATA_COLOR}
-                stroke={isActive ? '#0f172a' : '#ffffff'}
-                strokeWidth={isActive ? 3 : 1}
-                tabIndex={0}
-                data-result-place={place.key}
-                aria-label={`${place.name}: ${place.formatted ?? 'no figure for this measure'}`}
-                className="cursor-pointer focus:outline-none"
-                onMouseEnter={() => setActiveKey(place.key)}
-                onFocus={() => setActiveKey(place.key)}
-              />
-            )
-          })}
+        {/* Mixed answers only: the plain places draw AFTER (on top
+            of) the aggregate outlines, each as its own element with
+            its own figure — a plain place that is also an aggregate
+            member is still a card place in its own right (C6: Hilo
+            beside the Hawaii state average). Pure-county answers have
+            no plain places, so this maps over nothing. */}
+        {plains.map((place) => renderPlaceElement(place))}
       </svg>
     )
   }
@@ -750,7 +821,7 @@ export function ResultMap({
           <p className="sr-only" role="status" aria-live="polite">
             {activePlace
               ? `${activePlace.name}, ${activePlace.isCounty ? 'county' : activePlace.zcta}: ${activePlace.formatted ?? 'no figure for this measure'}.`
-              : `The map shows ${shown.length} places from this answer, colored by ${legend.metricLabel}. Every figure is also in the answer above.`}
+              : `The map shows ${renderedCount} places from this answer, colored by ${legend.metricLabel}. Every figure is also in the answer above.`}
           </p>
 
           <div className="mt-4">

@@ -163,8 +163,11 @@ describe('spec-gap surfaces', () => {
     // Auto-run: the submit already executed the runnable request.
     expect(executed).toHaveLength(1)
 
+    // The chip's accessible name carries the plain-language label
+    // (owner finding F-B, 2026-11-02), not the raw measure key this
+    // selector previously used.
     const removeMeasure = container.querySelector(
-      'button[aria-label="Remove measure median_gross_rent"]',
+      'button[aria-label="Remove measure Median gross rent"]',
     ) as HTMLButtonElement
     expect(removeMeasure).not.toBeNull()
     act(() => removeMeasure.click())
@@ -202,7 +205,7 @@ describe('spec-gap surfaces', () => {
     await submit(container.querySelector('form') as HTMLFormElement)
 
     const removeMeasure = container.querySelector(
-      'button[aria-label="Remove measure median_gross_rent"]',
+      'button[aria-label="Remove measure Median gross rent"]',
     ) as HTMLButtonElement
     expect(removeMeasure).not.toBeNull()
     act(() => removeMeasure.click())

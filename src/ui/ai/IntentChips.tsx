@@ -5,6 +5,7 @@ import {
   removeMetricKey,
   type IntentEditResult,
 } from '../../core/ai/intent-edit'
+import { filterLabel, measureLabel, modeLabel } from './plain-labels'
 
 function applyRemoval(
   result: IntentEditResult,
@@ -32,7 +33,10 @@ export function IntentChips({
     'inline-flex min-h-[36px] items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-800 hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900'
   return (
     <div aria-label="What was understood" className="flex flex-wrap items-center gap-2">
-      <span className="text-sm font-medium text-slate-900">{intent.mode}</span>
+      {/* Plain-language mode label (owner finding F-B, 2026-11-02):
+          the raw mode string ("sweep_filter") is an internal enum
+          name and was rendered literally here. */}
+      <span className="text-sm font-medium text-slate-900">{modeLabel(intent.mode)}</span>
       {intent.geographies.map((g) => (
         <button
           key={`geo-${g}`}
@@ -48,15 +52,15 @@ export function IntentChips({
         <button
           key={`metric-${k}`}
           type="button"
-          aria-label={`Remove measure ${k}`}
+          aria-label={`Remove measure ${measureLabel(k)}`}
           onClick={() => applyRemoval(removeMetricKey(intent, k), onChange, onError)}
           className={chipClass}
         >
-          {k} ×
+          {measureLabel(k)} ×
         </button>
       ))}
       {intent.filters.map((f, index) => {
-        const label = `${f.metricKey} ${f.op} ${f.value}`
+        const label = filterLabel(f)
         return (
           <button
             key={`filter-${index}-${label}`}

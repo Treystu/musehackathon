@@ -9,6 +9,7 @@ import {
 } from '../../core/ai/intent-edit'
 import type { ValidatedIntent } from '../../core/ai/provider'
 import { IntentChips } from './IntentChips'
+import { measureLabel } from './plain-labels'
 
 const EDIT_ERROR_COPY: Record<string, string> = {
   not_allowlisted: 'That measure is not on the approved list.',
@@ -122,9 +123,11 @@ export function IntentEditor({
             onChange={(e) => setMetric(e.target.value)}
             className="select-field mt-1 w-full"
           >
+            {/* Option text is the plain-language label (owner finding
+                F-B, 2026-11-02); the value carried stays the key. */}
             {DISPLAYABLE_KEYS.map((key) => (
               <option key={key} value={key}>
-                {key}
+                {measureLabel(key)}
               </option>
             ))}
           </select>
@@ -147,7 +150,7 @@ export function IntentEditor({
             >
               {FILTER_LEGAL_KEYS.map((key) => (
                 <option key={key} value={key}>
-                  {key}
+                  {measureLabel(key)}
                 </option>
               ))}
             </select>

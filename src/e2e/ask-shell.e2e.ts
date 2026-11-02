@@ -61,9 +61,11 @@ it('parses a real query through the live client and shows the validated intent',
   await page.getByLabel('Ask in plain language').fill('What is the rent in Pahoa?')
   await page.getByRole('button', { name: 'Ask', exact: true }).click()
 
-  await page.getByText('lookup', { exact: true }).waitFor()
+  // Plain-language labels (owner finding F-B, 2026-11-02), as in
+  // app.e2e.ts: plain mode name and measure label, never raw keys.
+  await page.getByText('Look up a place', { exact: true }).waitFor()
   expect(await page.getByRole('button', { name: 'Remove place 96778' }).count()).toBe(1)
-  expect(await page.getByRole('button', { name: 'Remove measure median_gross_rent' }).count()).toBe(1)
+  expect(await page.getByRole('button', { name: 'Remove measure Median gross rent' }).count()).toBe(1)
 
   // The proxy is same-origin and carries the query; no key is in the body.
   expect(intentBody).not.toBeNull()

@@ -76,8 +76,24 @@ function statusList(): string {
 }
 
 describe('mounting: the wizard is reachable from the app surface', () => {
-  it('AskPanel renders the "Set up with your agent" entry point and the manual path opens the wizard', async () => {
+  // REVISED PIN (owner ruling F-E, 2026-11-02, battery findings
+  // register): this test previously pinned the opposite — that
+  // AskPanel renders the "Set up with your agent" entry point. The
+  // owner ruled the agent setup surface out of the Ask surface and
+  // the judged flow entirely ("the judges don't want to add their
+  // own keys — this needs to be perfectly clean"), so the pin now
+  // asserts the Ask surface renders NO setup affordance, and that
+  // the wizard stays reachable from the AgentHandoff component's
+  // remaining mount (Methodology). The owner's ruling is the
+  // authority for the change.
+  it('AskPanel renders no agent-setup affordance; the handoff itself still opens the wizard', async () => {
     render(<AskPanel provider={createStubProvider()} />)
+    await flush()
+    expect(container.textContent).not.toContain('Set up with your agent')
+    expect(container.textContent).not.toContain('Census API key: not set up yet.')
+    expect(container.textContent).not.toContain('Continue manually instead')
+
+    render(<AgentHandoff />)
     await flush()
     expect(container.textContent).toContain('Set up with your agent')
     expect(container.textContent).toContain('Census API key: not set up yet.')

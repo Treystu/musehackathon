@@ -211,7 +211,11 @@ describe('live ask: clarification candidates belong to the current question', ()
     expect(section?.textContent).not.toContain('East Honolulu, HI')
     expect(section?.textContent).toContain('No candidate places for this request')
     // The panel stays useful: the universal measure picks are offered.
-    expect(section?.textContent).toContain('median_gross_rent')
+    // REVISED PIN (owner finding F-B, 2026-11-02): the pick renders
+    // under its plain-language label, never the raw measure key —
+    // this assertion previously expected the key itself in the text.
+    expect(section?.textContent).toContain('Median gross rent')
+    expect(section?.textContent).not.toContain('median_gross_rent')
   })
 
   it('candidates derive from the current parse only', () => {
@@ -262,7 +266,10 @@ describe('live ask: clarification candidates belong to the current question', ()
     expect(container.textContent).toContain('Springfield, IL')
     expect(container.textContent).toContain('Springfield, MO')
     await act(async () => {
-      buttonIn(section!, 'median_gross_rent').dispatchEvent(
+      // The measure button's text is its plain-language label
+      // (owner finding F-B, 2026-11-02), not the raw key this test
+      // previously clicked by.
+      buttonIn(section!, 'Median gross rent').dispatchEvent(
         new MouseEvent('click', { bubbles: true }),
       )
     })

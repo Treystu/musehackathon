@@ -76,7 +76,12 @@ export function SavedSearches({
     setList(readSaved())
   }
 
-  if (list.length === 0 && !canSave && selectedZctas.length === 0) return null
+  // No standing restore (owner ruling F-D, 2026-11-02): a saved
+  // comparison is restored only by the reader's explicit Restore
+  // click below — never auto-applied on load — and with nothing
+  // saved and nothing selected the panel still renders its inviting
+  // empty state ("Nothing saved yet") rather than vanishing, so the
+  // surface starts empty and says how it fills.
 
   return (
     <section aria-labelledby="saved-heading" className="mt-4 panel panel-padded">

@@ -5,6 +5,8 @@ import { METRIC_DEFS_BY_KEY, METRIC_KEYS, tableOfMetric, VINTAGE } from '../core
 import { isSortableMetricKey } from '../core/sortable-surface'
 import { DiagnosticsPanel } from './ai/DiagnosticsPanel'
 import { MethodologyQa } from './ai/BriefingView'
+import { AgentHandoff } from './ai/AgentHandoff'
+import type { CensusKeyFetcher } from '../core/ai/census-key'
 
 /**
  * The methodology page is generated from the plugin registry and the scoring
@@ -13,7 +15,12 @@ import { MethodologyQa } from './ai/BriefingView'
  * that can silently drift out of date with the code is worse than no
  * documentation at all.
  */
-export function Methodology() {
+export function Methodology({
+  censusFetcher,
+}: {
+  /** Probe for the setup surface's Census-key validation; absent = shape-only. */
+  censusFetcher?: CensusKeyFetcher
+} = {}) {
   const plugins = registry.all()
   const byCategory = new Map<string, typeof plugins>()
   for (const p of plugins) {
@@ -87,6 +94,16 @@ export function Methodology() {
         from validated scalars so it cannot carry a question or a key.
       */}
       <DiagnosticsPanel />
+
+      {/*
+        The agent setup surface's only mount (owner ruling F-E,
+        2026-11-02): AgentHandoff and every own-keys affordance came
+        off the Ask surface and out of the judged flow entirely,
+        because judges do not add their own keys. The BYO-key
+        capability is not deleted — it stays reachable here, on the
+        How-this-works page, for post-contest readers who want it.
+      */}
+      <AgentHandoff censusFetcher={censusFetcher} />
 
       {/*
         The assistant section states the mechanism, not an assurance: the

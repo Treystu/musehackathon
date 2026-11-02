@@ -219,11 +219,25 @@ describe('canRun mode minimums (single owner)', () => {
     )
     expect(enabled).toContain('Use these choices')
     expect(enabled).not.toContain('disabled')
-    // A sweep with no measure at all still cannot complete: there
-    // is no figure to bound or sort the screen by.
-    const blocked = renderToStaticMarkup(
+    // REVISED PIN (owner ruling F-C, 2026-11-02): this test's blocked
+    // case used to be a placed sweep with a geography and no measure,
+    // asserted disabled because "there is no figure to sort by". F-C
+    // ruled that exact shape a dead click: with a geography and no
+    // measure, the panel applies the domain default measure
+    // (median gross rent) and RUNS — so that shape now enables, and
+    // the blocked case is a request with neither place nor measure,
+    // which no default can complete.
+    const withDefault = renderToStaticMarkup(
       <ClarificationPanel
         intent={{ ...runnableSweep, metricKeys: [] }}
+        candidates={{ geographies: [], metricKeys: [] }}
+        onResolve={() => {}}
+      />,
+    )
+    expect(withDefault).not.toContain('disabled')
+    const blocked = renderToStaticMarkup(
+      <ClarificationPanel
+        intent={{ ...runnableSweep, geographies: [], metricKeys: [], filters: [] }}
         candidates={{ geographies: [], metricKeys: [] }}
         onResolve={() => {}}
       />,

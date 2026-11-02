@@ -1034,11 +1034,10 @@ export default function App() {
         </div>
       )}
 
-      {/* The agent-setup surface lives in the Ask panel (the single
-          canonical AgentHandoff). A second mount here was removed in the
-          2026-11-01 simplification: two instances of the same panel on
-          one page read as a contradiction, and the explore view's job
-          is the data. */}
+      {/* The agent-setup surface lives on the Methodology view only
+          (owner ruling F-E, 2026-11-02: AgentHandoff came off the Ask
+          surface and out of the judged flow entirely). No mount here
+          or in the Ask panel; the explore view's job is the data. */}
     </>
   )
 
@@ -1131,7 +1130,7 @@ export default function App() {
 
       <main id="main" className="mx-auto max-w-7xl px-4 py-6 sm:py-10">
         {view === 'methodology' ? (
-          <Methodology />
+          <Methodology censusFetcher={CENSUS_PROBE_FETCHER} />
         ) : view === 'map' ? (
           <>
             {searchPanel}
@@ -1239,7 +1238,6 @@ export default function App() {
                   onExecute={executeIntent}
                   onAnswerRequest={handleAnswerRequest}
                   onVoiceModeChange={setVoiceMode}
-                  censusFetcher={CENSUS_PROBE_FETCHER}
                   clarificationCandidates={{
                     geographies: [],
                     metricKeys: [...DISPLAYABLE_KEYS],

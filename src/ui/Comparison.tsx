@@ -29,7 +29,25 @@ export function Comparison({
   placeLabel?: (zip: string) => string | null
 }) {
   const entries = Object.values(drilldowns)
-  if (entries.length === 0) return null
+  if (entries.length === 0) {
+    // No default areas (owner ruling F-D, 2026-11-02): the comparison
+    // starts EMPTY — no standing selection is ever pre-populated —
+    // and says so invitingly instead of rendering nothing, so a
+    // first-time reader meets an invitation, not a blank or a pair
+    // of places they never chose. Selections appear only from the
+    // reader's own actions in the session.
+    return (
+      <section aria-labelledby="comparison-heading" className="mt-8">
+        <h2 id="comparison-heading" className="section-title">
+          Comparison
+        </h2>
+        <p className="mt-2 text-sm text-slate-700">
+          No areas selected yet. Look up a ZIP code or a city, or ask a question, and the
+          areas you choose will appear here side by side.
+        </p>
+      </section>
+    )
+  }
   const comparableRows = comparableMetricRows(entries)
   const rowsPerComparison = Math.max(1, Math.floor(MAX_EXPLAIN_VALUES / entries.length))
   const explainRows = comparableRows.slice(0, rowsPerComparison)

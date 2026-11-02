@@ -386,9 +386,12 @@ describe('e2e: deterministic screening and explain surfaces', () => {
       await sortPage.getByRole('button', { name: 'Explore', exact: true }).click()
       await sortPage.getByRole('textbox', { name: 'Ask in plain language' }).fill('rent in 10002')
       await sortPage.getByRole('button', { name: 'Ask', exact: true }).click()
-      await sortPage.getByText('lookup', { exact: true }).waitFor()
+      // Plain-language labels (owner finding F-B, 2026-11-02): the
+      // chip shows the mode's plain name and the measure's label,
+      // never the raw mode string or measure key.
+      await sortPage.getByText('Look up a place', { exact: true }).waitFor()
       expect(await sortPage.getByRole('button', { name: 'Remove place 10002' }).count()).toBe(1)
-      expect(await sortPage.getByRole('button', { name: 'Remove measure median_gross_rent' }).count()).toBe(1)
+      expect(await sortPage.getByRole('button', { name: 'Remove measure Median gross rent' }).count()).toBe(1)
       const askExplain = sortPage.getByRole('button', { name: 'Explain these figures' })
       await askExplain.waitFor()
       await askExplain.click()

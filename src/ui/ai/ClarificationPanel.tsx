@@ -3,7 +3,24 @@ import {
   canResolveClarification,
   resolveClarification,
 } from '../../core/ai/intent-edit'
+import { canRun } from '../../core/ai/intent-schema'
+import { costDefaultMeasure } from '../../core/ai/national-screen'
 import type { ValidatedIntent } from '../../core/ai/provider'
+import { measureLabel } from './plain-labels'
+
+/**
+ * The domain default measure for a clarified request that names a
+ * place but no measure (owner ruling F-C, 2026-11-02). Derived from
+ * the shipped default-measure logic — national-screen's
+ * costDefaultMeasure answers the canonical measure-less cost
+ * question ("cheapest place to live") with median gross rent, the
+ * stat band's headline cost figure — rather than restating a second
+ * default here, so the panel and the screen rescue can never drift
+ * apart. The fallback literal is that same key, for the day the
+ * canonical phrase stops matching.
+ */
+const DOMAIN_DEFAULT_MEASURE =
+  costDefaultMeasure('cheapest place to live') ?? 'median_gross_rent'
 
 export interface ClarificationCandidates {
   geographies: string[]
@@ -33,13 +50,49 @@ export function ClarificationPanel({
 
   const places = candidates.geographies.filter((g) => !intent.geographies.includes(g))
   const metrics = candidates.metricKeys.filter((k) => !intent.metricKeys.includes(k))
+  const mergedGeographies = [...intent.geographies, ...geographies]
+  const mergedMetricKeys = [...intent.metricKeys, ...metricKeys]
   // One answer: the button enables exactly when the merged picks would run.
-  const canResolve = canResolveClarification({
+  const coreCanResolve = canResolveClarification({
     mode: intent.mode,
-    geographies: [...intent.geographies, ...geographies],
-    metricKeys: [...intent.metricKeys, ...metricKeys],
+    geographies: mergedGeographies,
+    metricKeys: mergedMetricKeys,
     filters: intent.filters,
   })
+  /**
+   * Run-with-default (owner ruling F-C, 2026-11-02): a geography with
+   * no measure was the dead click — the button stayed disabled (or,
+   * in the owner's live build, clicked to nothing) because the core
+   * predicate requires a measure. With a place chosen and no measure
+   * anywhere, the domain default measure completes the request and
+   * it RUNS; the default is disclosed in the hint line below, never
+   * applied silently. canRun is the arbiter, so a mode the default
+   * cannot complete (a one-place comparison) stays disabled.
+   */
+  const runsWithDefault =
+    !coreCanResolve &&
+    mergedGeographies.length > 0 &&
+    mergedMetricKeys.length === 0 &&
+    canRun({
+      mode: intent.mode,
+      geographies: mergedGeographies,
+      metricKeys: [DOMAIN_DEFAULT_MEASURE],
+      filters: intent.filters,
+      clarificationNeeded: false,
+    })
+  const canResolve = coreCanResolve || runsWithDefault
+  // The one-line honest hint for the states that cannot run: what is
+  // still missing, in plain words. A disabled button with no hint was
+  // half of the F-C defect — the reader could not tell why.
+  const incompleteHint = canResolve
+    ? runsWithDefault
+      ? `No measure chosen, so this runs on ${measureLabel(DOMAIN_DEFAULT_MEASURE).toLowerCase()} — the cost measure this tool uses when none is named.`
+      : null
+    : mergedGeographies.length === 0 && mergedMetricKeys.length === 0
+      ? 'Pick a place and a measure, or a measure on its own to screen the whole country.'
+      : intent.mode === 'compare' && mergedGeographies.length < 2
+        ? 'Comparing needs two places — pick one more place to run these choices.'
+        : 'These choices cannot run yet — a place and a measure that can screen are both needed.'
 
   function togglePlace(value: string) {
     setGeographies((current) =>
@@ -59,7 +112,20 @@ export function ClarificationPanel({
   // paths are the measure picks below and the choices already made,
   // so the empty state names only those.
   function resolve() {
-    const result = resolveClarification(intent, { geographies, metricKeys })
+    // Defence in depth for F-C: the button is disabled whenever this
+    // cannot run, so a silent no-op is unreachable from the UI; if
+    // resolve is ever invoked in that state anyway, it answers with
+    // the hint rather than doing nothing.
+    if (!canResolve) {
+      setError(incompleteHint ?? 'That choice is not valid.')
+      return
+    }
+    const result = resolveClarification(
+      intent,
+      runsWithDefault
+        ? { geographies, metricKeys: [...metricKeys, DOMAIN_DEFAULT_MEASURE] }
+        : { geographies, metricKeys },
+    )
     if (result.ok) {
       setError('')
       onResolve(result.intent)
@@ -145,7 +211,7 @@ export function ClarificationPanel({
                     : 'min-h-[44px] rounded-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900'
                 }
               >
-                {metric}
+                {measureLabel(metric)}
               </button>
             ))}
           </div>
@@ -154,6 +220,11 @@ export function ClarificationPanel({
       <button type="button" disabled={!canResolve} onClick={resolve} className="btn-primary mt-3">
         Use these choices
       </button>
+      {incompleteHint ? (
+        <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">
+          {incompleteHint}
+        </p>
+      ) : null}
       {error ? (
         <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">
           {error}

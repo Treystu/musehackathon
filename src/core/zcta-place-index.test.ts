@@ -57,6 +57,26 @@ describe('display names', () => {
     )
   })
 
+  it('strips a compound city-and-borough type whole, not just its last word', () => {
+    // Owner live finding (2026-11-02): with only the bare `borough`
+    // suffix known, `Juneau city and borough` shortened to
+    // `Juneau city and` and rendered as "Juneau city and, AK".
+    expect(shortenPlaceName('Juneau city and borough', true)).toBe('Juneau')
+    expect(shortenPlaceName('Sitka city and borough', true)).toBe('Sitka')
+    expect(shortenPlaceName('Wrangell city and borough', true)).toBe('Wrangell')
+  })
+
+  it('strips the sibling compound legal types whole', () => {
+    // Same class, other shapes the Census legal-type list carries:
+    // a fragment strip on any of these leaves a dangling "city and"
+    // or "consolidated" in the rendered name.
+    expect(shortenPlaceName('San Francisco city and county', true)).toBe('San Francisco')
+    expect(shortenPlaceName('Butte-Silver Bow consolidated city-county', true)).toBe(
+      'Butte-Silver Bow',
+    )
+    expect(shortenPlaceName('Example consolidated city and county', true)).toBe('Example')
+  })
+
   it('strips a statistical area type', () => {
     expect(shortenPlaceName('Urban Honolulu CDP', false)).toBe('Urban Honolulu')
     expect(shortenPlaceName('Aiea CDP', false)).toBe('Aiea')
@@ -335,6 +355,18 @@ describe('reverse lookup', () => {
   it('labels a ZIP for the table and the comparison header', () => {
     expect(index.label('78701')).toBe('Austin, TX')
     expect(index.label('20771')).toBe("Prince George's County, MD")
+  })
+
+  it('labels the city-and-borough ZIP codes with the plain city name', () => {
+    // The artefact's own records for the compound type (measured
+    // 2026-11-02): 99801 rendered "Juneau city and, AK" before the
+    // compound suffix was handled.
+    expect(index.label('99801')).toBe('Juneau, AK')
+    expect(index.label('99835')).toBe('Sitka, AK')
+    expect(index.label('99929')).toBe('Wrangell, AK')
+    for (const [, record] of decoded.byZip) {
+      expect(record.displayName).not.toMatch(/\s(?:and|city and)$/)
+    }
   })
 
   it('returns null rather than a wrong answer for an unknown ZIP', () => {

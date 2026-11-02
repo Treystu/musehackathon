@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react'
 import { decideAskPath } from '../../core/ai/byo'
-import type { CensusKeyFetcher } from '../../core/ai/census-key'
-import { hasMetaKey, type MetaKeyFetcher } from '../../core/ai/meta-key'
+import { hasMetaKey } from '../../core/ai/meta-key'
 import {
   assessTranscript,
   checkSpokenNumbers,
@@ -28,7 +27,6 @@ import {
 } from '../../core/ai/national-screen'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../core/ai/proxy-errors'
-import { AgentHandoff } from './AgentHandoff'
 import { censusLoadSentence } from '../GuidedTour'
 import { HelpTip } from './HelpTip'
 import { ByoOffer } from './ByoOffer'
@@ -393,7 +391,15 @@ export function Disclosure() {
  *
  * Union hand-merge (Panel B1): the CivicScope panel (diagnostics
  * counters, execution note, ExplainAction wiring) carries the Entire
- * tree's mic path, spoken-number gate, and AgentHandoff setup surface.
+ * tree's mic path and spoken-number gate.
+ *
+ * No key/setup surface mounts here (owner ruling F-E, 2026-11-02:
+ * the judges do not add their own keys, so the judged flow renders
+ * zero setup content). The AgentHandoff setup surface moved to the
+ * Methodology view — its only remaining mount — where the BYO-key
+ * capability stays reachable outside the judged path. The BYO
+ * recovery retry above is a call path, not a setup surface, and
+ * stays.
  */
 export function AskPanel({
   provider,
@@ -408,8 +414,6 @@ export function AskPanel({
   figures,
   explanation,
   onExplain,
-  censusFetcher,
-  metaFetcher,
   micRecorder,
   micStorage,
   parseRetryDelaysMs = PARSE_RETRY_DELAYS_MS,
@@ -452,9 +456,6 @@ export function AskPanel({
   figures?: readonly FigureInput[]
   explanation?: ExplanationState
   onExplain?: (intent: ValidatedIntent) => void
-  /** Probes for the setup surfaces' key validation; absent = shape-only. */
-  censusFetcher?: CensusKeyFetcher
-  metaFetcher?: MetaKeyFetcher
   /** Test/port injection for the mic recorder; defaults to the browser recorder. */
   micRecorder?: MicRecorder | null
   /** Test/port injection for mic consent storage; defaults to browser storage. */
@@ -1034,7 +1035,9 @@ export function AskPanel({
         <p className="mt-2 text-sm text-slate-600">{manualFallbackNote()}</p>
       )}
       <ByoOffer error={proxyError ?? caughtError} onOpenSettings={onOpenSettings} />
-      <AgentHandoff censusFetcher={censusFetcher} metaFetcher={metaFetcher} />
+      {/* No AgentHandoff mount here — owner ruling F-E (2026-11-02)
+          took the agent setup surface out of the Ask flow entirely;
+          it lives on the Methodology view only. */}
       {intent && (
         <>
           <IntentEditor intent={intent} onChange={handleIntentChange} />

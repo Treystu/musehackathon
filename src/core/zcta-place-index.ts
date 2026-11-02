@@ -65,6 +65,20 @@ export const EXPECTED_PLACE_COUNT = 33791
 const INCORPORATED_SUFFIXES = [
   'city (balance)',
   'unified government (balance)',
+  // Consolidated and city-and-borough/county legal types, longest
+  // first. Measured defect (owner live finding, 2026-11-02): ZIP
+  // 99801's Census name is `Juneau city and borough`, and with only
+  // the bare `borough` suffix known, the strip left `Juneau city
+  // and` — rendered to the reader as "Juneau city and, AK". The
+  // whole compound type is the suffix, so the whole compound is
+  // listed: `Juneau city and borough` -> `Juneau`, and the sibling
+  // shapes (`Sitka city and borough`, a `city and county` place, a
+  // `consolidated city-county` place) strip the same way instead of
+  // leaving a dangling fragment.
+  'consolidated city and county',
+  'consolidated city-county',
+  'city and borough',
+  'city and county',
   'zona urbana',
   'municipality',
   'corporation',
@@ -92,6 +106,7 @@ const STATISTICAL_SUFFIXES = ['CDP', 'zona urbana', 'comunidad']
  *   `Urban Honolulu CDP`                      -> `Urban Honolulu`
  *   `San Juan zona urbana`                    -> `San Juan`
  *   `Milford city (balance)`                  -> `Milford`
+ *   `Juneau city and borough`                 -> `Juneau`
  *   `Athens-Clarke County unified government (balance)` -> `Athens-Clarke County`
  *   `Carroll County`                          -> `Carroll County`   (unchanged)
  *

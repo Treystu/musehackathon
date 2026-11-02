@@ -100,8 +100,17 @@ export function Methodology() {
             question the data can answer (allowlisted filters, validated output, withheld wording).
           </p>
           <p>
-            Every AI-produced sentence is checked against the retrieved figures before display; a sentence
-            containing a number that was not retrieved is withheld.
+            Every explanatory sentence the assistant writes about the figures is checked against the
+            retrieved figures before display; a sentence containing a number that was not retrieved is
+            withheld.
+          </p>
+          <p>
+            Some questions reach past what Census data contains — schools, amenities, safety, the
+            political character of a place. Those parts are answered separately, from web search run
+            through the same metered proxy, in a labeled section with its sources listed. Web findings
+            are never presented as figures, are shown only when they carry citations, and the assistant
+            itself still never ranks or recommends places — it reports what the sources say and leaves
+            the weighing to the reader.
           </p>
           <p>
             The assistant is held to that contract by tooling, not by intention. An evaluation harness

@@ -23,6 +23,8 @@ function deps(provider: MuseProvider = createStubProvider(), cfg?: MeterConfig) 
     meter: new Meter(cfg ?? defaultMeterConfig()),
     provider,
     allowedModels: ['spark-test'],
+    // Taxonomy tests: production wait-out timing would stall them.
+    waitOut: { breakerWaitMs: 0, pollMs: 1, retryDelaysMs: [1, 1] as number[] },
   }
 }
 

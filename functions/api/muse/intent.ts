@@ -9,7 +9,7 @@
  */
 import { validateIntent } from '../../../src/core/ai/intent-schema'
 import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
-import { preCallGate, mapMeterError, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { preCallGate, mapMeterError, mapProviderError, attemptCall, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute, type MuseEnv, type PagesContext } from '../../../src/server/muse-adapter'
 
 export type { ProxyDeps } from '../../../src/server/muse-proxy'
@@ -36,16 +36,18 @@ async function handleIntentCore(
     return err(429, 'budget_exhausted')
   }
   try {
-    const result = await deps.provider.intent(
-      {
-        slots: {
-          geographyHints: Array.isArray(slots.geographyHints) ? (slots.geographyHints as string[]) : [],
-          metricHints: Array.isArray(slots.metricHints) ? (slots.metricHints as string[]) : [],
+    const result = await attemptCall(deps, () =>
+      deps.provider.intent(
+        {
+          slots: {
+            geographyHints: Array.isArray(slots.geographyHints) ? (slots.geographyHints as string[]) : [],
+            metricHints: Array.isArray(slots.metricHints) ? (slots.metricHints as string[]) : [],
+          },
+          queryText: typeof body.queryText === 'string' ? body.queryText : undefined,
+          locale: 'en',
         },
-        queryText: typeof body.queryText === 'string' ? body.queryText : undefined,
-        locale: 'en',
-      },
-      new AbortController().signal,
+        new AbortController().signal,
+      ),
     )
     const check = validateIntent(result.intent)
     if (!check.ok) {

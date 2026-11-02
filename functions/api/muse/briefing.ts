@@ -16,7 +16,7 @@ import { verifyFigureSet } from '../../../src/core/ai/briefing'
 import { isKnownFigureKey } from '../../../src/core/ai/intent-schema'
 import { realValidator, type FigureForValidation } from '../../../src/core/ai/validator'
 import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
-import { preCallGate, mapMeterError, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { preCallGate, mapMeterError, mapProviderError, attemptCall, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
 const ALLOWED_PATHS = new Set(['/api/muse/briefing'])
@@ -101,9 +101,11 @@ async function handleBriefingCore(
   }
 
   try {
-    const result = await deps.provider.briefing(
-      { figureSetId: body.figureSetId, values },
-      new AbortController().signal,
+    const result = await attemptCall(deps, () =>
+      deps.provider.briefing(
+        { figureSetId: body.figureSetId as string, values },
+        new AbortController().signal,
+      ),
     )
     await deps.meter.settle(
       reservation,

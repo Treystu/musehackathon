@@ -190,6 +190,85 @@ describe('live provider: BYO fallback', () => {
   })
 })
 
+describe('research via the Responses API (grounding is Responses-only)', () => {
+  const RESPONSES_REPLY = {
+    output: [
+      { type: 'web_search_call', results: [{ title: 'Search hit', url: 'https://example.org/hit' }] },
+      {
+        type: 'message',
+        content: [
+          {
+            type: 'output_text',
+            text: 'The area schools are well rated.',
+            annotations: [
+              { type: 'url_citation', url: 'https://example.org/doe', title: 'State DOE' },
+            ],
+          },
+        ],
+      },
+    ],
+  }
+
+  it('direct provider posts a web_search tool call and parses prose + citations', async () => {
+    const { impl, calls } = fakeFetch([{ body: RESPONSES_REPLY }])
+    const live = provider(impl, true)
+    // Force the BYO path: proxy reports the shared budget exhausted.
+    const proxied = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/muse/research') {
+        return new Response(JSON.stringify({ error: 'budget_exhausted' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return impl(input, init)
+    }) as unknown as typeof fetch
+    const byo = provider(proxied, true)
+    const result = await byo.research(
+      { queryText: 'best schools near Hilo', places: ['Hilo'] },
+      new AbortController().signal,
+    )
+    expect(result.prose).toContain('well rated')
+    expect(result.sources.map((s) => s.url)).toEqual([
+      'https://example.org/hit',
+      'https://example.org/doe',
+    ])
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toBe('https://api.meta.ai/v1/responses')
+    const body = calls[0]!.body as { tools?: Array<{ type: string }> }
+    expect(body.tools).toEqual([{ type: 'web_search', search_context_size: 'medium' }])
+    void live
+  })
+
+  it('a reply with no citations is refused as ungrounded', async () => {
+    const { impl } = fakeFetch([
+      { body: { output: [{ type: 'message', content: [{ type: 'output_text', text: 'Trust me.', annotations: [] }] }] } },
+    ])
+    const direct = provider(impl, true)
+    // The proxy path 200s a sourced reply shape of its own in other
+    // tests; here the first call IS the proxy (fakeFetch serves the
+    // same body), whose prose has no sources -> parse refuses.
+    await expect(
+      direct.research({ queryText: 'schools?' }, new AbortController().signal),
+    ).rejects.toMatchObject({ code: 'provider_down' })
+  })
+
+  it('live provider returns the route reply through the proxy', async () => {
+    const { impl, calls } = fakeFetch([
+      { body: { prose: 'Findings.', sources: [{ title: 'T', url: 'https://example.org' }] } },
+    ])
+    const live = provider(impl, false)
+    const result = await live.research(
+      { queryText: 'starbucks near Hilo?' },
+      new AbortController().signal,
+    )
+    expect(result).toEqual({
+      prose: 'Findings.',
+      sources: [{ title: 'T', url: 'https://example.org' }],
+    })
+    expect(calls[0]!.url).toBe('/api/muse/research')
+  })
+})
+
 describe('live provider: transcribe (voice un-cut by owner directive, 2026-11-01)', () => {
   const AUDIO = new Uint8Array([1, 2, 3, 4]).buffer
 

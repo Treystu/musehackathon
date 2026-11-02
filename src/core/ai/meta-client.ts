@@ -27,6 +27,8 @@ import type {
   IntentRequest,
   IntentResult,
   MuseProvider,
+  ResearchRequest,
+  ResearchResult,
   TranscribeRequest,
   TranscribeResult,
 } from './provider'
@@ -290,6 +292,67 @@ export function parseTranscriptResult(value: unknown): TranscribeResult {
   return { transcript: rec.transcript, confidence: rec.confidence }
 }
 
+/**
+ * Grounded web research (2026-11-01, owner directive). Search
+ * grounding exists ONLY on the Responses API — the Chat Completions
+ * endpoint rejects it (documented; the chat path above cannot carry
+ * it). The Responses call names the web_search tool and asks for all
+ * consulted results; the answer's url_citation annotations are the
+ * sources the reader sees. A reply with no citations is not a
+ * research result: parseResearchResult returns the sources it found
+ * and the provider refuses an empty list, because presenting
+ * unsourced prose as web findings would break the product's sourcing
+ * discipline.
+ */
+export const RESEARCH_SYSTEM_PROMPT =
+  'You are the web-research helper for CivicScope, a housing-data tool whose ' +
+  'figures come from the US Census Bureau. Use web search to answer ONLY the ' +
+  'parts of the reader question that Census data cannot cover: schools, ' +
+  'amenities and businesses nearby, safety, political character, lifestyle, ' +
+  'services, and local context. Be tight and factual: short paragraphs or a ' +
+  'short list. Cite the pages you rely on. Never invent a statistic or a ' +
+  'rating; if the web does not support part of the answer, say so plainly. ' +
+  'Do not state rent, home-value, income, or demographic figures — those are ' +
+  'shown separately from Census data and must never come from the web.'
+
+export interface ResearchSourceLike {
+  title: string
+  url: string
+}
+
+/** Parse a Responses API research reply into prose + deduped sources. */
+export function parseResearchResult(value: unknown): { prose: string; sources: ResearchSourceLike[] } {
+  const out: string[] = []
+  const byUrl = new Map<string, ResearchSourceLike>()
+  const addSource = (url: unknown, title: unknown) => {
+    if (typeof url !== 'string' || !/^https?:\/\//.test(url)) return
+    if (byUrl.has(url) || byUrl.size >= 8) return
+    byUrl.set(url, { url, title: typeof title === 'string' && title.trim() ? title.trim() : url })
+  }
+  const root = value as { output?: unknown } | null
+  const items = Array.isArray(root?.output) ? root.output : []
+  for (const item of items as Array<Record<string, unknown>>) {
+    if (item?.type === 'web_search_call') {
+      const results = (item as { results?: unknown }).results
+      if (Array.isArray(results)) {
+        for (const r of results as Array<Record<string, unknown>>) addSource(r?.url, r?.title)
+      }
+      continue
+    }
+    if (item?.type !== 'message') continue
+    const parts = Array.isArray(item.content) ? item.content : []
+    for (const part of parts as Array<Record<string, unknown>>) {
+      if (part?.type !== 'output_text' || typeof part.text !== 'string') continue
+      out.push(part.text)
+      const annotations = Array.isArray(part.annotations) ? part.annotations : []
+      for (const a of annotations as Array<Record<string, unknown>>) {
+        if (a?.type === 'url_citation') addSource(a.url, a.title)
+      }
+    }
+  }
+  return { prose: out.join('\n\n').trim(), sources: [...byUrl.values()] }
+}
+
 /** Usage is read by the proxy adapter to settle the meter against reality. */
 export function readUsage(body: unknown): { prompt: number; completion: number } | null {
   if (typeof body !== 'object' || body === null) return null
@@ -362,6 +425,51 @@ export function createMetaDirectProvider(options: MetaDirectOptions): MuseProvid
     }
   }
 
+  /**
+   * One Responses API call (research lives there; see the note at
+   * RESEARCH_SYSTEM_PROMPT), with the same single-retry posture as
+   * complete().
+   */
+  async function respondOnce(body: Record<string, unknown>, signal: AbortSignal) {
+    const key = options.getApiKey()
+    if (!key) throw new ProviderCallError('bad_key')
+    let res: Response
+    try {
+      res = await doFetch(`${options.baseUrl.replace(/\/$/, '')}/responses`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+          authorization: 'Bearer '.concat(key),
+        },
+        body: JSON.stringify({ model: options.model, ...body }),
+        signal,
+        credentials: 'omit',
+      })
+    } catch (e) {
+      if ((e as { name?: string } | null)?.name === 'AbortError') throw e
+      throw new ProviderCallError('provider_down')
+    }
+    const parsed = await res.json().catch(() => null)
+    if (!res.ok) throw new ProviderCallError(mapMetaFailure(res.status, parsed))
+    return parsed
+  }
+
+  async function respond(body: Record<string, unknown>, signal: AbortSignal) {
+    try {
+      return await respondOnce(body, signal)
+    } catch (e) {
+      if (
+        e instanceof ProviderCallError &&
+        (e.code === 'bad_key' || e.code === 'provider_down') &&
+        !signal.aborted
+      ) {
+        return respondOnce(body, signal)
+      }
+      throw e
+    }
+  }
+
   return {
     async intent(req, signal): Promise<IntentResult> {
       if (req.queryText && req.queryText.length > MAX_INTENT_QUERY_CHARS) {
@@ -420,6 +528,29 @@ export function createMetaDirectProvider(options: MetaDirectOptions): MuseProvid
       const text = contentOf(reply)
       if (!text) throw new ProviderCallError('provider_down')
       return { prose: text.trim() }
+    },
+
+    async research(req: ResearchRequest, signal: AbortSignal): Promise<ResearchResult> {
+      const places =
+        req.places && req.places.length > 0
+          ? `\nPlaces the question names: ${req.places.join(', ')}`
+          : ''
+      const reply = await respond(
+        {
+          input: [
+            { role: 'system', content: RESEARCH_SYSTEM_PROMPT },
+            { role: 'user', content: `Question: ${req.queryText}${places}` },
+          ],
+          tools: [{ type: 'web_search', search_context_size: 'medium' }],
+          include: ['web_search_call.results'],
+          temperature: 0.3,
+        },
+        signal,
+      )
+      const { prose, sources } = parseResearchResult(reply)
+      // The citation gate: ungrounded prose is not a research result.
+      if (!prose || sources.length === 0) throw new ProviderCallError('provider_down')
+      return { prose, sources }
     },
 
     async transcribe(req: TranscribeRequest, signal: AbortSignal): Promise<TranscribeResult> {
@@ -636,7 +767,42 @@ export function createLiveProvider(options: LiveProviderOptions = {}): MuseProvi
       }
       return direct.transcribe(req, signal)
     },
+
+    async research(req: ResearchRequest, signal: AbortSignal): Promise<ResearchResult> {
+      try {
+        const reply = await viaProxy<{ prose?: unknown; sources?: unknown }>(
+          '/api/muse/research',
+          { queryText: req.queryText, places: req.places ?? [] },
+          signal,
+        )
+        return parseResearchReply(reply)
+      } catch (e) {
+        const code = e instanceof ProviderCallError ? e.code : null
+        if (!code || !BYO_FALLBACK_ERRORS.has(code) || !direct || !directKeyAvailable()) throw e
+      }
+      return direct.research(req, signal)
+    },
   }
+}
+
+/** Validate the research route's reply: prose plus a non-empty source list. */
+export function parseResearchReply(value: unknown): ResearchResult {
+  const rec = value as { prose?: unknown; sources?: unknown } | null
+  const sources: ResearchResult['sources'] = []
+  if (Array.isArray(rec?.sources)) {
+    for (const s of rec.sources as Array<{ title?: unknown; url?: unknown }>) {
+      if (typeof s?.url === 'string' && /^https?:\/\//.test(s.url)) {
+        sources.push({
+          url: s.url,
+          title: typeof s.title === 'string' && s.title.trim() ? s.title.trim() : s.url,
+        })
+      }
+    }
+  }
+  if (!rec || typeof rec.prose !== 'string' || !rec.prose.trim() || sources.length === 0) {
+    throw new ProviderCallError('provider_down')
+  }
+  return { prose: rec.prose.trim(), sources }
 }
 
 /** True when a figure key can be sent for validation. Kept here so the client

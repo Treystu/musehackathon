@@ -19,7 +19,13 @@ import {
 } from '../../src/core/ai/harness'
 
 function depsWith(provider = createStubProvider()) {
-  return { meter: new Meter(defaultMeterConfig()), provider, allowedModels: ['spark-test'] }
+  return {
+    meter: new Meter(defaultMeterConfig()),
+    provider,
+    allowedModels: ['spark-test'],
+    // Matrix tests: production wait-out timing would stall them.
+    waitOut: { breakerWaitMs: 0, pollMs: 1, retryDelaysMs: [1, 1] as number[] },
+  }
 }
 
 const INTENT_REQ = { method: 'POST', path: '/api/muse/intent', body: { slots: {} }, clientId: 'c1' } as const
@@ -309,7 +315,12 @@ async function assertErrorRow(id: string): Promise<void> {
       meter.recordFailure()
       expect(meter.breakerState()).toBe('open')
       expect(meter.reserve('c1', 100, 10)).toBeNull()
-      const deps = { meter, provider: createStubProvider(), allowedModels: ['spark-test'] }
+      const deps = {
+        meter,
+        provider: createStubProvider(),
+        allowedModels: ['spark-test'],
+        waitOut: { breakerWaitMs: 0, pollMs: 1, retryDelaysMs: [1, 1] as number[] },
+      }
       const r = await handleIntent({ ...INTENT_REQ }, deps)
       expect(r.status).toBe(503)
       expect(r.body.error).toBe('breaker_open')

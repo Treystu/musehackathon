@@ -13,7 +13,7 @@
  * the same helper API.)
  */
 import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
-import { preCallGate, mapMeterError, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { preCallGate, mapMeterError, mapProviderError, attemptCall, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
 export type { ProxyDeps } from '../../../src/server/muse-proxy'
@@ -108,9 +108,11 @@ async function handleTranscribeCore(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,
     ) as ArrayBuffer
-    const result = await deps.provider.transcribe(
-      { audio, mimeType },
-      new AbortController().signal,
+    const result = await attemptCall(deps, () =>
+      deps.provider.transcribe(
+        { audio, mimeType },
+        new AbortController().signal,
+      ),
     )
     if (
       typeof result?.transcript !== 'string' ||

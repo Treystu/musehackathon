@@ -9,7 +9,7 @@ import { MAX_EXPLAIN_VALUES, type ExplainRequest } from '../../../src/core/ai/pr
 import { isKnownFigureKey } from '../../../src/core/ai/intent-schema'
 import { realValidator, type FigureForValidation } from '../../../src/core/ai/validator'
 import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
-import { preCallGate, mapMeterError, mapProviderError, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
+import { preCallGate, mapMeterError, mapProviderError, attemptCall, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
 const ALLOWED_PATHS = new Set(['/api/muse/explain'])
@@ -78,9 +78,11 @@ async function handleExplainCore(
   }
 
   try {
-    const result = await deps.provider.explain(
-      { figureSetId: body.figureSetId, values },
-      new AbortController().signal,
+    const result = await attemptCall(deps, () =>
+      deps.provider.explain(
+        { figureSetId: body.figureSetId as string, values },
+        new AbortController().signal,
+      ),
     )
     await deps.meter.settle(
       reservation,

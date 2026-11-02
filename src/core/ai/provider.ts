@@ -104,11 +104,36 @@ export interface TranscribeResult {
   confidence: number
 }
 
+/**
+ * Grounded web research (2026-11-01, owner directive: any question
+ * answerable). The Census data cannot serve criteria like schools,
+ * amenities, or political character; those go to the Muse Responses
+ * API's web_search tool and come back as prose WITH citations. The
+ * citation list is part of the result contract: prose without sources
+ * is not a research result and is never presented as one.
+ */
+export interface ResearchRequest {
+  queryText: string
+  /** Places the question names, when the parse found any. */
+  places?: string[]
+}
+
+export interface ResearchSource {
+  title: string
+  url: string
+}
+
+export interface ResearchResult {
+  prose: string
+  sources: ResearchSource[]
+}
+
 export interface MuseProvider {
   intent(req: IntentRequest, signal: AbortSignal): Promise<IntentResult>
   explain(req: ExplainRequest, signal: AbortSignal): Promise<ExplainResult>
   briefing(req: BriefingRequest, signal: AbortSignal): Promise<BriefingResult>
   transcribe(req: TranscribeRequest, signal: AbortSignal): Promise<TranscribeResult>
+  research(req: ResearchRequest, signal: AbortSignal): Promise<ResearchResult>
 }
 
 /** Hermetic fake for local tests. Never calls a network or a live model. */
@@ -135,6 +160,9 @@ export function createStubProvider(
     },
     async transcribe() {
       return { transcript: '', confidence: 0 }
+    },
+    async research() {
+      return { prose: '', sources: [] }
     },
     ...handler,
   }

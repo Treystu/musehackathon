@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { decideAskPath } from '../../core/ai/byo'
 import type { CensusKeyFetcher } from '../../core/ai/census-key'
 import { hasMetaKey, type MetaKeyFetcher } from '../../core/ai/meta-key'
@@ -10,6 +10,8 @@ import {
 import type {
   IntentResult,
   MuseProvider,
+  ResearchResult,
+  ResearchSource,
   TranscribeResult,
   ValidatedIntent,
 } from '../../core/ai/provider'
@@ -59,6 +61,22 @@ const POLITICS_QUESTION_RE =
 
 export function politicsCoverageNote(queryText: string | undefined): string {
   return queryText && POLITICS_QUESTION_RE.test(queryText) ? POLITICS_COVERAGE_NOTE : ''
+}
+
+/**
+ * Questions carrying criteria the Census data cannot serve — schools,
+ * amenities, safety, political character, lifestyle, services — get a
+ * grounded web answer alongside the figures (owner directive,
+ * 2026-11-01: any question answerable). This lexical screen decides
+ * only whether the research path fires; the research model does the
+ * answering, with sources, and the politics coverage note above
+ * remains the fallback when research itself cannot be reached.
+ */
+const OUTSIDE_KNOWLEDGE_RE =
+  /\b(school|schools|starbucks|coffee shop|grocery|groceries|gym|gyms|nightlife|walkable|walkability|restaurant|restaurants|playground|hospital|clinic|doctor|airport|transit|commute|safety|crime|dangerous|families|kids|children|liberal|conservative|republican|democrat|democratic|political|politics|voter|voting|red state|blue state)\b/i
+
+export function needsResearch(queryText: string | undefined): boolean {
+  return !!queryText && OUTSIDE_KNOWLEDGE_RE.test(queryText)
 }
 
 /**
@@ -211,6 +229,51 @@ export function AskPanel({
   const [caughtError, setCaughtError] = useState<ProxyError | null>(null)
   const [executionNote, setExecutionNote] = useState('')
   const [coverageNote, setCoverageNote] = useState('')
+  const [research, setResearch] = useState<
+    | { status: 'idle' | 'loading' | 'unavailable' }
+    | { status: 'done'; prose: string; sources: ResearchSource[] }
+  >({ status: 'idle' })
+  const researchRun = useRef(0)
+
+  /**
+   * Grounded web findings for the parts of a question the Census data
+   * cannot serve (see needsResearch). Fired in parallel with the parse;
+   * lands when it lands. A failure — or a reply with no sources — ends
+   * in the unavailable state, and for a politics question the coverage
+   * note takes over as the honest fallback.
+   */
+  function startResearch(queryText: string) {
+    const run = ++researchRun.current
+    setResearch({ status: 'loading' })
+    const signal = new AbortController().signal
+    const attempt = async (): Promise<ResearchResult> => {
+      try {
+        return await provider.research({ queryText }, signal)
+      } catch (e) {
+        if (byoProvider && hasMetaKey()) {
+          return byoProvider.research({ queryText }, signal)
+        }
+        throw e
+      }
+    }
+    void attempt().then(
+      (result) => {
+        if (researchRun.current !== run) return
+        if (result.prose && result.sources.length > 0) {
+          setResearch({ status: 'done', prose: result.prose, sources: result.sources })
+          setCoverageNote('')
+        } else {
+          setResearch({ status: 'unavailable' })
+          setCoverageNote(politicsCoverageNote(queryText))
+        }
+      },
+      () => {
+        if (researchRun.current !== run) return
+        setResearch({ status: 'unavailable' })
+        setCoverageNote(politicsCoverageNote(queryText))
+      },
+    )
+  }
 
   const errorNote = proxyErrorNote(proxyError) ?? note
 
@@ -228,7 +291,6 @@ export function AskPanel({
   }
 
   function accept(result: IntentResult, spokenTranscript?: string, queryText?: string) {
-    setCoverageNote(politicsCoverageNote(queryText))
     const check = validateIntent(result.intent)
     // National-screen rescue: a placeless superlative ("cheapest rent in
     // America") clarifies with neither a place nor a measure, and the
@@ -309,6 +371,15 @@ export function AskPanel({
     setNote('')
     setCoverageNote('')
     setCaughtError(null)
+    // Research runs in parallel with the parse: it answers a different
+    // part of the question (what the Census data cannot cover), so
+    // neither waits on the other.
+    if (needsResearch(queryText)) {
+      startResearch(queryText)
+    } else {
+      researchRun.current += 1
+      setResearch({ status: 'idle' })
+    }
     const request = {
       slots: { geographyHints: [], metricHints: [] },
       queryText,
@@ -501,6 +572,46 @@ export function AskPanel({
       {coverageNote && (
         <p role="note" className="mt-2 text-sm text-slate-600">
           {coverageNote}
+        </p>
+      )}
+      {research.status === 'loading' && (
+        <p role="status" className="mt-2 text-sm text-slate-600">
+          Looking up what the Census data does not cover…
+        </p>
+      )}
+      {research.status === 'done' && (
+        <section aria-label="From the web" className="mt-4 border-t border-slate-200 pt-3">
+          <h3 className="text-sm font-semibold text-slate-800">From the web</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Web findings via Muse search, with sources. These are not Census figures; the
+            Census figures for this question are computed separately and shown with their
+            own sources.
+          </p>
+          {research.prose.split(/\n\n+/).map((para, i) => (
+            <p key={i} className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-700">
+              {para}
+            </p>
+          ))}
+          <ul className="mt-2 list-disc pl-5 text-sm">
+            {research.sources.map((s) => (
+              <li key={s.url}>
+                <a
+                  href={s.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[#1a73e8] underline"
+                >
+                  {s.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {research.status === 'unavailable' && (
+        <p role="note" className="mt-2 text-sm text-slate-600">
+          Web findings are unavailable right now. The Census figures for this question still
+          work.
         </p>
       )}
       {(proxyError || note) && <p className="mt-2 text-sm text-slate-600">{manualFallbackNote()}</p>}

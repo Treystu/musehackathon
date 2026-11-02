@@ -158,6 +158,9 @@ export function createReplayProvider(corpus: GoldenCorpus): MuseProvider {
     async transcribe() {
       return { transcript: '', confidence: 0 }
     },
+    async research() {
+      return { prose: '', sources: [] }
+    },
   }
   return provider
 }

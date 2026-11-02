@@ -10,6 +10,8 @@ function deps(handler: Partial<MuseProvider> = {}) {
     meter: new Meter(defaultMeterConfig()),
     provider: createStubProvider(handler),
     allowedModels: ['spark-test'],
+    // Taxonomy tests: production wait-out timing would stall them.
+    waitOut: { breakerWaitMs: 0, pollMs: 1, retryDelaysMs: [1, 1] as number[] },
   }
 }
 
@@ -158,14 +160,42 @@ describe('explain route', () => {
     expect(d.meter.snapshot().requests).toBe(0)
   })
 
-  it('rejects an open breaker', async () => {
-    const d = deps()
+  it('rejects an open breaker when the wait-out budget is zero', async () => {
+    // Production deps wait out the cooldown (DEFAULT_WAIT_OUT); a zero
+    // budget keeps the rejection semantics pinned without a 40 s test.
+    const d = {
+      ...deps(),
+      waitOut: { breakerWaitMs: 0, pollMs: 1, retryDelaysMs: [] as number[] },
+    }
     for (let i = 0; i < defaultMeterConfig().breakerFailureThreshold; i += 1) {
       d.meter.recordFailure()
     }
     const r = await handleExplain(req({ figureSetId: 'f1', values: VALUES }), d)
     expect(r.status).toBe(503)
     expect(r.body.error).toBe('breaker_open')
+  })
+
+  it('waits out an open breaker that lifts, then serves the call', async () => {
+    // Short cooldown: the breaker reads half-open ~30 ms after opening,
+    // inside the gate's wait budget, so the call is served instead of
+    // rejected — the production behavior at a 30 s cooldown.
+    const meter = new Meter({ ...defaultMeterConfig(), breakerCooldownMs: 30 })
+    const d = {
+      meter,
+      provider: createStubProvider({
+        async explain() {
+          return { prose: 'Rent is $1,200 here.' }
+        },
+      }),
+      allowedModels: ['spark-test'],
+      waitOut: { breakerWaitMs: 5_000, pollMs: 1, retryDelaysMs: [] as number[] },
+    }
+    for (let i = 0; i < defaultMeterConfig().breakerFailureThreshold; i += 1) {
+      meter.recordFailure()
+    }
+    expect(meter.breakerState()).toBe('open')
+    const r = await handleExplain(req({ figureSetId: 'f1', values: VALUES }), d)
+    expect(r.status).toBe(200)
   })
 
   it('returns budget_exhausted after the cap is settled', async () => {

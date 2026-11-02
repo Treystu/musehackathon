@@ -27,7 +27,7 @@ const ACTUAL_COST_MICRO = 1200
 const ACTUAL_TOKENS_IN = 192
 const ACTUAL_TOKENS_OUT = 192
 
-const VALUE_FIELDS = new Set(['key', 'value', 'marginOfError', 'geography'])
+const VALUE_FIELDS = new Set(['key', 'value', 'marginOfError', 'geography', 'label'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -54,11 +54,18 @@ function parseValues(raw: unknown): BriefingRequest['values'] | null {
     ) {
       return null
     }
+    if (
+      item.label !== undefined &&
+      (typeof item.label !== 'string' || item.label.length === 0 || item.label.length > 80)
+    ) {
+      return null
+    }
     values.push({
       key: item.key,
       value: item.value,
       marginOfError: item.marginOfError,
       geography: item.geography as string | undefined,
+      label: item.label as string | undefined,
     })
   }
   return values

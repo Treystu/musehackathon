@@ -71,6 +71,10 @@ export interface BriefingRequest {
      * as "duplicate figure key" — found live 2026-11-01).
      */
     geography?: string
+    /** Display name for the place, when known; prompts name places by
+     * label so a ZIP numeral never enters the model's context (the
+     * figure validator cannot tell one from an invented figure). */
+    label?: string
   }[]
 }
 /** The same request ceiling enforced by the briefing proxy parser. */

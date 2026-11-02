@@ -79,8 +79,8 @@ describe('briefing route', () => {
       req({
         figureSetId: 'p2',
         values: [
-          { key: 'median_gross_rent', value: 1346, marginOfError: 52, geography: '96720' },
-          { key: 'median_gross_rent', value: 2946, marginOfError: 338, geography: '96821' },
+          { key: 'median_gross_rent', value: 1346, marginOfError: 52, geography: '96720', label: 'Hilo, HI' },
+          { key: 'median_gross_rent', value: 2946, marginOfError: 338, geography: '96821', label: 'East Honolulu, HI' },
         ],
       }),
       d,

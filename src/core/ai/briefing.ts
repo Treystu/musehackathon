@@ -40,6 +40,11 @@ export interface BriefingFigure {
   key: string
   /** Place label or ZIP this figure belongs to, as shown in the view. */
   geography: string
+  /** Display name for the place when the view knows one ("Hilo, HI").
+   * The briefing prompt names places by label, never by ZIP: a ZIP in
+   * the prompt is a numeral the figure validator cannot tell apart
+   * from an invented figure, and prose naming it was withheld. */
+  label?: string
   value: number | null
   marginOfError?: number
   suppressed?: boolean
@@ -274,6 +279,7 @@ export async function generateBriefingPack(
     value: f.suppressed ? null : f.value,
     marginOfError: f.suppressed ? undefined : f.marginOfError,
     geography: f.geography,
+    label: f.label,
   }))
 
   let narrative: string | undefined
@@ -357,6 +363,9 @@ export interface BriefingRequestFigure {
   /** Place the figure belongs to; distinguishes same-key figures
    * across the places of a multi-place pack. */
   geography?: string
+  /** Display name for the place, when known; the prompt names places
+   * by label so no ZIP numeral enters the model's context. */
+  label?: string
 }
 
 export type FigureSetVerification =
@@ -467,6 +476,7 @@ export function composeBriefingRequest(
         value: f.value as number,
         marginOfError: f.marginOfError,
         geography: f.geography,
+        label: f.label,
       })),
     },
   }

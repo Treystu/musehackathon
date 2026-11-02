@@ -54,11 +54,13 @@ export function figureInputsFromAreaRow(
 export function briefingFigureFromMetric(
   metric: MetricValue,
   geography: string,
+  label?: string,
 ): BriefingFigure | null {
   if (!isKnownFigureKey(metric.key)) return null
   return {
     key: metric.key,
     geography,
+    label,
     value: metric.value,
     marginOfError: metric.quality.marginOfError,
     suppressed: metric.quality.suppressed,
@@ -69,9 +71,10 @@ export function briefingFigureFromMetric(
 export function briefingFiguresFromMetrics(
   metrics: readonly MetricValue[],
   geography: string,
+  label?: string,
 ): BriefingFigure[] {
   return metrics.flatMap((metric) => {
-    const figure = briefingFigureFromMetric(metric, geography)
+    const figure = briefingFigureFromMetric(metric, geography, label)
     return figure ? [figure] : []
   })
 }

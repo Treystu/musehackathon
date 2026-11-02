@@ -190,7 +190,7 @@ export default function App() {
   const briefingFigures = useMemo(
     () =>
       Object.values(q.drilldowns).flatMap((detail) =>
-        briefingFiguresFromMetrics(detail.metrics, detail.zcta),
+        briefingFiguresFromMetrics(detail.metrics, detail.zcta, detail.label || undefined),
       ),
     [q.drilldowns],
   )

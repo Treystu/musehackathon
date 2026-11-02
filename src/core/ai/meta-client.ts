@@ -178,7 +178,9 @@ const BRIEFING_SYSTEM_PROMPT = [
   'figures. Do not compute or introduce any number. Do not rank places, recommend a place,',
   'or describe people. Do not call any place good, bad, safe, or desirable. If a margin of',
   'error is wide relative to the figure, say the estimate is uncertain. Never claim a',
-  'difference is real when the margins of error overlap. Plain prose only.',
+  'difference is real when the margins of error overlap. Refer to each place by the',
+  'name printed before its figures, and do not write any number that is not one of',
+  'the supplied figures. Plain prose only.',
 ].join(' ')
 
 function briefingUserPrompt(req: BriefingRequest): string {
@@ -188,7 +190,10 @@ function briefingUserPrompt(req: BriefingRequest): string {
         ? ` plus or minus ${v.marginOfError}`
         : ' (no margin published)'
     const value = v.value === null ? 'no reportable value' : String(v.value)
-    const place = v.geography ? `${v.geography} — ` : ''
+    // Name the place by its label only. A raw ZIP here is a numeral
+    // the figure validator cannot tell from an invented figure, and
+    // prose repeating it was withheld (found live 2026-11-01).
+    const place = v.label ? `${v.label} — ` : ''
     return `- ${place}${v.key}: ${value}${moe}`
   })
   return [`Briefing pack: ${req.figureSetId}`, 'Verified figures:', ...rows].join('\n')

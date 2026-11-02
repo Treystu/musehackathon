@@ -33,7 +33,7 @@ import type {
   TranscribeResult,
 } from './provider'
 import { PROXY_ERRORS, type ProxyError } from './proxy-errors'
-import { VALIDATOR_FAILURES, type ValidatorFailure } from './validator'
+import { VALIDATOR_FAILURES, findBannedConstruction, type ValidatorFailure } from './validator'
 
 /** Meta Model API origin and shape (dev.meta.ai docs, verified 2026-10-29). */
 export const META_API_BASE = 'https://api.meta.ai/v1'
@@ -574,6 +574,13 @@ export function createMetaDirectProvider(options: MetaDirectOptions): MuseProvid
       const { prose, sources } = parseResearchResult(reply)
       // The citation gate: ungrounded prose is not a research result.
       if (!prose || sources.length === 0) throw new ProviderCallError('provider_down')
+      // The fair-housing gate (2026-11-02): the banned-construction
+      // scan applies to research prose on this direct path too (the
+      // proxy route re-checks it and records the class; here the
+      // failure lands on the same unavailable state the UI already
+      // uses for ungrounded research, rather than rendering prose
+      // the figure surfaces would have withheld).
+      if (findBannedConstruction(prose)) throw new ProviderCallError('provider_down')
       return { prose, sources }
     },
 
@@ -826,6 +833,11 @@ export function parseResearchReply(value: unknown): ResearchResult {
   if (!rec || typeof rec.prose !== 'string' || !rec.prose.trim() || sources.length === 0) {
     throw new ProviderCallError('provider_down')
   }
+  // Client re-check of the route's fair-housing gate, mirroring the
+  // explain path's double enforcement: a reply carrying a banned
+  // construction (or a withheld flag from a gated deployment) never
+  // reaches the render.
+  if (findBannedConstruction(rec.prose)) throw new ProviderCallError('provider_down')
   return { prose: rec.prose.trim(), sources }
 }
 

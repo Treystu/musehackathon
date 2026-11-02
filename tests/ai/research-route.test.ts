@@ -53,6 +53,23 @@ describe('research route', () => {
     expect(d.meter.snapshot().requests).toBe(0)
   })
 
+  it('withholds sourced prose that carries a banned construction', async () => {
+    const d = deps({
+      async research() {
+        return {
+          prose: 'This is the best neighbourhood in Hilo, and it is a good area for families.',
+          sources: [{ title: 'A blog', url: 'https://example.org/blog' }],
+        }
+      },
+    })
+    const r = await handleResearch(req({ queryText: 'where should I live in Hilo' }), d)
+    expect(r.status).toBe(200)
+    expect(r.body.withheld).toBe(true)
+    expect(r.body.failure).toBe('banned_construction')
+    expect(r.body.prose).toBeUndefined()
+    expect(d.meter.snapshot().errors.banned_construction).toBe(1)
+  })
+
   it('an unsourced reply is a provider failure, never findings', async () => {
     const d = deps({
       async research() {

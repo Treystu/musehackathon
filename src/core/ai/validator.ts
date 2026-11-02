@@ -472,6 +472,24 @@ const BANNED_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\b(renter|tenant|owner|black|white|hispanic|latino|asian|minority|ethnic)[-\s]+(area|neighbourhood|neighborhood|community|district)\b/i, label: 'proxy characterisation' },
 ]
 
+/**
+ * The banned-construction scan on its own, for prose the numeral
+ * steps cannot judge. Research ("From the web") prose legitimately
+ * carries figures from its cited sources, so provenance checking
+ * does not apply to it — but ranking, recommendation, steering, and
+ * proxy characterisation are banned there exactly as in figure
+ * prose, and until 2026-11-02 nothing scanned research prose at
+ * all: it was prompt-guarded and citation-gated only, while the
+ * shipped privacy text claims mechanical gates. Returns the matched
+ * construction's label, or null when the prose is clean.
+ */
+export function findBannedConstruction(prose: string): string | null {
+  for (const { re, label } of BANNED_PATTERNS) {
+    if (re.test(prose)) return label
+  }
+  return null
+}
+
 /* ------------------------------------------------------------------ */
 /* Validator                                                           */
 /* ------------------------------------------------------------------ */
@@ -503,12 +521,11 @@ export function createValidator(): Validator & {
       if (precision) return precision
 
       // Step 5: banned constructions.
-      for (const { re, label } of BANNED_PATTERNS) {
-        if (re.test(prose)) {
-          return {
-            pass: false, failure: 'banned_construction',
-            detail: `banned construction: ${label}`,
-          }
+      const banned = findBannedConstruction(prose)
+      if (banned) {
+        return {
+          pass: false, failure: 'banned_construction',
+          detail: `banned construction: ${banned}`,
         }
       }
 

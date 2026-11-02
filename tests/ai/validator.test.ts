@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DISCLOSURE_TEXT,
   createValidator,
+  findBannedConstruction,
   hermeticStubValidator,
   intentGate,
   realValidator,
@@ -25,6 +26,13 @@ describe('exports and back-compat', () => {
   })
   it('passes empty and numeral-free prose', () => {
     expect(v.validate('Rent burden is shown in the figure.', []).pass).toBe(true)
+  })
+  it('exposes the banned-construction scan for prose without figure provenance (research)', () => {
+    expect(findBannedConstruction('The corridor has two elementary schools and a grocery store.')).toBeNull()
+    expect(findBannedConstruction('This is the best neighbourhood in town.')).toBe('ranking')
+    expect(findBannedConstruction('You should move to this part of town.')).toBe('recommendation')
+    expect(findBannedConstruction('Most homes on the corridor are rentals.')).toBeNull()
+    expect(findBannedConstruction('It is a mostly renter area.')).toBe('proxy characterisation')
   })
 })
 

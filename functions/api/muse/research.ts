@@ -11,6 +11,7 @@
  * allowance. Counts only; no bodies are stored (Q1).
  */
 import { MeterUnavailableError } from '../../../src/core/ai/meter-persistence'
+import { findBannedConstruction } from '../../../src/core/ai/validator'
 import { preCallGate, mapMeterError, mapProviderError, attemptCall, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
@@ -79,6 +80,17 @@ async function handleResearchCore(
     ) {
       await deps.meter.recordError('provider_down')
       return err(502, 'provider_down', 'research returned no sourced findings')
+    }
+    // Fair-housing gate (2026-11-02): research prose was prompt-guarded
+    // and citation-gated only, while figure prose is validator-gated —
+    // and the shipped privacy text claims mechanical gates. Numeral
+    // provenance does not apply (the prose legitimately cites web
+    // figures), so the validator's banned-construction step is the
+    // gate: ranking, recommendation, steering, or proxy
+    // characterisation withholds the findings, recorded by class.
+    if (findBannedConstruction(result.prose)) {
+      await deps.meter.recordError('banned_construction')
+      return { status: 200, body: { withheld: true, failure: 'banned_construction' } }
     }
     return {
       status: 200,

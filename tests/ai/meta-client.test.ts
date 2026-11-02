@@ -4,6 +4,7 @@ import {
   createLiveProvider,
   createMetaDirectProvider,
   mapMetaFailure,
+  parseResearchReply,
   META_API_BASE,
   MUSE_SPARK_MODEL,
 } from '../../src/core/ai/meta-client'
@@ -92,6 +93,20 @@ describe('live provider: proxy path', () => {
     expect(result.prose).toBe('')
     // The class travels as a closed enum so diagnostics can count it.
     expect(result.withholdClass).toBe('invented_numeral')
+  })
+
+  it('refuses research prose carrying a banned construction at the reply parser', () => {
+    const sources = [{ title: 'A blog', url: 'https://example.org/blog' }]
+    expect(parseResearchReply({ prose: 'The corridor has two schools and a market.', sources })).toEqual({
+      prose: 'The corridor has two schools and a market.',
+      sources: [{ url: 'https://example.org/blog', title: 'A blog' }],
+    })
+    expect(() =>
+      parseResearchReply({ prose: 'This is the best neighbourhood in town.', sources }),
+    ).toThrow(ProviderCallError)
+    expect(() => parseResearchReply({ withheld: true, failure: 'banned_construction' })).toThrow(
+      ProviderCallError,
+    )
   })
 
   it('names places by label in the direct explain prompt, never by ZIP', async () => {

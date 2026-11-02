@@ -98,6 +98,22 @@ export function candidateCapLine(answer: ComposedAnswer): string | null {
   return `Research covered the first ${count.format(answer.candidateCap)} candidate places; any further places were not researched.`
 }
 
+/**
+ * One quiet line when a top-N question grounded fewer places than
+ * it asked for. Both numbers render from the answer's structured
+ * fields (the asked count the pipeline parsed from the reader's
+ * words, and the places that actually composed), so the line is
+ * arithmetic on data, not prose a model wrote. A top-N answer that
+ * silently lists two places for "top five" would read as if two
+ * were the answer; the shortfall is stated instead.
+ */
+export function requestedCountLine(answer: ComposedAnswer): string | null {
+  if (answer.requestedCount === null || answer.requestedCount === undefined) return null
+  if (answer.status !== 'verified' && answer.status !== 'empty') return null
+  if (answer.places.length >= answer.requestedCount) return null
+  return `You asked for ${count.format(answer.requestedCount)} places; the cited research named ${count.format(answer.places.length)} that could be matched to Census data.`
+}
+
 /** One quiet line for research-first candidates that resolved to no ZCTA. */
 export function unresolvedCandidatesLine(answer: ComposedAnswer): string | null {
   if (answer.unresolvedCandidates.length === 0) return null
@@ -230,6 +246,7 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
   const unresolvedLine = unresolvedGeographiesLine(answer)
   const droppedClaims = droppedClaimsLine(answer)
   const capLine = candidateCapLine(answer)
+  const shortfallLine = requestedCountLine(answer)
   const unresolvedCandidates = unresolvedCandidatesLine(answer)
   const unsupportedLine = unsupportedGeographyLine(answer)
 
@@ -302,6 +319,11 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
       {capLine && (
         <p role="note" className="mt-3 text-xs text-slate-500">
           {capLine}
+        </p>
+      )}
+      {shortfallLine && (
+        <p role="note" className="mt-1 text-xs text-slate-500">
+          {shortfallLine}
         </p>
       )}
       {unresolvedCandidates && (

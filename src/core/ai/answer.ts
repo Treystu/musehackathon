@@ -138,6 +138,14 @@
  *     and the screen then runs in pull mode over the candidate rows
  *     to attach their Census figures. Compose joins both sides at
  *     the geography the question asked.
+ *   - Top-N: a count in the reader's words ("top five places",
+ *     requestedCountFromQuery) bounds the research-first compose at
+ *     the asked count and is stamped on the answer
+ *     (requestedCount), so the card states the shortfall when fewer
+ *     places ground than were asked for — a grounded partial answer
+ *     with the gap named, never a silently shorter list (owner
+ *     repro, 2026-11-02: "find the top five places that have the
+ *     best schools but also the least average cost of living").
  */
 import type { AreaRow } from '../plugins/acs'
 import type { MuseProvider, ResearchResult, ValidatedIntent } from './provider'
@@ -281,6 +289,18 @@ export interface ComposedAnswer {
   geographyLevel: AnswerGeographyLevel
   /** A requested geography level the shipped data cannot serve ('county'), or null. */
   unsupportedGeography: string | null
+  /**
+   * The place count a top-N question asked for ("top five places"),
+   * parsed from the reader's words by requestedCountFromQuery, or
+   * null when the question named no count. The card compares it
+   * against places.length and states any shortfall: a top-N ask
+   * that grounds fewer places than asked must say so on the card
+   * rather than letting a shorter list read as the full answer.
+   * Carried as a structured field, never in the summary prose —
+   * the card renders both numbers from data, the same way it
+   * renders the candidate-cap overflow line.
+   */
+  requestedCount?: number | null
 }
 
 /**
@@ -516,6 +536,37 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
 export function requestsCountyLevel(queryText: string | undefined, intent: ValidatedIntent): boolean {
   if (queryText && /\bcounty\b|\bcounties\b/i.test(queryText)) return true
   return intent.geographies.some((g) => /\bcounty\b/i.test(g))
+}
+
+const COUNT_WORDS: Readonly<Record<string, number>> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+}
+const COUNT_TOKEN = String.raw`(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)`
+
+/**
+ * The place count a top-N question asks for, read from the reader's
+ * own words: "top five places", "top 5", "the five best places".
+ * Returns null when the words name no count — most questions do
+ * not, and inventing one would cap answers nobody bounded. The
+ * number-word arm requires "places" after the count so a figure in
+ * the question ("rent under 1500 in 3 places I lived") is not read
+ * as a requested count... the digit arm of "top N" is unambiguous
+ * and needs no such guard. Counts above the candidate cap are
+ * returned as asked: the compose cap still bounds the places, and
+ * the shortfall line compares the true ask against what grounded.
+ */
+export function requestedCountFromQuery(queryText: string | undefined): number | null {
+  if (!queryText) return null
+  const top = new RegExp(String.raw`\btop\s+${COUNT_TOKEN}\b`, 'i').exec(queryText)
+  const counted = new RegExp(
+    String.raw`\b${COUNT_TOKEN}\s+(?:best\s+|top\s+)?places\b`,
+    'i',
+  ).exec(queryText)
+  const token = top?.[1] ?? counted?.[1]
+  if (!token) return null
+  const value = /^\d+$/.test(token) ? Number(token) : COUNT_WORDS[token.toLowerCase()]
+  return value !== undefined && Number.isFinite(value) && value > 0 ? value : null
 }
 
 /** The geography level an intent's geographies name, before any county request. */
@@ -789,6 +840,8 @@ export function composeAnswer(input: {
   /** Research-first answers pull a headline Census figure even when the question named no measure. */
   pullMode?: boolean
   summaryOverride?: string
+  /** The top-N count the reader asked for, stamped verbatim for the card's shortfall line. */
+  requestedCount?: number | null
 }): ComposedAnswer {
   const { intent, screen } = input
   // Pull mode (research-first): candidates arrived from research, so
@@ -867,6 +920,7 @@ export function composeAnswer(input: {
     unresolvedCandidates: [...(input.unresolvedCandidates ?? [])],
     geographyLevel: input.geographyLevel ?? geographyLevelOfIntent(intent),
     unsupportedGeography,
+    requestedCount: input.requestedCount ?? null,
   }
 }
 
@@ -1087,8 +1141,18 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     const order = new Map<string, number>()
     resolved.forEach((candidate, i) => candidate.zctas.forEach((z) => order.set(z, i)))
     candidateRows.sort((a, b) => (order.get(a.zcta) ?? 0) - (order.get(b.zcta) ?? 0))
+    // A top-N ask bounds the composed places at the asked count
+    // (never above the candidate cap): "top five" answered with ten
+    // places has not answered the question that was asked. The
+    // asked count rides on the answer so the card can state any
+    // shortfall between it and the places that grounded.
+    const requestedCount = requestedCountFromQuery(input.queryText ?? input.researchQuery)
+    const placeLimit =
+      requestedCount !== null
+        ? Math.min(SCREENED_RESEARCH_CANDIDATE_CAP, requestedCount)
+        : SCREENED_RESEARCH_CANDIDATE_CAP
     const candidateCapApplied = candidateRows.length > SCREENED_RESEARCH_CANDIDATE_CAP
-    const cappedRows = candidateRows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
+    const cappedRows = candidateRows.slice(0, placeLimit)
     const baseScreen = screenRows(input.intent, input.rows, input.geographyZctas)
     const pullScreen: ScreenResult = {
       criteria: [],
@@ -1107,6 +1171,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       geographyLevel,
       unsupportedGeography,
       pullMode: true,
+      requestedCount,
       summaryOverride:
         cappedRows.length === 0
           ? 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'

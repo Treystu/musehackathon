@@ -175,10 +175,14 @@ export function answerScopeCovered(input: {
  * Returns null — no card — in exactly two cases: the intent named
  * geographies none of which resolved (executeIntent's run note
  * already discloses that, and a card screening the wrong set would
- * contradict it), and a 'blocked' answer, whose parse-gate refusal
- * the panel's own schema validation upstream already speaks for; the
- * views executeIntent ran remain the result. Research failures
- * propagate to the caller, which likewise falls back to no card.
+ * contradict it), and a 'blocked' answer. The blocked case's caller
+ * (App's answer effect) renders the refusal as the answer area's
+ * note in the card's blocked words — on the research-first handoff
+ * path nothing upstream speaks for a blocked composition, and a
+ * silent null there was one half of the Round 11 dead-end.
+ * Research failures propagate to the caller, which likewise renders
+ * them as the answer area's note and records the failure class in
+ * diagnostics; no terminal state of this pipeline is silent.
  */
 export async function composeAnswerForRequest(input: {
   intent: ValidatedIntent

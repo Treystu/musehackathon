@@ -27,6 +27,8 @@ import { MapView } from './MapView'
 import { sortSweepRows } from '../core/sweep-sorting'
 import { scopePrefixesForStates, STATE_NAME_BY_CODE } from '../core/sweep/states'
 import { AskPanel, needsResearch } from './ai/AskPanel'
+import { diagnostics } from '../core/ai/diagnostics'
+import { PROXY_ERRORS } from '../core/ai/proxy-errors'
 import { stateCodeForGeography } from '../core/ai/national-screen'
 import { AnswerCard } from './ai/AnswerCard'
 import {
@@ -93,6 +95,22 @@ const CENSUS_PROBE_FETCHER: CensusKeyFetcher = async (key) => {
   const verdict = await validateCensusKeyLive(key, new AbortController().signal)
   return { ok: verdict.ok, bodyValid: verdict.ok }
 }
+
+/**
+ * The answer area's terminal notes (see the answer-state comment in
+ * App). Each names what was established and what could not be, in
+ * the product's established patterns: the load note mirrors the
+ * sweep's own load-error wording, and the blocked note is the
+ * AnswerCard's blocked line verbatim, reused because a 'blocked'
+ * composition reaches this surface as the runner's null rather than
+ * as a card.
+ */
+const ANSWER_LOAD_FAILED_NOTE =
+  'The country-wide data could not be loaded, so this question’s answer could not be composed. The manual search and the data views still work.'
+const ANSWER_COMPOSE_FAILED_NOTE =
+  'The answer to this question could not be composed just now. The data views below still work.'
+const ANSWER_BLOCKED_NOTE =
+  'That question could not be screened as asked, so no answer was composed. The data views below still work.'
 
 type ScreeningSort = {
   presetId: string
@@ -212,9 +230,18 @@ export default function App() {
    * once the sweep rows the screen needs are loaded — triggering the
    * sweep's own scope load when they are not — and the AnswerCard
    * renders above the result views the execution already produced.
-   * A request whose rows never arrive (no Census key, a failed load)
-   * simply never composes: the execution's views remain the result,
-   * so the card's absence is never a dead end.
+   *
+   * Every request reaches a rendered terminal state: the card, or
+   * one of the notes below. That guarantee exists because its
+   * absence was measured live (Round 11 burndown, 2026-11-02, and a
+   * second owner repro the same morning): for a placeless
+   * research-first question there are no executed views to fall back
+   * on, so a request whose load failed — or whose composition
+   * failed — rendered NOTHING under a handoff line that promised an
+   * answer below. The notes are the answer area's own outcomes,
+   * worded from the product's established copy patterns, and a
+   * pending line renders while the request is still in flight so
+   * the wait is visible rather than silent.
    */
   const [answerRequest, setAnswerRequest] = useState<{
     id: number
@@ -222,16 +249,19 @@ export default function App() {
     queryText: string
   } | null>(null)
   const [answer, setAnswer] = useState<ComposedAnswer | null>(null)
+  const [answerNote, setAnswerNote] = useState<{ id: number; text: string } | null>(null)
   const answerRequestSeq = useRef(0)
   const answerLoadIds = useRef(new Set<number>())
   const answerComposedIds = useRef(new Set<number>())
   const answerInFlightIds = useRef(new Set<number>())
+  const answerNotedIds = useRef(new Set<number>())
 
   const handleAnswerRequest = useCallback((intent: ValidatedIntent, queryText: string) => {
     const id = ++answerRequestSeq.current
     // A new question replaces the previous answer outright; a stale
     // card above fresh results would read as this question's answer.
     setAnswer(null)
+    setAnswerNote(null)
     setAnswerRequest({ id, intent, queryText })
   }, [])
 
@@ -241,6 +271,12 @@ export default function App() {
     if (answerComposedIds.current.has(id) || answerInFlightIds.current.has(id)) return
     const resolved: ResolvedAnswerGeographies = resolveAnswerGeographies(intent, placeIndex ?? null)
     if (resolved.unresolvable) {
+      // While the place index is still loading, resolution has not
+      // had its authority yet: an empty result here is a wait, not a
+      // verdict. Marking the request composed in that state stranded
+      // it permanently when the index landed a moment later — the
+      // guard above then refused every re-run.
+      if (placeIndex === undefined) return
       // Nothing to screen against: executeIntent's run note already
       // told the reader no ZIP could be resolved.
       answerComposedIds.current.add(id)
@@ -255,6 +291,25 @@ export default function App() {
         placeless: intent.geographies.length === 0,
       })
     if (!covered) {
+      // A failed load is a terminal state for this request, not an
+      // endless wait (the Round 11 dead-end: the coverage wait below
+      // rendered nothing while the load churned, and once the load
+      // errored after the request's one scoped attempt, the one-shot
+      // guard stranded it forever). The request first spends its one
+      // scoped load attempt — the page's own load may have failed
+      // before the question was asked — and when that attempt has run
+      // and coverage still has not landed, the answer area states
+      // the outcome. If a later load succeeds (the sweep's own
+      // retry, a key arriving), coverage satisfies on a re-run and
+      // the compose replaces the note with the card.
+      const loadFailed = q.sweepStatus === 'error' || q.sweepStatus === 'needs-key'
+      if (loadFailed && (q.sweepStatus === 'needs-key' || answerLoadIds.current.has(id))) {
+        if (!answerNotedIds.current.has(id)) {
+          answerNotedIds.current.add(id)
+          setAnswerNote({ id, text: ANSWER_LOAD_FAILED_NOTE })
+        }
+        return
+      }
       // Reuse the sweep loading machinery: scope the load to the
       // question's geography (or widen to the country for a placeless
       // screen, the same widening executeIntent performs). The effect
@@ -266,7 +321,6 @@ export default function App() {
       return
     }
     answerInFlightIds.current.add(id)
-    let cancelled = false
     void (async () => {
       try {
         const composed = await composeAnswerForRequest({
@@ -279,21 +333,42 @@ export default function App() {
           signal: new AbortController().signal,
           placeIndex: placeIndex ?? null,
         })
-        if (!cancelled && composed) {
-          answerComposedIds.current.add(id)
+        // Superseded while composing: the newer request owns the
+        // surface and renders its own terminal state. Any other
+        // completion IS this request's terminal state and must
+        // render — the previous shape discarded a finished
+        // composition whenever an effect dependency changed mid-run
+        // (a sweep chunk landing, the place index arriving), which
+        // stranded the request with nothing rendered at all.
+        if (answerRequestSeq.current !== id) return
+        answerComposedIds.current.add(id)
+        if (composed) {
+          setAnswerNote(null)
           setAnswer(composed)
+        } else {
+          // A 'blocked' composition returns null from the runner,
+          // and nothing upstream speaks for it on this path — a
+          // research-first handoff settles without a runnable
+          // request the panel could refuse — so the refusal is
+          // stated here, in the card's own blocked words.
+          setAnswerNote({ id, text: ANSWER_BLOCKED_NOTE })
         }
-      } catch {
-        // A failed research or pipeline run leaves no card; the
-        // executed views below are the result, as they were before
-        // the answer layer existed.
+      } catch (err) {
+        if (answerRequestSeq.current !== id) return
+        // A failed research or pipeline run is a terminal state with
+        // a note and a diagnostics record, never a silent catch.
+        // The executed views below remain available.
+        const code = (err as { code?: unknown } | null)?.code
+        diagnostics.recordErrorState(
+          typeof code === 'string' && (PROXY_ERRORS as readonly string[]).includes(code)
+            ? code
+            : 'unexpected',
+        )
+        setAnswerNote({ id, text: ANSWER_COMPOSE_FAILED_NOTE })
       } finally {
         answerInFlightIds.current.delete(id)
       }
     })()
-    return () => {
-      cancelled = true
-    }
   }, [answerRequest, placeIndex, q.sweep, q.sweepStatus, q.sweepScope, q.applyScope])
 
   const askFigures = useMemo(
@@ -1039,12 +1114,41 @@ export default function App() {
               sits outside the mode blocks so a sweep answer survives
               the execution's switch to the data mode that shows its
               table.
+
+              The answer area always shows the current request's
+              state: the card, the terminal note (in the card's own
+              shell, so the outcome reads as the answer surface's,
+              not as a stray line), or one pending line while the
+              request is in flight. A handoff promise from AskPanel
+              never stands over an empty answer area again (Round 11).
             */}
-            {answer && (
+            {answer ? (
               <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
                 <AnswerCard answer={answer} />
               </div>
-            )}
+            ) : answerNote && answerRequest && answerNote.id === answerRequest.id ? (
+              <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+                <section
+                  aria-label="Answer"
+                  className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-[0_1px_6px_rgba(32,33,36,0.14)]"
+                >
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Answer
+                  </h2>
+                  <p role="note" className="mt-2 text-sm text-slate-600">
+                    {answerNote.text}
+                  </p>
+                </section>
+              </div>
+            ) : answerRequest ? (
+              <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+                <p role="status" className="text-sm text-slate-500">
+                  {q.sweepStatus === 'loading'
+                    ? 'Loading the country-wide data for this answer…'
+                    : 'Composing the answer…'}
+                </p>
+              </div>
+            ) : null}
             {mode === 'ask' && q.selected.length === 0 && q.sweepStatus === 'ready' && screenStats && (
               <div className="anim-rise anim-rise-2 mx-auto mt-10 grid max-w-4xl grid-cols-1 gap-6 border-t border-slate-200 pt-8 text-center sm:grid-cols-3">
                 <div>

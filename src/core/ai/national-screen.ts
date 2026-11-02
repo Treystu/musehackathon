@@ -25,6 +25,21 @@
  * highest-first question would misstate the request. They clarify, as
  * before. Sorting is a presentation of figures, never a verdict about
  * a place — the same line the manual sort already walks.
+ *
+ * Measure-less cost questions (owner live failure, 2026-11-02: "What's
+ * the cheapest place to live" clarified and dead-ended): a cost
+ * superlative over a generic place to live — place, area,
+ * neighbourhood, town, city — names no measure, so the explicit
+ * phrases above cannot fire. That family defaults to median gross
+ * rent: it is the measure the Ask stat band itself headlines (App's
+ * screenStats leads with the cheapest median rent over the loaded
+ * screen), so the default is the product's own headline cost figure,
+ * disclosed in the panel note before anything runs, not an invented
+ * composite "cost of living". The default fires only when no explicit
+ * measure phrase matched and the question carries no other object
+ * (schools and the like — see NON_COST_OBJECT_RE): "cheapest schools"
+ * is not a rent question, and "best place to raise a family" carries
+ * no cost superlative at all, so both still clarify.
  */
 import { isFilterLegal, withRunnability } from './intent-schema'
 import type { ValidatedIntent } from './provider'
@@ -61,11 +76,59 @@ export const NATIONAL_SCREEN_LABELS: Readonly<Record<string, string>> = {
 }
 
 /**
+ * Cost superlatives for the measure-less default. A subset of the
+ * ascending list on purpose: "smallest" is a size reading and "lowest"
+ * alone is a direction, not a cost — neither may default to rent.
+ */
+const COST_SUPERLATIVES: readonly RegExp[] = [
+  /\bcheapest\b/,
+  /\bmost affordable\b/,
+  /\blowest[-\s]cost\b/,
+  /\bleast expensive\b/,
+  /\bmost inexpensive\b/,
+]
+
+/**
+ * Generic places to live: the noun the cost superlative ranges over
+ * when the question is about the cost of living somewhere rather than
+ * the cost of a thing. "To live" covers "where is it cheapest to
+ * live?" where no place noun appears at all.
+ */
+const GENERIC_LIVING_PLACE_RE =
+  /\b(?:places?|areas?|neighbou?rhoods?|towns?|cities|city|locations?)(?:\s+to\s+live(?:\s+in)?)?\b|\bto\s+live(?:\s+in)?\b/
+
+/**
+ * Objects whose cost is not rent. A question naming one of these is
+ * about that thing's price or quality, and defaulting it to a rent
+ * screen would answer a question nobody asked ("cheapest schools").
+ */
+const NON_COST_OBJECT_RE =
+  /\b(?:schools?|tuition|colleges?|universit(?:y|ies)|childcare|preschools?|daycare|flights?|hotels?|cars?|insurance|groceries)\b/
+
+/**
+ * The measure a measure-less cost-superlative place question defaults
+ * to (median gross rent, the stat band's headline measure), or null
+ * when the text is not that shape: no cost superlative, no generic
+ * place to live, or a non-cost object named instead.
+ */
+export function costDefaultMeasure(text: string): string | null {
+  const lower = text.toLowerCase()
+  if (!COST_SUPERLATIVES.some((phrase) => phrase.test(lower))) return null
+  if (!GENERIC_LIVING_PLACE_RE.test(lower)) return null
+  if (NON_COST_OBJECT_RE.test(lower)) return null
+  return 'median_gross_rent'
+}
+
+/**
  * The sortable measure an ascending-superlative text names, or null
  * when the text carries no ascending superlative or no sortable
  * measure. "Housing" alone names no measure — rent and home value are
  * both live readings, so that ambiguity stays with the clarification
- * panel, whose measure pick completes the same screen.
+ * panel, whose measure pick completes the same screen. A measure-less
+ * cost question about a place to live is the one exception, and it
+ * defaults through costDefaultMeasure above — only after every
+ * explicit measure phrase has failed to match, so a question that
+ * does carry a measure ("cheapest home values") keeps its own.
  */
 export function superlativeMeasure(text: string): string | null {
   const lower = text.toLowerCase()
@@ -73,7 +136,7 @@ export function superlativeMeasure(text: string): string | null {
   for (const [phrase, key] of MEASURE_PHRASES) {
     if (phrase.test(lower)) return key
   }
-  return null
+  return costDefaultMeasure(lower)
 }
 
 /** The one national-screen intent shape, stamped by the runnability owner. */

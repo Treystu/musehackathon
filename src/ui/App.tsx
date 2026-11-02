@@ -316,33 +316,16 @@ export default function App() {
     () => Object.values(q.drilldowns).map((detail) => detail.label || detail.zcta),
     [q.drilldowns],
   )
-  /**
-   * Clarification candidates for Ask, from the current selection.
-   *
-   * This used to pass an empty list unconditionally, so the
-   * clarification panel's Places list could never populate. The
-   * geographies App can truthfully offer at this render point are the
-   * places the reader has already opened: each carries a name (or a
-   * place-index label, "Austin, TX") that execution resolves through
-   * the same machinery as a typed place. The loaded place index
-   * cannot supply candidates here — it is the whole country's list,
-   * and App never sees the Ask query text (AskPanel owns it), so any
-   * slice of it would present unrelated places as if they were
-   * candidates for this question. With no selection, the list is
-   * honestly empty and the panel's empty state says so.
-   */
-  const clarificationGeographies = useMemo(() => {
-    const seen = new Set<string>()
-    const out: string[] = []
-    for (const place of q.selected) {
-      const label = (place.zip ? placeLabel(place.zip) : null) ?? place.name
-      if (label && !seen.has(label)) {
-        seen.add(label)
-        out.push(label)
-      }
-    }
-    return out
-  }, [q.selected, placeLabel])
+  // Clarification candidates for Ask (supplied at the AskPanel mount
+  // below): measures only, never places. The previous version offered
+  // the reader's standing selection as candidate places, and the
+  // owner's live test (2026-11-02) showed the result — his
+  // cheapest-place question clarified listing Hilo, HI and East
+  // Honolulu, HI from earlier state. App never sees the Ask query
+  // text or its parse (AskPanel owns both), so place candidates
+  // belong to AskPanel's derivation from the current parse
+  // (clarificationCandidatesFor in AskPanel); App supplies only the
+  // universal measure list.
   /**
    * Pack re-verification re-reads the figure from the data layer's
    * current drilldown state at generation time — not from the snapshot
@@ -1007,7 +990,7 @@ export default function App() {
                   onAnswerRequest={handleAnswerRequest}
                   censusFetcher={CENSUS_PROBE_FETCHER}
                   clarificationCandidates={{
-                    geographies: clarificationGeographies,
+                    geographies: [],
                     metricKeys: [...DISPLAYABLE_KEYS],
                   }}
                 />

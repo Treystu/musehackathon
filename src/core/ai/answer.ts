@@ -260,6 +260,36 @@ export function screenRows(
       return c.bound === 'atMost' ? v <= c.value : v >= c.value
     }),
   )
+  // The national screen (a placeless sweep with a measure and no
+  // bound — national-screen.ts) has no criterion to order by, and its
+  // sort IS the request: executeIntent sorts the screening table by
+  // the named measure, lowest first. The pipeline applies the same
+  // order here, so the composed answer names the lowest-figure places
+  // first instead of whatever order the rows happened to load in
+  // (owner live failure, 2026-11-02: "What's the cheapest place to
+  // live" must lead with the cheapest place by median gross rent).
+  // Rows with no published figure for the measure sort last — a
+  // missing figure is not the cheapest — and the ZCTA breaks ties so
+  // the order is deterministic. Bounded screens keep their load
+  // order; the card orders those by their first criterion.
+  if (
+    intent.mode === 'sweep_filter' &&
+    intent.geographies.length === 0 &&
+    criteria.length === 0 &&
+    intent.metricKeys.length > 0
+  ) {
+    const sortKey = intent.metricKeys[0]!
+    screened.sort((a, b) => {
+      const av = a.metrics[sortKey]
+      const bv = b.metrics[sortKey]
+      const aKnown = typeof av === 'number' && Number.isFinite(av)
+      const bKnown = typeof bv === 'number' && Number.isFinite(bv)
+      if (aKnown && bKnown) return av - bv || a.zcta.localeCompare(b.zcta)
+      if (aKnown) return -1
+      if (bKnown) return 1
+      return a.zcta.localeCompare(b.zcta)
+    })
+  }
   return {
     criteria,
     droppedCriteria: dropped,

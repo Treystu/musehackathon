@@ -2,7 +2,11 @@
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { MicStorage } from '../../src/core/ai/mic'
+import {
+  grantMicConsent,
+  hasMicConsent,
+  type MicStorage,
+} from '../../src/core/ai/mic'
 import {
   createStubProvider,
   type MuseProvider,
@@ -123,11 +127,13 @@ describe('mic consent gate (Item 12)', () => {
     expect(calls.start).toBe(0)
 
     await click(button('Speak a question'))
+    // Allow chains directly into the recorder (one continuous
+    // consent moment, 2026-11-02): no second Speak click, and the
+    // recorder — the browser permission prompt inside it — starts
+    // from the Allow click itself.
     await click(button('Allow microphone'))
-    expect(calls.start).toBe(0) // consent alone never records
-
-    await click(button('Speak a question'))
     expect(calls.start).toBe(1)
+    expect(maybeButton('Stop recording')).not.toBeNull()
     await click(button('Stop recording'))
     expect(calls.stop).toBe(1)
   })
@@ -140,6 +146,8 @@ describe('mic consent gate (Item 12)', () => {
     )
     await click(button('Speak a question'))
     await click(button('Allow microphone'))
+    // Allow started the first recording in the same flow.
+    expect(calls.start).toBe(1)
     act(() => root.unmount())
     container.remove()
     container = document.createElement('div')
@@ -150,7 +158,7 @@ describe('mic consent gate (Item 12)', () => {
     )
     await click(button('Speak a question'))
     expect(container.textContent).not.toContain('Voice input uses your microphone')
-    expect(calls.start).toBe(1)
+    expect(calls.start).toBe(2)
   })
 
   it('withdrawing consent returns the surface to the first-use gate', async () => {
@@ -161,10 +169,124 @@ describe('mic consent gate (Item 12)', () => {
     )
     await click(button('Speak a question'))
     await click(button('Allow microphone'))
+    // Allow started recording in the same flow; stop it, then forget.
+    expect(calls.start).toBe(1)
+    await click(button('Stop recording'))
     await click(button('Forget voice consent'))
+    expect(hasMicConsent(storage)).toBe(false)
     await click(button('Speak a question'))
     expect(container.textContent).toContain('Voice input uses your microphone')
+    expect(calls.start).toBe(1)
+  })
+})
+
+describe('mic consent flow: one continuous moment (2026-11-02)', () => {
+  it('Allow chains directly to the recorder without a second mic-button activation', async () => {
+    const { recorder, calls } = fakeRecorder()
+    const storage = fakeStorage()
+    render(
+      <AskPanel provider={createStubProvider()} micRecorder={recorder} micStorage={storage} />,
+    )
+    await click(button('Speak a question'))
+    // First use only: the gate opens and the recorder has not started.
+    expect(container.textContent).toContain('Voice input uses your microphone')
     expect(calls.start).toBe(0)
+    await click(button('Allow microphone'))
+    // The Allow click itself started the recorder (the browser
+    // permission prompt lives inside it): recording is in progress,
+    // the Speak button is gone, and no second activation happened.
+    expect(calls.start).toBe(1)
+    expect(maybeButton('Speak a question')).toBeNull()
+    expect(maybeButton('Stop recording')).not.toBeNull()
+    // And the gate does not re-ask on the next use.
+    await click(button('Stop recording'))
+    await click(button('Speak a question'))
+    expect(container.textContent).not.toContain('Voice input uses your microphone')
+    expect(calls.start).toBe(2)
+  })
+
+  it('stored consent goes straight to recording with no gate', async () => {
+    const { recorder, calls } = fakeRecorder()
+    const storage = fakeStorage()
+    grantMicConsent(storage)
+    render(
+      <AskPanel provider={createStubProvider()} micRecorder={recorder} micStorage={storage} />,
+    )
+    await click(button('Speak a question'))
+    expect(container.textContent).not.toContain('Voice input uses your microphone')
+    expect(calls.start).toBe(1)
+    expect(maybeButton('Stop recording')).not.toBeNull()
+  })
+
+  it('gate "Not now" ends the flow quietly: no recorder, no status line', async () => {
+    const { recorder, calls } = fakeRecorder()
+    render(
+      <AskPanel
+        provider={createStubProvider()}
+        micRecorder={recorder}
+        micStorage={fakeStorage()}
+      />,
+    )
+    await click(button('Speak a question'))
+    await click(button('Not now'))
+    expect(calls.start).toBe(0)
+    expect(container.textContent).not.toContain('Voice input uses your microphone')
+    expect(statusTexts().join(' ')).not.toContain('Speech could not be turned into text')
+    expect(maybeButton('Speak a question')).not.toBeNull()
+  })
+
+  it('a browser deny from the Allow path ends with a single honest status line', async () => {
+    const denyingRecorder: MicRecorder = {
+      async start() {
+        throw new Error('permission denied')
+      },
+      async stop() {
+        return { audio: new ArrayBuffer(8), mimeType: 'audio/webm' }
+      },
+    }
+    render(
+      <AskPanel
+        provider={createStubProvider()}
+        micRecorder={denyingRecorder}
+        micStorage={fakeStorage()}
+      />,
+    )
+    await click(button('Speak a question'))
+    await click(button('Allow microphone'))
+    const failures = statusTexts().filter((t) =>
+      t.includes('Speech could not be turned into text'),
+    )
+    expect(failures).toHaveLength(1)
+    expect(container.textContent).not.toContain('Voice input uses your microphone')
+    expect(maybeButton('Speak a question')).not.toBeNull()
+  })
+
+  it('"Forget voice consent" lives in the audio help panel, not on the mic row, and still withdraws consent', async () => {
+    const { recorder } = fakeRecorder()
+    const storage = fakeStorage()
+    render(
+      <AskPanel provider={createStubProvider()} micRecorder={recorder} micStorage={storage} />,
+    )
+    await click(button('Speak a question'))
+    await click(button('Allow microphone'))
+    await click(button('Stop recording'))
+    const speak = button('Speak a question')
+    const row = speak.parentElement as HTMLElement
+    // Not a direct control of the primary row…
+    expect(
+      [...row.children].some((el) => el.textContent === 'Forget voice consent'),
+    ).toBe(false)
+    // …it sits inside the audio disclosure's help panel, beside the
+    // disclosure text whose consent it withdraws.
+    const forget = button('Forget voice consent')
+    const panel = forget.parentElement as HTMLElement
+    expect(panel.querySelector('#ask-audio-note')).not.toBeNull()
+    expect(panel.textContent).toContain('audio is not stored')
+    // Behaviour unchanged: consent is actually forgotten.
+    await click(forget)
+    expect(hasMicConsent(storage)).toBe(false)
+    await click(button('Speak a question'))
+    expect(container.textContent).toContain('Voice input uses your microphone')
   })
 })
 
@@ -184,8 +306,9 @@ describe('mic transcript flow', () => {
 
   async function speak() {
     await click(button('Speak a question'))
+    // First use: Allow chains directly into recording (2026-11-02),
+    // so there is no second Speak click — Stop is the next control.
     if (maybeButton('Allow microphone')) await click(button('Allow microphone'))
-    await click(button('Speak a question'))
     await click(button('Stop recording'))
   }
 

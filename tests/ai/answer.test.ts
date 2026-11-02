@@ -170,6 +170,26 @@ describe('pipeline: stages end to end', () => {
     expect(answer.sources).toEqual([])
   })
 
+  it('orders a placeless screen by its measure, lowest first, with missing figures last', async () => {
+    // The national screen has no bound, so no criterion orders it:
+    // the screen's sort is the request (the same ascending sort
+    // executeIntent gives the table). Fixture load order is Hilo
+    // 1450, Keaau 1325, Pahoa 1750, Honolulu with no rent figure —
+    // the answer must lead with Keaau and put the figure-less row
+    // last rather than naming load order as if it were cheapest.
+    const answer = await runAnswerPipeline({ intent: intent({}), rows: ROWS })
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name)).toEqual([
+      'Keaau, HI',
+      'Hilo, HI',
+      'Pahoa, HI',
+      'Honolulu, HI',
+    ])
+    expect(answer.places[0]?.figures).toEqual([
+      { key: 'median_gross_rent', value: 1325, marginOfError: 120 },
+    ])
+  })
+
   it('researches only the screened subset and attaches cited claims', async () => {
     let researchedPlaces: string[] | undefined
     const provider = createStubProvider({

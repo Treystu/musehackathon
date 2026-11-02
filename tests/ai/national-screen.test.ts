@@ -10,6 +10,7 @@ import {
   resolveClarification,
 } from '../../src/core/ai/intent-edit'
 import {
+  costDefaultMeasure,
   nationalScreenIntent,
   rescueNationalScreen,
   superlativeMeasure,
@@ -43,6 +44,41 @@ describe('superlativeMeasure', () => {
     expect(superlativeMeasure('lowest share of income going to rent')).toBe(
       'median_rent_burden_pct',
     )
+  })
+
+  it('defaults a measure-less cost question about a place to live to median gross rent', () => {
+    // Owner live failure, 2026-11-02: the exact question at the head
+    // of this family clarified and dead-ended on the shipped build.
+    expect(superlativeMeasure("What's the cheapest place to live")).toBe('median_gross_rent')
+    expect(superlativeMeasure('most affordable area to live in')).toBe('median_gross_rent')
+    expect(superlativeMeasure('lowest cost place to live in America')).toBe('median_gross_rent')
+    expect(superlativeMeasure('least expensive neighbourhood')).toBe('median_gross_rent')
+    expect(superlativeMeasure('least expensive neighborhood to live in')).toBe(
+      'median_gross_rent',
+    )
+    expect(superlativeMeasure('where is it cheapest to live?')).toBe('median_gross_rent')
+    expect(costDefaultMeasure("What's the cheapest place to live")).toBe('median_gross_rent')
+  })
+
+  it('never lets the cost default swallow a question carrying its own measure or a non-cost object', () => {
+    // An explicit measure keeps its own reading, even inside a
+    // place-to-live frame.
+    expect(superlativeMeasure('cheapest rent burden in a place to live')).toBe(
+      'median_rent_burden_pct',
+    )
+    expect(superlativeMeasure('lowest home values in a place to live')).toBe('median_home_value')
+    // "Cheapest schools" is not a rent question.
+    expect(superlativeMeasure('cheapest schools')).toBeNull()
+    expect(superlativeMeasure('cheapest schools in a nice place to live')).toBeNull()
+    expect(costDefaultMeasure('cheapest schools')).toBeNull()
+    // A non-cost superlative still clarifies: the safety corpus case
+    // safety-ranking ("Where is the best place to raise a family in
+    // Texas?") pins this posture at the corpus level.
+    expect(superlativeMeasure('best place to raise a family')).toBeNull()
+    expect(costDefaultMeasure('best place to raise a family')).toBeNull()
+    // Descending and size readings are not cost readings.
+    expect(superlativeMeasure('most expensive place to live')).toBeNull()
+    expect(superlativeMeasure('smallest place to live')).toBeNull()
   })
 
   it('leaves measure-less and descending questions to clarification', () => {
@@ -115,6 +151,26 @@ describe('rescueNationalScreen', () => {
     expect(rescued?.mode).toBe('sweep_filter')
     expect(rescued?.metricKeys).toEqual(['median_gross_rent'])
     expect(rescued?.clarificationNeeded).toBe(false)
+  })
+
+  it("rescues the owner's exact measure-less question into the rent screen", () => {
+    // The probe shape the live route returns for this question
+    // (coordinator probe, 2026-11-02): a clarified lookup naming
+    // neither a place nor a measure.
+    const rescued = rescueNationalScreen(clarified, "What's the cheapest place to live")
+    expect(rescued?.mode).toBe('sweep_filter')
+    expect(rescued?.geographies).toEqual([])
+    expect(rescued?.metricKeys).toEqual(['median_gross_rent'])
+    expect(rescued?.clarificationNeeded).toBe(false)
+    expect(rescued && canRun(rescued)).toBe(true)
+    // A real geography in the parse keeps its clarification: the
+    // default is a national screen, never a bypass of a named place.
+    expect(
+      rescueNationalScreen(
+        intent({ geographies: ['Texas'] }),
+        'cheapest place to live in Texas',
+      ),
+    ).toBeNull()
   })
 
   it('rescues a reply whose only geographies are country-level names', () => {

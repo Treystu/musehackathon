@@ -227,6 +227,14 @@ type Phase = 'idle' | 'recording' | 'working'
  * and where no recorder exists the surface says so plainly instead of
  * rendering a dead button. A finished transcript is handed to the
  * parent (AskPanel) and takes the ordinary Ask path from there.
+ *
+ * The consent moment is one continuous flow (owner, 2026-11-02):
+ * Speak -> the in-app disclosure/consent sheet (first use only) ->
+ * Allow calls the recorder from the same click, so the browser's
+ * permission prompt follows immediately -> recording starts on
+ * grant. No second click on the mic button, and neither layer
+ * re-asks later: in-app consent persists in its store, and the
+ * browser's grant persists per origin.
  */
 export function MicInput({
   transcribe,
@@ -263,11 +271,13 @@ export function MicInput({
     )
   }
 
-  async function begin() {
-    if (!hasMicConsent(storage)) {
-      setAsking(true)
-      return
-    }
+  /**
+   * Start the recorder — which is where the browser's own microphone
+   * permission prompt happens (getUserMedia inside the recorder).
+   * A start failure — a denied prompt included — ends the flow here
+   * with the one honest status line; nothing re-asks.
+   */
+  async function startRecording() {
     setNote('')
     try {
       await activeRecorder!.start()
@@ -276,6 +286,14 @@ export function MicInput({
       setPhase('idle')
       setNote(MIC_TRANSCRIBE_FAILED_NOTE)
     }
+  }
+
+  async function begin() {
+    if (!hasMicConsent(storage)) {
+      setAsking(true)
+      return
+    }
+    await startRecording()
   }
 
   async function finish() {
@@ -295,7 +313,15 @@ export function MicInput({
     grantMicConsent(storage)
     setConsented(true)
     setAsking(false)
-    setNote('Voice input is on. Use "Speak a question" when you are ready.')
+    // One continuous consent moment (owner, 2026-11-02): Allow chains
+    // straight into the recorder from inside this click handler, so
+    // the browser permission prompt follows in the same user-gesture
+    // chain and recording starts on grant. The previous flow closed
+    // the gate and made the reader click "Speak a question" a second
+    // time before the browser asked — a dead click and a double ask.
+    // Stored consent means neither layer asks again on later uses:
+    // begin() goes straight to startRecording.
+    void startRecording()
   }
 
   function forget() {
@@ -330,12 +356,20 @@ export function MicInput({
           <p id="ask-audio-note" role="note">
             {AUDIO_TRANSIT_DISCLOSURE}
           </p>
+          {/*
+            Withdrawing consent lives with the consent state itself —
+            inside this disclosure panel, beside the words that
+            describe what consent covers (owner, 2026-11-02). It used
+            to sit on the mic row's primary line next to the Speak
+            button, reading as a primary action of the row; the grant
+            and remember behaviour is unchanged, only its home moved.
+          */}
+          {consented && phase === 'idle' && !asking && (
+            <button type="button" onClick={forget} className="btn-quiet mt-2">
+              Forget voice consent
+            </button>
+          )}
         </HelpTip>
-        {consented && phase === 'idle' && !asking && (
-          <button type="button" onClick={forget} className="btn-quiet">
-            Forget voice consent
-          </button>
-        )}
       </div>
       {phase === 'recording' && (
         <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">

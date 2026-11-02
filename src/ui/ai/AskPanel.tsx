@@ -134,6 +134,29 @@ export const PROXY_ERROR_COPY: Record<ProxyError, string> = {
     'The wording helper has been paused after repeated problems. You can still search, filter, and read every figure by hand below, with the same figures.',
 }
 
+/**
+ * Clarification candidates for the question currently on screen.
+ *
+ * Provenance rule (owner live failure, 2026-11-02): the panel listed
+ * Hilo, HI and East Honolulu, HI for "What's the cheapest place to
+ * live" — places from the reader's standing selection, passed in by
+ * App, that the current question never named. A clarification's
+ * candidates belong to the CURRENT question's parse and to nothing
+ * else: the parse's own geographies (which the panel presents as the
+ * choices already made, beside the measure picks) and the universal
+ * measure list. No caller-supplied geography list is forwarded — a
+ * list built from earlier state (the selection, a previous question)
+ * is stale by construction, and when the current parse names no
+ * places the candidate list is honestly empty and the panel shows
+ * its no-candidates state.
+ */
+export function clarificationCandidatesFor(
+  intent: ValidatedIntent,
+  metricKeys: readonly string[] = [],
+): ClarificationCandidates {
+  return { geographies: [...intent.geographies], metricKeys: [...metricKeys] }
+}
+
 export function manualFallbackNote(): string {
   return 'Manual search is fully available: you can pick places and measures, set filters, and read every figure with its source — the same figures the helper would use.'
 }
@@ -563,6 +586,21 @@ export function AskPanel({
     void runQuery(assessment.transcript, assessment.transcript)
   }
 
+  /**
+   * Clarification state, by the same predicate that decides whether
+   * the ClarificationPanel renders: a question that cannot run yet is
+   * blocked in clarification. While it is, no research status line
+   * renders (owner live failure, 2026-11-02: the "Looking up what the
+   * Census data does not cover..." line stacked over a clarification
+   * for a question where nothing was running). The standalone research
+   * CALL still fires for clarification questions — its failure is what
+   * produces the politics coverage-note fallback the research-panel
+   * tests pin — so only the status line is suppressed here, not the
+   * call; the findings section itself, when research lands, is
+   * content rather than a status line and still renders.
+   */
+  const inClarification = intent !== null && !canRun(intent)
+
   return (
     <section aria-labelledby="ask-heading">
       {/*
@@ -680,16 +718,23 @@ export function AskPanel({
         competing lines). The research outcome lines are sequenced
         behind the parse: while the parse is running, retrying, or
         has failed, its status is the one line shown; the research
-        line appears once the parse has settled. (A clarification
-        note from a settled parse is content, not a competing
-        status, and the politics fallback pairs with the research
-        line by design — see research-panel tests.)
+        line appears once the parse has settled — and never while
+        the settled parse sits in clarification (inClarification
+        above): a blocked question is not looking anything up, and
+        saying it is was the owner's 2026-11-02 screenshot. (A
+        clarification note from a settled parse is content, not a
+        competing status, and the politics fallback pairs with the
+        research outcome lines by design — see research-panel tests.)
       */}
-      {research.status === 'loading' && !busy && !caughtError && !proxyError && (
-        <p role="status" className="mt-2 text-sm text-slate-600">
-          Looking up what the Census data does not cover…
-        </p>
-      )}
+      {research.status === 'loading' &&
+        !busy &&
+        !caughtError &&
+        !proxyError &&
+        !inClarification && (
+          <p role="status" className="mt-2 text-sm text-slate-600">
+            Looking up what the Census data does not cover…
+          </p>
+        )}
       {research.status === 'done' && (
         <section aria-label="From the web" className="mt-4 border-t border-slate-200 pt-3">
           <div className="flex items-center gap-1.5">
@@ -738,9 +783,10 @@ export function AskPanel({
           {!canRun(intent) ? (
             <ClarificationPanel
               intent={intent}
-              candidates={
-                clarificationCandidates ?? { geographies: [], metricKeys: [] }
-              }
+              candidates={clarificationCandidatesFor(
+                intent,
+                clarificationCandidates?.metricKeys ?? [],
+              )}
               onResolve={handleIntentChange}
             />
           ) : (

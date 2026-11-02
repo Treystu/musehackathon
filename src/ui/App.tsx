@@ -77,6 +77,14 @@ const VINTAGE_LABEL = '2023 5-year release'
 
 export default function App() {
   const [view, setView] = useState<View>('explore')
+  /*
+   * The explore view's two modes (redesign, 2026-11-01): 'ask' is the
+   * front door — the question box and its results, nothing else — and
+   * 'data' is the manual apparatus (search, filters, the screening
+   * table, map-adjacent tools). One mode on screen at a time; an Ask
+   * execution lands the reader on the mode that shows its result.
+   */
+  const [mode, setMode] = useState<'ask' | 'data'>('ask')
   const [term, setTerm] = useState('')
   const [sorting, setSorting] = useState<ScreeningSort>({
     presetId: DEFAULT_PRESET.id,
@@ -267,6 +275,7 @@ export default function App() {
         }
         for (const zip of zips) addZip(zip)
         setView('explore')
+        setMode('ask')
         return `Opened ${zips.length === 1 ? '1 place' : `${zips.length} places`} in the comparison.`
       }
 
@@ -295,6 +304,7 @@ export default function App() {
             setFigureFilters({})
             setSorting({ presetId: preset.id, sortKey: preset.sort, ascending: true })
             setView('explore')
+            setMode('data')
             return `Screening the whole country by ${preset.label.toLowerCase()}, lowest first — the table below is sorted by that figure.`
           }
         }
@@ -350,6 +360,7 @@ export default function App() {
         const preset = PRESETS.find((item) => item.sort === intent.metricKeys[0])
         if (preset) setSorting({ presetId: preset.id, sortKey: preset.sort, ascending: true })
         setView('explore')
+        setMode('data')
         return (
           (dropped === 0
             ? 'Applied the bound to the screening table below.'
@@ -364,6 +375,7 @@ export default function App() {
       addZip(seed)
       setSimilaritySeed(seed)
       setView('explore')
+      setMode('data')
       return `Opened similar-ZIP search from ${seed}.`
     },
     [addZip, placeIndex, q.applyScope, q.stateScope],
@@ -521,6 +533,29 @@ export default function App() {
     return activeFilters.length === 0 ? sorted : applyFigureFilters(sorted, activeFilters)
   }, [q.sweep, sorting.sortKey, sorting.ascending, activeFilters])
 
+  /*
+   * The Ask homepage's live stat band (competition layer, 2026-11-01):
+   * three figures computed from the loaded screen itself — never
+   * literals — so the band can only ever say what the data says. Null
+   * until the screen has rows with the figures it needs.
+   */
+  const screenStats = useMemo(() => {
+    if (q.sweep.length === 0) return null
+    let cheapest: { row: (typeof q.sweep)[number]; value: number } | null = null
+    const rents: number[] = []
+    for (const row of q.sweep) {
+      const rent = row.metrics['median_gross_rent']
+      if (rent != null) {
+        rents.push(rent)
+        if (cheapest === null || rent < cheapest.value) cheapest = { row, value: rent }
+      }
+    }
+    if (cheapest === null || rents.length === 0) return null
+    rents.sort((a, b) => a - b)
+    const medianRent = rents[Math.floor(rents.length / 2)]!
+    return { count: q.sweep.length, cheapest, medianRent }
+  }, [q.sweep])
+
   /**
    * The lookup form and the Census key prompt.
    *
@@ -656,18 +691,18 @@ export default function App() {
             }}
           />
 
-          <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70">
-            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-3 sm:px-6">
+          <header className="sticky top-0 z-40 border-b border-slate-200 bg-white">
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-2 sm:px-6">
               <div className="flex min-w-0 items-center gap-3">
                 {/* The pin mark from the favicon, at header scale: the
                     wordmark alone read as plain text in the screenshot
                     audit (2026-11-01) - the app had a mark everywhere
                     except the page itself. Decorative: the h1 names the
                     product for assistive tech. */}
-                <img src="/favicon.svg" alt="" className="h-10 w-10 shrink-0" />
+                <img src="/favicon.svg" alt="" className="h-8 w-8 shrink-0" />
                 <div className="min-w-0">
-                  <h1 className="text-[1.375rem] font-semibold tracking-tight text-slate-900">CivicScope</h1>
-                  <p className="text-[0.8125rem] leading-snug text-slate-600">
+                  <h1 className="text-lg font-medium tracking-tight text-slate-900">CivicScope</h1>
+                  <p className="text-xs leading-snug text-slate-600">
                     Every ZIP code in the US, from federal data, in your browser.
                   </p>
                 </div>
@@ -714,7 +749,7 @@ export default function App() {
         </div>
       </header>
 
-      <main id="main" className="mx-auto max-w-7xl px-4 py-6">
+      <main id="main" className="mx-auto max-w-7xl px-4 py-10">
         {noticeOpen && (
           <div className="mx-auto max-w-3xl">
             <TourNotice
@@ -780,26 +815,93 @@ export default function App() {
           </>
         ) : (
           <>
-            <div className="mb-6 panel panel-padded">
-              <AskPanel
-                provider={HOUSE_PROVIDER}
-                figures={askFigures}
-                onExecute={executeIntent}
-                clarificationCandidates={{ geographies: [], metricKeys: [...DISPLAYABLE_KEYS] }}
-              />
+            {/*
+              The mode switch (redesign, 2026-11-01): Ask is the front
+              door and the default; the manual apparatus lives under
+              Explore the data. Labels avoid colliding with the Ask
+              submit button ("Ask") and the mic ("Speak a question").
+            */}
+            <div className="anim-rise mb-10 flex justify-center">
+              <div
+                role="group"
+                aria-label="Choose how to work"
+                className="inline-flex rounded-full bg-slate-100 p-1 text-sm"
+              >
+                {(
+                  [
+                    ['ask', 'Ask a question'],
+                    ['data', 'Explore the data'],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setMode(id)}
+                    aria-pressed={mode === id}
+                    className={`min-h-[44px] rounded-full px-4 py-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 ${
+                      mode === id
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="mb-6 panel panel-padded">
-              <BriefingView
-                provider={HOUSE_PROVIDER}
-                title="Selected places"
-                viewKind="drilldown selection"
-                places={briefingPlaces}
-                figures={briefingFigures}
-                resolveFigure={resolveBriefingFigure}
-              />
-            </div>
-            {searchPanel}
-            {showKeylessGuidance && (
+            {mode === 'ask' && (
+              <div className="hero-glow anim-rise anim-rise-1 mx-auto max-w-3xl px-2 pb-4 pt-2">
+                {/* The hero mark: the pin at display size above the
+                    question box, the way a search page centers its mark
+                    over the box. Decorative — the header h1 names the
+                    product. */}
+                <img src="/favicon.svg" alt="" className="mx-auto mb-3 h-14 w-14" />
+                <AskPanel
+                  provider={HOUSE_PROVIDER}
+                  figures={askFigures}
+                  onExecute={executeIntent}
+                  clarificationCandidates={{ geographies: [], metricKeys: [...DISPLAYABLE_KEYS] }}
+                />
+              </div>
+            )}
+            {mode === 'ask' && q.selected.length === 0 && screenStats && (
+              <div className="anim-rise anim-rise-2 mx-auto mt-10 grid max-w-4xl grid-cols-1 gap-6 border-t border-slate-200 pt-8 text-center sm:grid-cols-3">
+                <div>
+                  <p className="figure-value text-3xl">{num.format(screenStats.count)}</p>
+                  <p className="figure-label mt-1">ZIP codes on the live screen</p>
+                </div>
+                <div>
+                  <p className="figure-value text-3xl">
+                    ${num.format(screenStats.cheapest.value)}
+                    <span className="figure-unit"> /mo</span>
+                  </p>
+                  <p className="figure-label mt-1">
+                    Cheapest median rent — {screenStats.cheapest.row.name} · {screenStats.cheapest.row.zcta}
+                  </p>
+                </div>
+                <div>
+                  <p className="figure-value text-3xl">
+                    ${num.format(screenStats.medianRent)}
+                    <span className="figure-unit"> /mo</span>
+                  </p>
+                  <p className="figure-label mt-1">Median rent across the screen</p>
+                </div>
+              </div>
+            )}
+            {briefingPlaces.length > 0 && (
+              <div className="mx-auto mt-12 max-w-3xl border-t border-slate-200 pt-8">
+                <BriefingView
+                  provider={HOUSE_PROVIDER}
+                  title="Selected places"
+                  viewKind="drilldown selection"
+                  places={briefingPlaces}
+                  figures={briefingFigures}
+                  resolveFigure={resolveBriefingFigure}
+                />
+              </div>
+            )}
+            {mode === 'data' && searchPanel}
+            {mode === 'data' && showKeylessGuidance && (
               <section className="mt-4 panel panel-padded">
                 <h2 className="text-sm font-semibold text-slate-900">What you can do without a key</h2>
                 <p className="mt-1 text-sm text-slate-700">
@@ -810,7 +912,7 @@ export default function App() {
               </section>
             )}
 
-            {(q.sweepStatus === 'idle' || q.stateScope.length > 0) && q.censusKeyPresent && (
+            {mode === 'data' && (q.sweepStatus === 'idle' || q.stateScope.length > 0) && q.censusKeyPresent && (
               <div className="mt-4">
                 <StateFilter
                   options={q.stateChoices}
@@ -824,7 +926,7 @@ export default function App() {
                 />
               </div>
             )}
-            {q.sweepStatus === 'loading' && (
+            {mode === 'data' && q.sweepStatus === 'loading' && (
               <section className="mt-4 panel panel-padded" role="status" aria-busy="true">
                 <h2 className="text-sm font-semibold text-slate-900">
                   Loading {q.sweepProgress?.scope ?? 'housing data'}
@@ -871,7 +973,7 @@ export default function App() {
               </section>
             )}
 
-            {q.sweepStatus === 'error' && (
+            {mode === 'data' && q.sweepStatus === 'error' && (
               <p className="mt-4 rounded-md bg-red-50 p-4 text-sm text-red-900" role="alert">
                 The country-wide load failed: {q.sweepError}. Individual ZIP lookups still work.{' '}
                 <button type="button" onClick={() => void q.loadSweep()} className="underline">
@@ -884,7 +986,7 @@ export default function App() {
                 after the last one. During a 43-chunk country-wide load this is
                 the difference between a usable table after a second and a blank
                 page for two minutes. */}
-            {q.sweep.length > 0 && (
+            {mode === 'data' && q.sweep.length > 0 && (
               <>
                 <section aria-labelledby="screen-heading" className="mt-6">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -1038,7 +1140,7 @@ export default function App() {
               </>
             )}
 
-            {q.sweep.length > 0 && (
+            {mode === 'data' && q.sweep.length > 0 && (
               <>
                 {/*
                   The figures are cached so a revisit is instant, which means a
@@ -1059,8 +1161,11 @@ export default function App() {
               </>
             )}
 
-            {/* Keep the comparison visible until the first sweep rows arrive. */}
-            {q.selected.length > 0 && q.sweep.length === 0 && (
+            {/* Keep the comparison visible until the first sweep rows arrive.
+                In Ask mode it is the result region, so it shows whenever a
+                selection exists (the sweep-section comparison covers the
+                data mode when rows are loaded). */}
+            {q.selected.length > 0 && (mode === 'ask' || q.sweep.length === 0) && (
               <Comparison
                 drilldowns={q.drilldowns}
                 onDeselect={q.deselect}
@@ -1070,20 +1175,24 @@ export default function App() {
             )}
 
             {/*
-              Saved comparisons, mounted unconditionally in the explore view. The
-              panel hides itself when there is nothing to save and nothing saved,
-              but it must NOT live inside a "selection present" branch: an empty
+              Saved comparisons, mounted in the data mode of the explore
+              view (redesign, 2026-11-01: the mode gate is a navigation
+              state, not a selection state). The panel hides itself when
+              there is nothing to save and nothing saved, but it must NOT
+              live inside a "selection present" branch: an empty
               comparison is exactly when Restore matters, and a panel that
               vanishes with the last removed area strands every saved entry.
               Found by a browser test that emptied the comparison before
               restoring, which is a perfectly ordinary thing for a reader to do.
             */}
-            <SavedSearches
-              selectedZctas={q.selectedZctas}
-              onRestore={(zips) => zips.forEach(addZip)}
-              explainProvider={HOUSE_PROVIDER}
-              figuresForSaved={savedViewFigures}
-            />
+            {mode === 'data' && (
+              <SavedSearches
+                selectedZctas={q.selectedZctas}
+                onRestore={(zips) => zips.forEach(addZip)}
+                explainProvider={HOUSE_PROVIDER}
+                figuresForSaved={savedViewFigures}
+              />
+            )}
 
             {/*
               The Fair Housing notice is rendered unconditionally whenever

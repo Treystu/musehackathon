@@ -321,8 +321,18 @@ export function AskPanel({
 
   return (
     <section aria-labelledby="ask-heading">
-      <h2 id="ask-heading" className="section-title">
-        Ask CivicScope
+      {/*
+        Hero composition (competition layer, 2026-11-01): the heading is
+        display-size and centered, the welcome and examples center under
+        it, and the question box below is the visual anchor. The heading
+        text stays exactly "Ask CivicScope" — the accent span is
+        presentation only.
+      */}
+      <h2
+        id="ask-heading"
+        className="text-center text-4xl font-light tracking-tight text-slate-900 sm:text-5xl"
+      >
+        Ask <span className="font-medium text-[rgb(var(--accent))]">CivicScope</span>
       </h2>
       {/* The welcome leads, per the owner's direction (2026-11-01): the
           AI greets and offers starting points instead of presenting a
@@ -331,13 +341,13 @@ export function AskPanel({
           can run (compare / lookup / filtered sweep over the housing
           figures), so a tapped example succeeds rather than stranding
           the reader in a clarification. */}
-      <p className="mt-1 text-sm text-slate-700">
+      <p className="mx-auto mt-3 max-w-xl text-center text-base text-slate-600">
         Tell me what area you are in, or what area you want to check out, and
         what matters to you — schools, cost of living, rent, home prices — and
         I can research the areas in the federal data and show you the figures
         for your options.
       </p>
-      <div className="mt-2 flex flex-wrap gap-2" aria-label="Example questions">
+      <div className="mt-4 flex flex-wrap justify-center gap-2" aria-label="Example questions">
         {EXAMPLE_PROMPTS.map((example) => (
           <button
             key={example}
@@ -353,28 +363,38 @@ export function AskPanel({
           </button>
         ))}
       </div>
-      <form onSubmit={submit} className="mt-4">
-        <label htmlFor="ask-input" className="text-sm font-medium text-slate-900">
+      <form onSubmit={submit} className="mx-auto mt-6 max-w-2xl">
+        <label htmlFor="ask-input" className="sr-only">
           Ask in plain language
         </label>
-        <p id="ask-raw-text-note" role="note" className="house-raw-text-disclosure mt-1">
-          {RAW_TEXT_DISCLOSURE}
-        </p>
-        <div className="mt-2 flex gap-2">
+        {/*
+          The question box is the page's hero (redesign, 2026-11-01): one
+          rounded field with a soft shadow, the way a search box sits on a
+          search page — the input is borderless inside it and the Ask
+          button is a pill at its right edge. The visible label became
+          screen-reader-only; the box itself, the welcome above it and the
+          examples carry the invitation. The raw-text disclosure stays
+          directly under the box it describes.
+        */}
+        <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1.5 pl-5 pr-1.5 shadow-[0_1px_6px_rgba(32,33,36,0.14)] transition-shadow focus-within:shadow-[0_2px_12px_rgba(32,33,36,0.22)] hover:shadow-[0_2px_10px_rgba(32,33,36,0.18)]">
           <input
             id="ask-input"
             aria-describedby="ask-raw-text-note"
             value={text}
             onChange={(e) => setText(e.target.value)}
             autoComplete="off"
-            className="field"
+            placeholder="Ask in plain language"
+            className="min-w-0 flex-1 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-500"
           />
           <button type="submit" disabled={busy} className="btn-primary shrink-0">
             Ask
           </button>
         </div>
+        <p id="ask-raw-text-note" role="note" className="house-raw-text-disclosure mt-2 pl-5">
+          {RAW_TEXT_DISCLOSURE}
+        </p>
       </form>
-      <div className="mt-3">
+      <div className="mt-3 flex justify-center">
         <MicInput
           transcribe={(audio, mimeType) =>
             provider.transcribe({ audio, mimeType }, new AbortController().signal)

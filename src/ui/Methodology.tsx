@@ -119,7 +119,8 @@ export function Methodology() {
             only when the recorded scores clear their bars. Changes to this layer are additionally scored
             before they ship by Jev, a typed judgement model, under the gate policy in the source
             repository. Questions are routed through the Muse models API by a metered proxy that counts
-            every call against a published budget; the figures themselves never come from the model.
+            every call against a published budget at flat per-call rates; the figures themselves never
+            come from the model.
           </p>
         </div>
       </section>

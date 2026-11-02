@@ -70,12 +70,11 @@ it('parses a real query through the live client and shows the validated intent',
   expect(intentBody!.queryText).toBe('What is the rent in Pahoa?')
   expect(JSON.stringify(intentBody)).not.toMatch(/authorization|api[_-]?key/i)
 
-  const run = page.getByRole('button', { name: 'Run this request' })
-  expect(await run.isEnabled()).toBe(true)
+  // Auto-run (2026-11-01): there is no Run step any more.
+  expect(await page.getByRole('button', { name: 'Run this request' }).count()).toBe(0)
 })
 
-it('executes the intent into the comparison rather than leaving Run inert', async () => {
-  await page.getByRole('button', { name: 'Run this request' }).click()
+it('auto-runs the intent into the comparison on submit, no Run click', async () => {
   // selectPlace records the selection before any fetch, and the URL state
   // follows the selection, so this is a real assertion with the network down.
   await page.waitForFunction(() => window.location.search.includes('z=96778'))

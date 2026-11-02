@@ -13,7 +13,7 @@ import type { TranscribeResult } from '../../core/ai/provider'
  * helper only to become text; it is not stored (Q1 counts only).
  */
 export const AUDIO_TRANSIT_DISCLOSURE =
-  'Speaking sends your voice audio to the transcription helper to turn it into text. The audio is not stored; only the words become your question, and you can check and edit them before anything runs.'
+  'Speaking sends your voice audio to the transcription helper to turn it into text. The audio is not stored; the words become your question in the box and run right away, after a check that any numbers heard match the request.'
 
 /** First-use consent copy. No recording can start until this is allowed. */
 export const MIC_CONSENT_COPY =
@@ -114,8 +114,7 @@ type Phase = 'idle' | 'recording' | 'working'
  * use is consent-gated — the recorder cannot start before consent —
  * and where no recorder exists the surface says so plainly instead of
  * rendering a dead button. A finished transcript is handed to the
- * parent (AskPanel), which lands it in the editable query text /
- * understood-request chips; nothing executes from speech directly.
+ * parent (AskPanel) and takes the ordinary Ask path from there.
  */
 export function MicInput({
   transcribe,

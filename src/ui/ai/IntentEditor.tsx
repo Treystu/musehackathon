@@ -86,6 +86,17 @@ export function IntentEditor({
         onError={(code) => setError(errorCopy(code))}
       />
 
+      {/*
+        Clean by default (owner directive, 2026-11-01): the understood
+        chips above stay visible — they are what ran — while the
+        add-place / add-measure / add-filter forms sit behind one
+        disclosure for readers who want to dig in.
+      */}
+      <details>
+        <summary className="cursor-pointer text-sm font-medium text-slate-700">
+          Adjust this request
+        </summary>
+        <div className="mt-3 space-y-3">
       <form onSubmit={onAddPlace} className="flex flex-wrap items-end gap-2">
         <label htmlFor="intent-place" className="min-w-0 flex-1 text-sm font-medium text-slate-900">
           Add a place
@@ -169,6 +180,8 @@ export function IntentEditor({
           </button>
         </fieldset>
       </form>
+        </div>
+      </details>
 
       {error ? (
         <p role="status" aria-live="polite" className="text-sm text-slate-700">

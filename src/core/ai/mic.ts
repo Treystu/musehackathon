@@ -148,8 +148,9 @@ export type TranscriptAssessment =
 
 /**
  * Decide what a transcription result may become. An accepted transcript
- * still only ever lands in the editable query text / chips — nothing
- * executes from speech without the user seeing and confirming it. A
+ * becomes the query text and takes the ordinary Ask path (auto-run,
+ * 2026-11-01) — speech has no execution path of its own, and the
+ * spoken-number check still gates what a transcript can run. A
  * low-confidence or empty transcript goes to clarification instead of
  * being silently substituted for a query.
  */

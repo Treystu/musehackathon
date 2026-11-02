@@ -141,22 +141,27 @@ describe('spec-gap surfaces', () => {
     expect(run).toBeUndefined()
   })
 
-  it('removing the only measure returns Ask to clarification and hides Run', async () => {
+  it('removing the only measure returns Ask to clarification and runs nothing further', async () => {
     const provider = createStubProvider({
       async intent() {
         return { intent: { ...base, clarificationNeeded: false } }
       },
     })
-
-    render(<AskPanel provider={provider} />)
+    const executed: unknown[] = []
+    render(
+      <AskPanel
+        provider={provider}
+        onExecute={(intent) => {
+          executed.push(intent)
+        }}
+      />,
+    )
     typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'rent in Hilo')
     await submit(container.querySelector('form') as HTMLFormElement)
 
     expect(container.querySelector('[aria-label="Clarify the request"]')).toBeNull()
-    const runBefore = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Run this request',
-    )
-    expect(runBefore).toBeDefined()
+    // Auto-run: the submit already executed the runnable request.
+    expect(executed).toHaveLength(1)
 
     const removeMeasure = container.querySelector(
       'button[aria-label="Remove measure median_gross_rent"]',
@@ -168,13 +173,11 @@ describe('spec-gap surfaces', () => {
     expect(container.textContent).toContain(
       'Choose the place and measure before anything runs.',
     )
-    const runAfter = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Run this request',
-    )
-    expect(runAfter).toBeUndefined()
+    // The clarified edit does not execute.
+    expect(executed).toHaveLength(1)
   })
 
-  it('removing one of two measures keeps Run and shows no clarification', async () => {
+  it('removing one of two measures re-runs with the remaining measure and shows no clarification', async () => {
     const provider = createStubProvider({
       async intent() {
         return {
@@ -186,8 +189,15 @@ describe('spec-gap surfaces', () => {
         }
       },
     })
-
-    render(<AskPanel provider={provider} />)
+    const executed: Array<{ metricKeys: string[] }> = []
+    render(
+      <AskPanel
+        provider={provider}
+        onExecute={(intent) => {
+          executed.push(intent as { metricKeys: string[] })
+        }}
+      />,
+    )
     typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'rent and income in Hilo')
     await submit(container.querySelector('form') as HTMLFormElement)
 
@@ -198,28 +208,31 @@ describe('spec-gap surfaces', () => {
     act(() => removeMeasure.click())
 
     expect(container.querySelector('[aria-label="Clarify the request"]')).toBeNull()
-    const run = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Run this request',
-    )
-    expect(run).toBeDefined()
+    // Auto-run on the committed edit: a second execution, one measure left.
+    expect(executed).toHaveLength(2)
+    expect(executed[1]?.metricKeys).toEqual(['median_household_income'])
   })
 
-  it('provider flag-true with full data still offers Run after submit', async () => {
+  it('provider flag-true with full data still auto-runs after submit', async () => {
     const provider = createStubProvider({
       async intent() {
         return { intent: { ...base, clarificationNeeded: true } }
       },
     })
-
-    render(<AskPanel provider={provider} />)
+    const executed: unknown[] = []
+    render(
+      <AskPanel
+        provider={provider}
+        onExecute={(intent) => {
+          executed.push(intent)
+        }}
+      />,
+    )
     typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'rent in Hilo')
     await submit(container.querySelector('form') as HTMLFormElement)
 
     expect(container.querySelector('[aria-label="Clarify the request"]')).toBeNull()
-    const run = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Run this request',
-    )
-    expect(run).toBeDefined()
+    expect(executed).toHaveLength(1)
   })
 
   it('a 15 percent figure renders value and wording, not a withholding note', () => {

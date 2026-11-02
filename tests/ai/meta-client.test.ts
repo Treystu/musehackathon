@@ -190,14 +190,54 @@ describe('live provider: BYO fallback', () => {
   })
 })
 
-describe('live provider: cut features refuse rather than invent', () => {
-  it('refuses transcribe (voice stays cut, issue #61)', async () => {
-    const { impl, calls } = fakeFetch([{ body: {} }])
+describe('live provider: transcribe (voice un-cut by owner directive, 2026-11-01)', () => {
+  const AUDIO = new Uint8Array([1, 2, 3, 4]).buffer
+
+  it('sends the audio to the proxy route and returns the parsed transcript', async () => {
+    const { impl, calls } = fakeFetch([
+      { body: { transcript: 'rent in Hilo', confidence: 0.93 } },
+    ])
+    const live = provider(impl, false)
+    const result = await live.transcribe(
+      { audio: AUDIO, mimeType: 'audio/webm' },
+      new AbortController().signal,
+    )
+    expect(result).toEqual({ transcript: 'rent in Hilo', confidence: 0.93 })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toBe('/api/muse/transcribe')
+    const body = calls[0]!.body as { mimeType: string; audioBase64: string }
+    expect(body.mimeType).toBe('audio/webm')
+    expect(body.audioBase64).toBe(Buffer.from(new Uint8Array(AUDIO)).toString('base64'))
+  })
+
+  it('rejects an unusable proxy reply instead of inventing a transcript', async () => {
+    const { impl } = fakeFetch([{ body: { transcript: 'rent in Hilo' } }])
     const live = provider(impl, false)
     await expect(
-      live.transcribe({ audio: new ArrayBuffer(0), mimeType: 'audio/webm' }, new AbortController().signal),
+      live.transcribe({ audio: AUDIO, mimeType: 'audio/webm' }, new AbortController().signal),
     ).rejects.toMatchObject({ code: 'provider_down' })
-    expect(calls).toHaveLength(0)
+  })
+
+  it('BYO fallback: the direct provider sends an input_audio part and parses the JSON envelope', async () => {
+    const envelope = JSON.stringify({ transcript: 'rent in Hilo', confidence: 0.9 })
+    const { impl, calls } = fakeFetch([
+      { status: 429, body: { error: 'budget_exhausted' } },
+      { body: { choices: [{ message: { content: envelope } }] } },
+    ])
+    const live = provider(impl, true)
+    const result = await live.transcribe(
+      { audio: AUDIO, mimeType: 'audio/webm;codecs=opus' },
+      new AbortController().signal,
+    )
+    expect(result).toEqual({ transcript: 'rent in Hilo', confidence: 0.9 })
+    expect(calls).toHaveLength(2)
+    const directBody = calls[1]!.body as {
+      messages: Array<{ content: Array<{ type: string; input_audio?: { format: string } }> }>
+    }
+    const audioPart = directBody.messages
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .find((part) => part.type === 'input_audio')
+    expect(audioPart?.input_audio?.format).toBe('webm')
   })
 
   it('briefing is no longer cut (F6, issue #58): it goes through the proxy route', async () => {

@@ -143,9 +143,15 @@ const INTENT_SYSTEM_PROMPT = [
   'Geographies must be 5-digit US ZIP codes when the question names one, otherwise "City, ST".',
   'For a sweep over a whole state, return the state two-letter code (for example "HI") as the only geography.',
   'Modes: lookup (one place), compare (two or more places), sweep_filter (a bound over many places),',
-  'similarity (places similar to one place).',
+  'similarity (places similar to one place). Wording like "similar to", "like", or "comparable to"',
+  'a named place is similarity mode with that place as the only geography — never an empty lookup.',
   'Never rank, recommend, or characterise people or places. If the question asks for a ranking or a',
-  'recommendation, return mode "lookup" with clarificationNeeded true and no metric keys.',
+  'recommendation, clarify rather than complying: return clarificationNeeded true, keep every place',
+  'or state the question names in geographies, and clarify only for the measure or detail that is',
+  'actually missing.',
+  'Some criteria are not in this data at all: political leaning, voter registration, party',
+  'affiliation, crime, and school quality have no metric keys. Never invent a key for them, and',
+  'never let an unservable criterion discard a place, state, or measure the question does name.',
   'If a place or measure is missing or ambiguous, set clarificationNeeded true rather than guessing.',
   'If a place is missing, ambiguous, or cannot be resolved, return mode "lookup" with no geographies',
   'and no metric keys and clarificationNeeded true.',
@@ -216,6 +222,81 @@ function contentOf(body: unknown): string | null {
   if (!Array.isArray(choices) || choices.length === 0) return null
   const message = (choices[0] as { message?: { content?: unknown } }).message
   return typeof message?.content === 'string' ? message.content : null
+}
+
+/**
+ * Transcription (Item 12, un-cut by the owner 2026-11-01: voice ships
+ * because it works, per the standing ship-gate — see
+ * docs/s12-voice-cut.md's reversal note). The model receives the audio
+ * as an input_audio part and answers in a strict JSON envelope. Its
+ * confidence is the model's own estimate, consumed only by the
+ * clarify threshold in core/ai/mic.ts; the spoken-number gate and the
+ * editable text box remain the reader-facing guards.
+ */
+export const TRANSCRIBE_SYSTEM_PROMPT =
+  'You are the transcription helper for CivicScope, a housing-data tool. ' +
+  'Transcribe the attached audio exactly as spoken: do not answer it, ' +
+  'rephrase it, or add words that were not said. Report your confidence ' +
+  'honestly — how certain you are that the transcript is word-perfect, ' +
+  'especially any numbers, place names, and figures.'
+
+export function transcriptJsonSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['transcript', 'confidence'],
+    properties: {
+      transcript: { type: 'string' },
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
+    },
+  }
+}
+
+/** Container format for the input_audio part, or null when unsupported. */
+export function audioFormatForMime(mimeType: string): string | null {
+  const base = mimeType.split(';')[0]?.trim().toLowerCase() ?? ''
+  switch (base) {
+    case 'audio/webm':
+      return 'webm'
+    case 'audio/mp4':
+      return 'mp4'
+    case 'audio/mpeg':
+      return 'mp3'
+    case 'audio/wav':
+    case 'audio/x-wav':
+      return 'wav'
+    case 'audio/ogg':
+      return 'ogg'
+    default:
+      return null
+  }
+}
+
+/** Base64 for an ArrayBuffer, chunked; runs in the browser and the Worker. */
+export function encodeBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(binary)
+}
+
+/** Validate a transcription result from either provider path. */
+export function parseTranscriptResult(value: unknown): TranscribeResult {
+  const rec = value as { transcript?: unknown; confidence?: unknown } | null
+  if (
+    !rec ||
+    typeof rec.transcript !== 'string' ||
+    typeof rec.confidence !== 'number' ||
+    !Number.isFinite(rec.confidence) ||
+    rec.confidence < 0 ||
+    rec.confidence > 1
+  ) {
+    throw new ProviderCallError('provider_down')
+  }
+  return { transcript: rec.transcript, confidence: rec.confidence }
 }
 
 /** Usage is read by the proxy adapter to settle the meter against reality. */
@@ -350,9 +431,41 @@ export function createMetaDirectProvider(options: MetaDirectOptions): MuseProvid
       return { prose: text.trim() }
     },
 
-    async transcribe(_req: TranscribeRequest, _signal: AbortSignal): Promise<TranscribeResult> {
-      // Voice is cut from the submission (issue #61): no route, no dead button.
-      throw new ProviderCallError('provider_down')
+    async transcribe(req: TranscribeRequest, signal: AbortSignal): Promise<TranscribeResult> {
+      const format = audioFormatForMime(req.mimeType)
+      if (!format) throw new ProviderCallError('shape_invalid')
+      const reply = await complete(
+        {
+          messages: [
+            { role: 'system', content: TRANSCRIBE_SYSTEM_PROMPT },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Transcribe the attached audio exactly as spoken.' },
+                {
+                  type: 'input_audio',
+                  input_audio: { data: encodeBase64(req.audio), format },
+                },
+              ],
+            },
+          ],
+          response_format: {
+            type: 'json_schema',
+            json_schema: { name: 'CivicScopeTranscript', strict: true, schema: transcriptJsonSchema() },
+          },
+          temperature: 0,
+        },
+        signal,
+      )
+      const text = contentOf(reply)
+      if (!text) throw new ProviderCallError('provider_down')
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        throw new ProviderCallError('provider_down')
+      }
+      return parseTranscriptResult(parsed)
     },
   }
 }
@@ -491,8 +604,19 @@ export function createLiveProvider(options: LiveProviderOptions = {}): MuseProvi
       return direct.briefing(req, signal)
     },
 
-    async transcribe(_req: TranscribeRequest, _signal: AbortSignal): Promise<TranscribeResult> {
-      throw new ProviderCallError('provider_down')
+    async transcribe(req: TranscribeRequest, signal: AbortSignal): Promise<TranscribeResult> {
+      try {
+        const reply = await viaProxy<{ transcript?: unknown; confidence?: unknown }>(
+          '/api/muse/transcribe',
+          { mimeType: req.mimeType, audioBase64: encodeBase64(req.audio) },
+          signal,
+        )
+        return parseTranscriptResult(reply)
+      } catch (e) {
+        const code = e instanceof ProviderCallError ? e.code : null
+        if (!code || !BYO_FALLBACK_ERRORS.has(code) || !direct || !directKeyAvailable()) throw e
+      }
+      return direct.transcribe(req, signal)
     },
   }
 }

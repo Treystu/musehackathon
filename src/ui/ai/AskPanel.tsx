@@ -43,6 +43,25 @@ export const RAW_TEXT_DISCLOSURE =
   'Free-text Ask sends the words you type to the wording helper; this path cannot be answered from structured choices alone. The figures still come from CivicScope.'
 
 /**
+ * Coverage honesty for criteria this dataset does not contain
+ * (owner example, 2026-11-01: a move-to-Nevada question asking for
+ * somewhere "not Republican"). The figures are Census Bureau data;
+ * voter registration, party affiliation, and election results are
+ * not in them, so a politics screen cannot be run or implied. When
+ * the reader's words ask for one, say so plainly and let everything
+ * else in the question proceed.
+ */
+export const POLITICS_COVERAGE_NOTE =
+  'One part of that question sits outside this data: these figures are Census Bureau data, with no voter registration, party affiliation, or election results, so places cannot be screened by politics here. Everything else in the question is handled below.'
+
+const POLITICS_QUESTION_RE =
+  /\b(republican|democrat|democratic|liberal|conservative|political|politics|party affiliation|voter registration|red state|blue state)\b/i
+
+export function politicsCoverageNote(queryText: string | undefined): string {
+  return queryText && POLITICS_QUESTION_RE.test(queryText) ? POLITICS_COVERAGE_NOTE : ''
+}
+
+/**
  * Starting points offered under the welcome. Each one is a shape the
  * intent path is verified to run — a two-place rent comparison (the
  * first was exercised live against the portal), a single-place lookup,
@@ -112,9 +131,11 @@ export function Disclosure() {
 
 /**
  * Ask panel. Text is the primary path; mic (Item 12) is an equal main
- * input beside it — consent-gated in MicInput, and a transcript only
- * ever lands in the editable query text / understood-request chips
- * before anything can run. BYO recovery is wired here via ByoOffer
+ * input beside it — consent-gated in MicInput. An accepted transcript
+ * takes the same path as typed text and runs the same way (auto-run,
+ * 2026-11-01); the guards are the confidence threshold, the
+ * spoken-number check in accept(), and the editable text the words
+ * land in. BYO recovery is wired here via ByoOffer
  * (settings/shutoff entry) + byoProvider retry.
  *
  * Union hand-merge (Panel B1): the CivicScope panel (diagnostics
@@ -171,10 +192,25 @@ export function AskPanel({
   const [busy, setBusy] = useState(false)
   const [caughtError, setCaughtError] = useState<ProxyError | null>(null)
   const [executionNote, setExecutionNote] = useState('')
+  const [coverageNote, setCoverageNote] = useState('')
 
   const errorNote = proxyErrorNote(proxyError) ?? note
 
+  /**
+   * Auto-run (owner directive, 2026-11-01): a request that can run,
+   * runs — on submit, on a chip, on an accepted transcript, on a
+   * clarification pick, and on a committed editor change. The reader
+   * never has to press a Run button; the understood request stays on
+   * screen so what ran is always visible and adjustable.
+   */
+  function executeNow(next: ValidatedIntent) {
+    if (!onExecute) return
+    const said = onExecute(next)
+    setExecutionNote(typeof said === 'string' ? said : '')
+  }
+
   function accept(result: IntentResult, spokenTranscript?: string, queryText?: string) {
+    setCoverageNote(politicsCoverageNote(queryText))
     const check = validateIntent(result.intent)
     // National-screen rescue: a placeless superlative ("cheapest rent in
     // America") clarifies with neither a place nor a measure, and the
@@ -236,16 +272,24 @@ export function AskPanel({
     if (rescued) {
       const label = NATIONAL_SCREEN_LABELS[rescued.metricKeys[0]!] ?? 'that measure'
       setNote(
-        `No place was named, so this screens the whole country by ${label}, lowest first. Check the understood request below, then Run.`,
+        `No place was named, so this screens the whole country by ${label}, lowest first. The understood request is below.`,
       )
     } else if (parsed.clarificationNeeded) {
       setNote('More detail is needed before anything runs. Check the understood request below.')
     }
+    if (canRun(parsed)) executeNow(parsed)
+  }
+
+  /** Editor and clarification changes are committed picks; a runnable result runs. */
+  function handleIntentChange(next: ValidatedIntent) {
+    setIntent(next)
+    if (canRun(next)) executeNow(next)
   }
 
   async function runQuery(queryText: string, spokenTranscript?: string) {
     setBusy(true)
     setNote('')
+    setCoverageNote('')
     setCaughtError(null)
     const request = {
       slots: { geographyHints: [], metricHints: [] },
@@ -300,9 +344,9 @@ export function AskPanel({
   /**
    * Mic path. The transcript is assessed before it can become a query:
    * low-confidence or empty speech goes to clarification with the words
-   * left in the editable text box, and an accepted transcript runs the
-   * exact same intent path as typed text, plus spoken-number
-   * validation in accept(). Nothing executes from speech directly.
+   * left in the editable text box. An accepted transcript runs the
+   * exact same auto-run intent path as typed text, plus spoken-number
+   * validation in accept() — speech gets no execution path of its own.
    */
   function handleTranscript(result: TranscribeResult) {
     const assessment = assessTranscript(result)
@@ -409,33 +453,27 @@ export function AskPanel({
           {errorNote}
         </p>
       )}
+      {coverageNote && (
+        <p role="note" className="mt-2 text-sm text-slate-600">
+          {coverageNote}
+        </p>
+      )}
       {(proxyError || note) && <p className="mt-2 text-sm text-slate-600">{manualFallbackNote()}</p>}
       <ByoOffer error={proxyError ?? caughtError} onOpenSettings={onOpenSettings} />
       <AgentHandoff censusFetcher={censusFetcher} metaFetcher={metaFetcher} />
       {intent && (
         <>
-          <IntentEditor intent={intent} onChange={setIntent} />
+          <IntentEditor intent={intent} onChange={handleIntentChange} />
           {!canRun(intent) ? (
             <ClarificationPanel
               intent={intent}
               candidates={
                 clarificationCandidates ?? { geographies: [], metricKeys: [] }
               }
-              onResolve={setIntent}
+              onResolve={handleIntentChange}
             />
           ) : (
             <>
-              <button
-                type="button"
-                disabled={!onExecute}
-                onClick={() => {
-                  const said = onExecute?.(intent)
-                  setExecutionNote(typeof said === 'string' ? said : 'Running this request.')
-                }}
-                className="btn-primary mt-3"
-              >
-                Run this request
-              </button>
               {executionNote && (
                 <p role="status" className="mt-2 text-sm text-slate-700">
                   {executionNote}

@@ -49,8 +49,8 @@ function submitForm(form: HTMLFormElement) {
   });
 }
 
-describe('Run-noop (no enabled Run with no handler)', () => {
-  it('no onExecute -> Run renders disabled, not clickable', async () => {
+describe('Auto-run (owner directive 2026-11-01: no Run button; a runnable request runs on submit)', () => {
+  it('no onExecute -> the understood request renders, no Run control exists, nothing runs', async () => {
     const provider = createStubProvider({
       async intent() {
         return { intent: runnable };
@@ -62,15 +62,11 @@ describe('Run-noop (no enabled Run with no handler)', () => {
     typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'rent in Hilo');
     await submitForm(container.querySelector('form') as HTMLFormElement);
 
-    const run = findRun();
-    expect(run).toBeDefined();
-    expect(run?.disabled).toBe(true);
-    expect(container.querySelector('button:not([disabled])')?.textContent).not.toBe(
-      'Run this request',
-    );
+    expect(container.querySelector('[aria-label="What was understood"]')).not.toBeNull();
+    expect(findRun()).toBeUndefined();
   });
 
-  it('with onExecute -> Run present, enabled, and clickable', async () => {
+  it('with onExecute -> submitting auto-runs exactly once with the parsed intent', async () => {
     const onExecute = vi.fn();
     const provider = createStubProvider({
       async intent() {
@@ -83,12 +79,7 @@ describe('Run-noop (no enabled Run with no handler)', () => {
     typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'rent in Hilo');
     await submitForm(container.querySelector('form') as HTMLFormElement);
 
-    const run = findRun();
-    expect(run).toBeDefined();
-    expect(run?.disabled).toBe(false);
-    act(() => {
-      run?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
+    expect(findRun()).toBeUndefined();
     expect(onExecute).toHaveBeenCalledTimes(1);
     expect(onExecute).toHaveBeenCalledWith(runnable);
   });

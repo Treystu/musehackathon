@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createStubProvider } from '../../src/core/ai/provider'
 import { AskPanel } from '../../src/ui/ai/AskPanel'
 
@@ -50,17 +50,21 @@ describe('national screen at the Ask surface', () => {
         return { intent: { mode: 'sweep_filter', geographies: 'America' } as never }
       },
     })
-    render(<AskPanel provider={provider} />)
+    const onExecute = vi.fn()
+    render(<AskPanel provider={provider} onExecute={onExecute} />)
     typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'where is the cheapest rent in America?')
     await submit(container.querySelector('form') as HTMLFormElement)
 
     expect(container.textContent).toContain(
       'No place was named, so this screens the whole country by median gross rent, lowest first.',
     )
-    const run = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Run this request',
-    )
-    expect(run).toBeDefined()
+    // Auto-run: the rescued screen executes on submit; there is no Run button.
+    expect(onExecute).toHaveBeenCalledTimes(1)
+    expect(onExecute.mock.calls[0]?.[0]).toMatchObject({
+      mode: 'sweep_filter',
+      metricKeys: ['median_gross_rent'],
+      clarificationNeeded: false,
+    })
     expect(container.querySelector('[aria-label="Clarify the request"]')).toBeNull()
   })
 
@@ -82,18 +86,53 @@ describe('national screen at the Ask surface', () => {
         }
       },
     })
-    render(<AskPanel provider={provider} />)
+    const onExecute = vi.fn()
+    render(<AskPanel provider={provider} onExecute={onExecute} />)
     typeInto(container.querySelector('#ask-input') as HTMLInputElement, 'where is the cheapest rent in America?')
     await submit(container.querySelector('form') as HTMLFormElement)
 
     expect(container.textContent).toContain(
       'No place was named, so this screens the whole country by median gross rent, lowest first.',
     )
-    const run = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Run this request',
-    )
-    expect(run).toBeDefined()
+    expect(onExecute).toHaveBeenCalledTimes(1)
+    expect(onExecute.mock.calls[0]?.[0]).toMatchObject({
+      mode: 'sweep_filter',
+      metricKeys: ['median_gross_rent'],
+      clarificationNeeded: false,
+    })
     expect(container.querySelector('[aria-label="Clarify the request"]')).toBeNull()
+  })
+
+  it('names the politics coverage gap plainly when a question asks for one', async () => {
+    // The owner's example (2026-11-01): a move-to-Nevada question
+    // asking for somewhere "not Republican". The parse clarifies for
+    // a measure; the panel must also say, in plain words, that the
+    // politics part is outside this Census data — never silently
+    // dropped and never screened on invented data.
+    const provider = createStubProvider({
+      async intent() {
+        return {
+          intent: {
+            mode: 'lookup',
+            geographies: ['NV'],
+            metricKeys: [],
+            filters: [],
+            clarificationNeeded: true,
+          } as never,
+        }
+      },
+    })
+    const onExecute = vi.fn()
+    render(<AskPanel provider={provider} onExecute={onExecute} />)
+    typeInto(
+      container.querySelector('#ask-input') as HTMLInputElement,
+      'I live in El Paso and want to move somewhere in Nevada that is not Republican, somewhere liberal',
+    )
+    await submit(container.querySelector('form') as HTMLFormElement)
+
+    expect(container.textContent).toContain('no voter registration, party affiliation, or election results')
+    expect(container.querySelector('[aria-label="Clarify the request"]')).not.toBeNull()
+    expect(onExecute).not.toHaveBeenCalled()
   })
 
   it('does not rescue a shape-invalid reply for an ordinary question', async () => {

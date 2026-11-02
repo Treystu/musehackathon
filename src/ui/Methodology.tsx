@@ -96,11 +96,21 @@ export function Methodology() {
             The AI layer is generated from the same metric registry as the data layer, so the measures the
             assistant can use cannot drift from the measures the site displays. The assistant may only use the{' '}
             {METRIC_KEYS.length} registered metrics; ranking, recommendation, and demographic characterisation
-            requests are refused by construction (allowlisted filters, validated output, withheld wording).
+            requests are never complied with — the assistant clarifies instead, keeping the parts of the
+            question the data can answer (allowlisted filters, validated output, withheld wording).
           </p>
           <p>
             Every AI-produced sentence is checked against the retrieved figures before display; a sentence
             containing a number that was not retrieved is withheld.
+          </p>
+          <p>
+            The assistant is held to that contract by tooling, not by intention. An evaluation harness
+            (Sovereign-Harness) replays a fixed corpus of questions — every shape the assistant can be
+            asked, including the shapes it must refuse — against the live model, and a release is accepted
+            only when the recorded scores clear their bars. Changes to this layer are additionally scored
+            before they ship by Jev, a typed judgement model, under the gate policy in the source
+            repository. Questions are routed through the Muse models API by a metered proxy that counts
+            every call against a published budget; the figures themselves never come from the model.
           </p>
         </div>
       </section>

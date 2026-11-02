@@ -61,3 +61,29 @@ here and is left to the owner; this record only states the product-side cut.
 All ten criteria, including the three not enumerated here, would need to be
 written down and met in code, with a served-build test proving each one. Until
 then the cut stands, and any future voice claim is a claim without an artifact.
+
+## Reversal (2026-11-01, owner directive)
+
+The owner directed that voice work ("verify that functionality as
+well — everything has to work perfectly"), superseding the cut above.
+State against the criteria, re-checked in the union tree (which the
+cut record predates — the union hand-merge had already landed the
+mic UI, consent gate, spoken-number validation, metered route, and
+`microphone=(self)`; the only remaining cut-point was the provider
+stub):
+
+1. Mic control beside the Ask box: MET (MicInput in the Ask panel).
+2. Transcripts produced and editable: MET — the providers now
+   implement transcribe (proxy route + BYO-direct via input_audio);
+   the transcript lands in the editable query text.
+3. Low-confidence clarification: MET (assessTranscript threshold).
+4/5. Follow-ups and last-mile from voice: MET by construction — an
+   accepted transcript takes the ordinary Ask path (auto-run).
+6. Spoken numbers through the validator: MET (checkSpokenNumbers in
+   accept(), fail-closed).
+10. Metered transcription through the proxy: MET — the route meters
+    by audio size; verified live with synthesized speech (see the
+    contest brief §116 for the probe transcript).
+
+The demo-narration constraint from the cut record no longer applies:
+voice is a shipped, verified feature and may be claimed as one.

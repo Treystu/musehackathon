@@ -189,15 +189,18 @@ describe('mic transcript flow', () => {
     await click(button('Stop recording'))
   }
 
-  it('accepted speech lands in the editable text and chips, and offers Run', async () => {
+  it('accepted speech lands in the editable text and chips, and runs like typed text', async () => {
     const intentCalls = { n: 0, lastText: undefined as string | undefined }
+    const executed: unknown[] = []
     const { recorder } = fakeRecorder()
     render(
       <AskPanel
         provider={spokenProvider('rent in Hilo under two thousand', 0.95, intentCalls)}
         micRecorder={recorder}
         micStorage={fakeStorage()}
-        onExecute={() => {}}
+        onExecute={(intent) => {
+          executed.push(intent)
+        }}
       />,
     )
     await speak()
@@ -205,9 +208,11 @@ describe('mic transcript flow', () => {
     expect(intentCalls.lastText).toBe('rent in Hilo under two thousand')
     const input = container.querySelector('#ask-input') as HTMLInputElement
     expect(input.value).toBe('rent in Hilo under two thousand')
-    // The understood request is shown as editable chips before anything runs.
+    // The understood request shows as editable chips, and (auto-run,
+    // 2026-11-01) it executes through the same path as a typed submit.
     expect(container.querySelector('[aria-label="What was understood"]')).not.toBeNull()
-    expect(maybeButton('Run this request')).not.toBeNull()
+    expect(executed).toHaveLength(1)
+    expect(maybeButton('Run this request')).toBeNull()
   })
 
   it('low-confidence speech goes to clarification: words stay editable, nothing runs', async () => {

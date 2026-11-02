@@ -128,8 +128,10 @@ describe('BYO recovery on credits_exhausted', () => {
     expect(byoCalls[0]?.queryText).toBe('rent in Hilo')
     // The BYO-direct call bypassed the metered proxy route entirely.
     expect(meter.snapshot().requests).toBe(0)
-    // The BYO answer lands like any accepted intent.
-    expect(container.textContent).toContain('Run this request')
+    // The BYO answer lands like any accepted intent: understood chips
+    // on screen, auto-run semantics (no Run control exists any more).
+    expect(container.querySelector('[aria-label="What was understood"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Run this request')
   })
 
   it('without a stored key there is no BYO retry, and the happy path shows no offer', async () => {
@@ -215,7 +217,8 @@ describe('BYO recovery on credits_exhausted', () => {
 
     expect(sharedCalls).toHaveLength(1)
     expect(byoCalls).toHaveLength(1)
-    expect(container.textContent).toContain('Run this request')
+    expect(container.querySelector('[aria-label="What was understood"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Run this request')
     expect(container.querySelector('aside[aria-label="Optional personal key"]')).toBeNull()
   })
 

@@ -136,6 +136,8 @@ const ANSWER_COMPOSE_FAILED_NOTE =
   'The answer to this question could not be composed just now. The data views below still work.'
 const ANSWER_BLOCKED_NOTE =
   'That question could not be screened as asked, so no answer was composed. The data views below still work.'
+const ANSWER_UNRESOLVED_NOTE =
+  'The place named in this question could not be resolved, so no answer was composed. The data views below still work.'
 
 type ScreeningSort = {
   presetId: string
@@ -193,11 +195,21 @@ export default function App() {
   const [placeIndex, setPlaceIndex] = useState<PlaceIndex | null | undefined>(undefined)
   /**
    * The ZIP-to-county crosswalk, loaded the same way as the place
-   * index. Only the Answer Layer reads it (county-level answers);
-   * `null` means county answers stay in the unsupported reporting
-   * the pipeline had before the crosswalk shipped.
+   * index. Only the Answer Layer reads it (county-level answers).
+   *
+   * `undefined` means still loading; `null` means it could not be
+   * fetched. The distinction mirrors the place index above and is
+   * load-bearing for the same reason: before this, the state started
+   * at `null`, so loading and failed were indistinguishable and the
+   * answer effect could not tell a county question that had to wait
+   * for the crosswalk from one the crosswalk had already failed to
+   * resolve — it treated the wait as the verdict and stranded the
+   * request (app_effect_county_strand, measured by the P2 battery
+   * re-run on the shipped build, 2026-11-02). Once loaded, `null`
+   * means county answers stay in the unsupported reporting the
+   * pipeline had before the crosswalk shipped.
    */
-  const [countyIndex, setCountyIndex] = useState<CountyIndex | null>(null)
+  const [countyIndex, setCountyIndex] = useState<CountyIndex | null | undefined>(undefined)
   /**
    * Tour dialog state. The dialog opens only when asked for (the header's
    * "How this works" button); there is no standing first-visit notice card
@@ -481,7 +493,11 @@ export default function App() {
     if (!answerRequest) return
     const { id, intent, queryText } = answerRequest
     if (answerComposedIds.current.has(id) || answerInFlightIds.current.has(id)) return
-    const resolved: ResolvedAnswerGeographies = resolveAnswerGeographies(intent, placeIndex ?? null)
+    const resolved: ResolvedAnswerGeographies = resolveAnswerGeographies(
+      intent,
+      placeIndex ?? null,
+      countyIndex ?? null,
+    )
     if (resolved.unresolvable) {
       // While the place index is still loading, resolution has not
       // had its authority yet: an empty result here is a wait, not a
@@ -489,9 +505,39 @@ export default function App() {
       // it permanently when the index landed a moment later — the
       // guard above then refused every re-run.
       if (placeIndex === undefined) return
-      // Nothing to screen against: executeIntent's run note already
-      // told the reader no ZIP could be resolved.
+      // The same wait applies to the county index when the intent
+      // names a county-class geography (the resolver's own suffix
+      // set: county, parish, borough, census area, municipality).
+      // Without the county index a named county is unresolved by
+      // construction, so a still-loading index is a wait, not a
+      // verdict — the shipped build passed no county index here at
+      // all, so every named-county lookup and compare took this
+      // branch as a permanent strand with no card and no note
+      // (app_effect_county_strand, P2 battery re-run, 2026-11-02:
+      // the pipeline probe composed Boulder County $81,930 and the
+      // Denver/Boulder comparison correctly while the App shell
+      // rendered neither). The effect deps already include
+      // countyIndex, so the re-run on landing is automatic.
+      if (
+        countyIndex === undefined &&
+        intent.geographies.some((geography) =>
+          /\b(county|parish|borough|census area|municipality)\b/i.test(geography),
+        )
+      ) {
+        return
+      }
+      // Terminally unresolvable with every index the resolution
+      // reads now settled: the answer area states the outcome
+      // itself. executeIntent's run note speaks for the views layer
+      // only; leaving the answer column to that note alone was the
+      // strand's visible shape — dead air where the answer was
+      // promised. The note renders once per request, under the
+      // same answerNotedIds discipline as the load-failure note.
       answerComposedIds.current.add(id)
+      if (!answerNotedIds.current.has(id)) {
+        answerNotedIds.current.add(id)
+        setAnswerNote({ id, text: ANSWER_UNRESOLVED_NOTE })
+      }
       return
     }
     const covered =

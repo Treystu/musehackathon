@@ -227,30 +227,21 @@ function contentOf(body: unknown): string | null {
 /**
  * Transcription (Item 12, un-cut by the owner 2026-11-01: voice ships
  * because it works, per the standing ship-gate — see
- * docs/s12-voice-cut.md's reversal note). The model receives the audio
- * as an input_audio part and answers in a strict JSON envelope. Its
- * confidence is the model's own estimate, consumed only by the
- * clarify threshold in core/ai/mic.ts; the spoken-number gate and the
- * editable text box remain the reader-facing guards.
+ * docs/s12-voice-cut.md's reversal note). Muse Spark takes no audio
+ * input at all — measured live 2026-11-01: an input_audio chat part
+ * is silently ignored and the model honestly reports an empty
+ * transcript. Transcription belongs to the dedicated Muse Voice
+ * Transcribe model on its own endpoint, POST /v1/asr/transcribe:
+ * multipart with a JSON `request` part (mode/model/audioEncoding)
+ * and the `audio` part, accepting exactly one shape — mono 16-bit
+ * PCM WAV at 16 or 24 kHz — which is why the mic converts the
+ * browser's recording to that shape before sending (MicInput).
+ * The service returns no confidence score (documented), so a
+ * returned transcript is taken at face value (confidence 1) and an
+ * empty one as unusable (0); the spoken-number gate in core/ai/mic.ts
+ * and the editable text box remain the reader-facing guards.
  */
-export const TRANSCRIBE_SYSTEM_PROMPT =
-  'You are the transcription helper for CivicScope, a housing-data tool. ' +
-  'Transcribe the attached audio exactly as spoken: do not answer it, ' +
-  'rephrase it, or add words that were not said. Report your confidence ' +
-  'honestly — how certain you are that the transcript is word-perfect, ' +
-  'especially any numbers, place names, and figures.'
-
-export function transcriptJsonSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    required: ['transcript', 'confidence'],
-    properties: {
-      transcript: { type: 'string' },
-      confidence: { type: 'number', minimum: 0, maximum: 1 },
-    },
-  }
-}
+export const ASR_MODEL = 'muse-voice-transcribe-1.0'
 
 /** Container format for the input_audio part, or null when unsupported. */
 export function audioFormatForMime(mimeType: string): string | null {
@@ -432,40 +423,67 @@ export function createMetaDirectProvider(options: MetaDirectOptions): MuseProvid
     },
 
     async transcribe(req: TranscribeRequest, signal: AbortSignal): Promise<TranscribeResult> {
-      const format = audioFormatForMime(req.mimeType)
-      if (!format) throw new ProviderCallError('shape_invalid')
-      const reply = await complete(
-        {
-          messages: [
-            { role: 'system', content: TRANSCRIBE_SYSTEM_PROMPT },
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: 'Transcribe the attached audio exactly as spoken.' },
-                {
-                  type: 'input_audio',
-                  input_audio: { data: encodeBase64(req.audio), format },
-                },
-              ],
-            },
-          ],
-          response_format: {
-            type: 'json_schema',
-            json_schema: { name: 'CivicScopeTranscript', strict: true, schema: transcriptJsonSchema() },
-          },
-          temperature: 0,
-        },
-        signal,
-      )
-      const text = contentOf(reply)
-      if (!text) throw new ProviderCallError('provider_down')
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(text)
-      } catch {
-        throw new ProviderCallError('provider_down')
+      // The ASR endpoint accepts mono PCM WAV only; anything else is
+      // a shape failure here rather than a bare 400 upstream. The mic
+      // converts before sending, so production traffic is WAV.
+      if (audioFormatForMime(req.mimeType) !== 'wav') {
+        throw new ProviderCallError('shape_invalid')
       }
-      return parseTranscriptResult(parsed)
+      const attempt = async (): Promise<TranscribeResult> => {
+        const key = options.getApiKey()
+        if (!key) throw new ProviderCallError('bad_key')
+        const form = new FormData()
+        form.append(
+          'request',
+          new Blob(
+            [
+              JSON.stringify({
+                mode: 'ENDPOINTING',
+                model: ASR_MODEL,
+                audioEncoding: 'WAV',
+                languageBias: ['English'],
+              }),
+            ],
+            { type: 'application/json' },
+          ),
+        )
+        form.append('audio', new Blob([req.audio], { type: 'audio/wav' }), 'audio.wav')
+        let res: Response
+        try {
+          res = await doFetch(`${options.baseUrl.replace(/\/$/, '')}/asr/transcribe`, {
+            method: 'POST',
+            headers: { accept: 'application/json', authorization: 'Bearer '.concat(key) },
+            body: form,
+            signal,
+            credentials: 'omit',
+          })
+        } catch (e) {
+          if ((e as { name?: string } | null)?.name === 'AbortError') throw e
+          throw new ProviderCallError('provider_down')
+        }
+        const parsed = (await res.json().catch(() => null)) as {
+          transcript?: unknown
+        } | null
+        if (!res.ok) throw new ProviderCallError(mapMetaFailure(res.status, parsed))
+        const transcript =
+          typeof parsed?.transcript === 'string' ? parsed.transcript.trim() : ''
+        // No confidence exists upstream (documented); see the note at
+        // ASR_MODEL. Empty transcript = nothing heard = unusable.
+        return { transcript, confidence: transcript ? 1 : 0 }
+      }
+      try {
+        return await attempt()
+      } catch (e) {
+        // Same single-retry posture as complete(): the upstream flaps.
+        if (
+          e instanceof ProviderCallError &&
+          (e.code === 'bad_key' || e.code === 'provider_down') &&
+          !signal.aborted
+        ) {
+          return attempt()
+        }
+        throw e
+      }
     },
   }
 }

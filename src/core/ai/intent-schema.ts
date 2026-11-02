@@ -73,11 +73,20 @@ export function isKnownFigureKey(key: string): boolean {
  * and its sort is the request ("cheapest rent in America"), so it runs
  * with zero geographies and zero filters as long as it names a
  * filter-legal measure. Every other mode still needs a place, and a
- * placed sweep still needs its bound.
+ * placed sweep still needs its bound. Second exception, same day:
+ * similarity consumes only its seed place (the view scores its own
+ * dimensions), so it runs with zero measures; a named measure must
+ * still be filter-legal.
  */
 export function canRun(intent: ValidatedIntent): boolean {
   if (intent.mode !== 'sweep_filter' && intent.geographies.length === 0) return false
-  if (intent.metricKeys.length === 0) return false
+  // Similarity exception (2026-11-01): the similarity execution path
+  // consumes only the seed place — the view scores its own weighted
+  // dimensions — so a measure-less similarity intent is complete as
+  // asked ("places similar to 96778"). Requiring a measure forced a
+  // clarification whose pick changed nothing. A measure the reply did
+  // name still has to be displayable and filter-legal (checks below).
+  if (intent.mode !== 'similarity' && intent.metricKeys.length === 0) return false
   if (!intent.metricKeys.every(isDisplayableKey)) return false
   if (intent.mode === 'compare' && intent.geographies.length < 2) return false
   if (intent.mode === 'sweep_filter' || intent.mode === 'similarity') {

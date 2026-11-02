@@ -74,7 +74,7 @@ stub):
 
 1. Mic control beside the Ask box: MET (MicInput in the Ask panel).
 2. Transcripts produced and editable: MET — the providers now
-   implement transcribe (proxy route + BYO-direct via input_audio);
+   implement transcribe (proxy route + BYO-direct via the Muse Voice ASR endpoint, mono PCM WAV);
    the transcript lands in the editable query text.
 3. Low-confidence clarification: MET (assessTranscript threshold).
 4/5. Follow-ups and last-mile from voice: MET by construction — an

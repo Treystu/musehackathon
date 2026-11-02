@@ -78,8 +78,16 @@ export function createBrowserRecorder(): MicRecorder | null {
               try {
                 const type = active.mimeType || 'audio/webm'
                 const blob = new Blob(chunks, { type })
-                const audio = await blob.arrayBuffer()
-                resolve({ audio, mimeType: type })
+                // The transcription endpoint takes mono PCM WAV only;
+                // convert the browser's recording before it is sent.
+                // A conversion failure falls back to the raw recording,
+                // whose rejection upstream is honest rather than silent.
+                try {
+                  const wav = await convertBlobToWav(blob)
+                  resolve({ audio: wav, mimeType: 'audio/wav' })
+                } catch {
+                  resolve({ audio: await blob.arrayBuffer(), mimeType: type })
+                }
               } catch (e) {
                 reject(e instanceof Error ? e : new Error('recording failed'))
               }
@@ -104,6 +112,106 @@ interface MediaRecorderLike {
   onstop: (() => void) | null
   start(): void
   stop(): void
+}
+
+/**
+ * The transcription model (Muse Voice Transcribe) accepts exactly one
+ * batch shape: mono 16-bit PCM WAV at 16 or 24 kHz. Browsers record
+ * webm/opus or mp4/aac, so the recording is converted before it is
+ * sent — decoded and resampled to 16 kHz mono, then written as a WAV.
+ * Pure encoder over a minimal buffer shape so hermetic tests can pin
+ * the byte layout without a real AudioBuffer.
+ */
+export interface PcmBufferLike {
+  sampleRate: number
+  numberOfChannels: number
+  getChannelData(channel: number): Float32Array
+}
+
+export function encodeWavPcm16(buffer: PcmBufferLike): ArrayBuffer {
+  const channels = Math.max(1, buffer.numberOfChannels)
+  const frames = buffer.getChannelData(0).length
+  const bytesPerSample = 2
+  const dataSize = frames * bytesPerSample
+  const out = new ArrayBuffer(44 + dataSize)
+  const view = new DataView(out)
+  const writeAscii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i))
+  }
+  writeAscii(0, 'RIFF')
+  view.setUint32(4, 36 + dataSize, true)
+  writeAscii(8, 'WAVE')
+  writeAscii(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true) // PCM
+  view.setUint16(22, 1, true) // mono: channels are mixed down below
+  view.setUint32(24, buffer.sampleRate, true)
+  view.setUint32(28, buffer.sampleRate * bytesPerSample, true)
+  view.setUint16(32, bytesPerSample, true)
+  view.setUint16(34, 16, true)
+  writeAscii(36, 'data')
+  view.setUint32(40, dataSize, true)
+  const channelData: Float32Array[] = []
+  for (let c = 0; c < channels; c++) channelData.push(buffer.getChannelData(c))
+  let offset = 44
+  for (let i = 0; i < frames; i++) {
+    let sum = 0
+    for (let c = 0; c < channels; c++) sum += channelData[c]![i] ?? 0
+    const sample = Math.max(-1, Math.min(1, sum / channels))
+    view.setInt16(offset, Math.round(sample * (sample < 0 ? 0x8000 : 0x7fff)), true)
+    offset += bytesPerSample
+  }
+  return out
+}
+
+interface AudioContextLike {
+  decodeAudioData(data: ArrayBuffer): Promise<PcmBufferLike>
+  close?: () => Promise<void>
+}
+
+interface OfflineAudioContextLike {
+  startRendering(): Promise<PcmBufferLike>
+}
+
+/** Decode a recorded blob and re-render it at 16 kHz mono, WAV out. */
+export async function convertBlobToWav(blob: Blob): Promise<ArrayBuffer> {
+  const raw = await blob.arrayBuffer()
+  const Ctor = (
+    globalThis as { AudioContext?: new () => AudioContextLike }
+  ).AudioContext
+  if (!Ctor) throw new Error('no AudioContext')
+  const ctx = new Ctor()
+  try {
+    const decoded = await ctx.decodeAudioData(raw.slice(0) as ArrayBuffer)
+    const OfflineCtor = (
+      globalThis as {
+        OfflineAudioContext?: new (
+          channels: number,
+          length: number,
+          sampleRate: number,
+        ) => OfflineAudioContextLike & {
+          createBufferSource(): {
+            buffer: PcmBufferLike
+            connect(dest: unknown): void
+            start(): void
+          }
+          destination: unknown
+        }
+      }
+    ).OfflineAudioContext
+    if (!OfflineCtor) return encodeWavPcm16(decoded)
+    const targetRate = 16000
+    const length = Math.max(1, Math.ceil((decoded.getChannelData(0).length / decoded.sampleRate) * targetRate))
+    const offline = new OfflineCtor(1, length, targetRate)
+    const source = offline.createBufferSource()
+    source.buffer = decoded
+    source.connect(offline.destination)
+    source.start()
+    const rendered = await offline.startRendering()
+    return encodeWavPcm16(rendered)
+  } finally {
+    await ctx.close?.().catch(() => undefined)
+  }
 }
 
 type Phase = 'idle' | 'recording' | 'working'

@@ -51,7 +51,7 @@ describe('canRun mode minimums (single owner)', () => {
     ).toBe(true)
   })
 
-  it('other modes unchanged: lookup/similarity need 1 place + 1 measure, filters irrelevant', () => {
+  it('other modes: lookup needs 1 place + 1 measure; similarity needs the seed place, measure optional', () => {
     expect(
       canRun({
         mode: 'lookup',
@@ -63,6 +63,15 @@ describe('canRun mode minimums (single owner)', () => {
     ).toBe(true)
     expect(
       canRun({
+        mode: 'lookup',
+        geographies: ['Hilo'],
+        metricKeys: [],
+        filters: [],
+        clarificationNeeded: false,
+      }),
+    ).toBe(false)
+    expect(
+      canRun({
         mode: 'similarity',
         geographies: ['Hilo'],
         metricKeys: ['median_gross_rent'],
@@ -70,6 +79,26 @@ describe('canRun mode minimums (single owner)', () => {
         clarificationNeeded: false,
       }),
     ).toBe(true)
+    // Similarity runs on the seed alone (2026-11-01): its execution
+    // consumes no measure. A named measure must still be filter-legal.
+    expect(
+      canRun({
+        mode: 'similarity',
+        geographies: ['96778'],
+        metricKeys: [],
+        filters: [],
+        clarificationNeeded: false,
+      }),
+    ).toBe(true)
+    expect(
+      canRun({
+        mode: 'similarity',
+        geographies: ['96778'],
+        metricKeys: ['median_age'],
+        filters: [],
+        clarificationNeeded: false,
+      }),
+    ).toBe(false)
     // Sweep with 2 filters stays runnable; lookup ignores filters.
     expect(canRun({ ...sweepOne, filters: [...sweepOne.filters, ...sweepOne.filters] })).toBe(true)
   })

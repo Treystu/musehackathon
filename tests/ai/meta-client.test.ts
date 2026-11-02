@@ -218,26 +218,77 @@ describe('live provider: transcribe (voice un-cut by owner directive, 2026-11-01
     ).rejects.toMatchObject({ code: 'provider_down' })
   })
 
-  it('BYO fallback: the direct provider sends an input_audio part and parses the JSON envelope', async () => {
-    const envelope = JSON.stringify({ transcript: 'rent in Hilo', confidence: 0.9 })
-    const { impl, calls } = fakeFetch([
-      { status: 429, body: { error: 'budget_exhausted' } },
-      { body: { choices: [{ message: { content: envelope } }] } },
-    ])
+  it('BYO fallback: the direct provider posts WAV multipart to the ASR endpoint', async () => {
+    // Muse Spark takes no audio input; transcription is the dedicated
+    // Muse Voice Transcribe endpoint (POST /v1/asr/transcribe), whose
+    // multipart carries a JSON `request` part and the WAV `audio` part,
+    // and whose reply is { transcript } with no confidence score.
+    const seen: Array<{ url: string; form: FormData | null }> = []
+    const impl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/muse/transcribe') {
+        return new Response(JSON.stringify({ error: 'budget_exhausted' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      seen.push({ url, form: (init?.body as FormData) ?? null })
+      return new Response(JSON.stringify({ transcript: 'rent in Hilo', turns: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
     const live = provider(impl, true)
     const result = await live.transcribe(
-      { audio: AUDIO, mimeType: 'audio/webm;codecs=opus' },
+      { audio: AUDIO, mimeType: 'audio/wav' },
       new AbortController().signal,
     )
-    expect(result).toEqual({ transcript: 'rent in Hilo', confidence: 0.9 })
-    expect(calls).toHaveLength(2)
-    const directBody = calls[1]!.body as {
-      messages: Array<{ content: Array<{ type: string; input_audio?: { format: string } }> }>
+    // No confidence exists upstream: a returned transcript counts as 1.
+    expect(result).toEqual({ transcript: 'rent in Hilo', confidence: 1 })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.url).toBe('https://api.meta.ai/v1/asr/transcribe')
+    const form = seen[0]!.form
+    expect(form).toBeInstanceOf(FormData)
+    const requestPart = JSON.parse(await (form!.get('request') as Blob).text()) as {
+      model?: string
+      audioEncoding?: string
     }
-    const audioPart = directBody.messages
-      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
-      .find((part) => part.type === 'input_audio')
-    expect(audioPart?.input_audio?.format).toBe('webm')
+    expect(requestPart.model).toBe('muse-voice-transcribe-1.0')
+    expect(requestPart.audioEncoding).toBe('WAV')
+    expect(form!.get('audio')).toBeTruthy()
+  })
+
+  it('direct transcribe refuses a non-WAV recording before any fetch', async () => {
+    // The proxy reports the shared budget exhausted (a BYO-fallback
+    // class), so the direct provider is reached — and must refuse the
+    // webm shape itself, without an ASR fetch: the endpoint takes WAV.
+    const { impl, calls } = fakeFetch([
+      { status: 429, body: { error: 'budget_exhausted' } },
+    ])
+    const live = provider(impl, true)
+    await expect(
+      live.transcribe({ audio: AUDIO, mimeType: 'audio/webm' }, new AbortController().signal),
+    ).rejects.toMatchObject({ code: 'shape_invalid' })
+    expect(calls).toHaveLength(1) // proxy attempt only; no ASR fetch
+  })
+
+  it('an empty ASR transcript comes back with confidence 0', async () => {
+    const impl = (async (input: RequestInfo | URL) => {
+      if (String(input) === '/api/muse/transcribe') {
+        return new Response(JSON.stringify({ error: 'budget_exhausted' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ transcript: '', turns: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+    const live = provider(impl, true)
+    await expect(
+      live.transcribe({ audio: AUDIO, mimeType: 'audio/wav' }, new AbortController().signal),
+    ).resolves.toEqual({ transcript: '', confidence: 0 })
   })
 
   it('briefing is no longer cut (F6, issue #58): it goes through the proxy route', async () => {

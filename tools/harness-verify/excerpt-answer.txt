@@ -1,12 +1,3 @@
-/* ------------------------------------------------------------------ */
-
-/**
- * The stage gate. Figure equality is exact (===) against the screened
- * rows the caller supplies — the same rows compose read — so a figure
- * altered anywhere between screen and render fails here. Claims must
- * cite a source the answer carries, and all prose on the answer must
- * pass the validator in criteria-grounded context.
- */
 export function verifyAnswer(
   answer: ComposedAnswer,
   screenedRows: readonly AreaRow[],
@@ -59,67 +50,74 @@ export function verifyAnswer(
     if (banned) failures.push(`banned construction in claim (${banned}): ${claim.text}`)
   }
 
+  // Evidence honesty: a researched criterion marked served must cite
+  // only sources the answer carries — an evidence entry pointing at a
+  // source compose dropped is exactly the silent upgrade the
+  // evidence model exists to prevent.
+  for (const evidence of answer.criterionEvidence) {
+    if (!evidence.sourceUrls.every((url) => carriedUrls.has(url))) {
+      failures.push(`criterion evidence cites a source the answer does not carry: ${evidence.criterion}`)
+    }
+  }
+
   const validator = createValidator()
   const verdict = validator.validate(answer.summary, figures)
   if (!verdict.pass) {
     // The summary is composed by code and numeral-free, so a failure
     // here is a defect in compose, reported like any other.
-    failures.push(`summary failed validator: ${verdict.failure}: ${verdict.detail}`)
-  }
-
-  return { ok: failures.length === 0, failures }
-}
-
-/* ------------------------------------------------------------------ */
-/* The staged flow                                                     */
-/* ------------------------------------------------------------------ */
-
-   */
-  researchQuery?: string
-  /** Provider for the research stage; required when researchQuery is. */
-  provider?: MuseProvider
-  signal?: AbortSignal
-}
-
-export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<ComposedAnswer> {
-  // Stage 1: parse gate. The intent arrived from the intent route,
-  // but the gate is cheap and fail-closed, and the screen must never
-  // run on a proxy-key filter the route somehow let through.
-  const gate = intentGate(input.intent)
-  if (!gate.pass) {
-    return {
-      status: 'blocked',
-      stage: 'parse',
-      criteria: [],
-      droppedCriteria: [],
-      unresolvedGeographies: [],
-      screenedCount: 0,
-      places: [],
-      generalClaims: [],
-      sources: [],
-      summary: '',
-      droppedClaims: [],
-      failures: [`intent gate: ${gate.detail}`],
+      candidateCapApplied,
+      unresolvedCandidates,
+      geographyLevel,
+      unsupportedGeography,
+      pullMode: true,
+      summaryOverride:
+        cappedRows.length === 0
+          ? 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
+          : undefined,
+    })
+    if (composed.status === 'empty') return { ...composed, stage: 'verify' }
+    const verdict = verifyAnswer(composed, cappedRows)
+    if (!verdict.ok) {
+      return { ...composed, status: 'withheld', stage: 'verify', failures: verdict.failures }
     }
+    return { ...composed, status: 'verified', stage: 'verify' }
   }
 
   // Stage 2: deterministic Census screen.
   const screen = screenRows(input.intent, input.rows, input.geographyZctas)
 
-  // Stage 3: research over the screened subset only. An empty screen
-  // researches nothing — there is no subset to research.
+  // Stage 3: research over the screened subset only, one pass per
+  // decomposed criterion, capped at SCREENED_RESEARCH_CANDIDATE_CAP
+  // places. An empty screen researches nothing — there is no subset
+  // to research. A question with a research query but no catalog
+  // criterion still decomposes to the one combined criterion, so the
+  // legacy single-pass shape is the one-criterion case of this loop.
   let research: ResearchStageResult | null = null
+  const candidateCapApplied = screen.rows.length > SCREENED_RESEARCH_CANDIDATE_CAP
   if (input.researchQuery && input.provider && screen.rows.length > 0) {
-    research = await researchScreened(
-      input.provider,
-      screen.rows,
-      input.researchQuery,
-      input.signal ?? new AbortController().signal,
-    )
+    const capped = screen.rows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
+    research =
+      researchCriteria.length > 0
+        ? await researchPerCriterion(
+            input.provider,
+            capped.map((row) => row.name),
+            researchCriteria,
+            input.researchQuery,
+            signal,
+          )
+        : await researchScreened(input.provider, capped, input.researchQuery, signal)
   }
 
   // Stage 4: compose.
-  const composed = composeAnswer({ intent: input.intent, screen, research })
+  const composed = composeAnswer({
+    intent: input.intent,
+    screen,
+    research,
+    researchCriteria: input.researchQuery ? researchCriteria : [],
+    candidateCapApplied: research ? candidateCapApplied : false,
+    geographyLevel,
+    unsupportedGeography,
+  })
   if (composed.status === 'empty') return { ...composed, stage: 'verify' }
 
   // Stage 5: verify, fail-closed.

@@ -44,7 +44,7 @@ TARGETS = {
     ),
     "answer": (
         "src/core/ai/answer.ts",
-        [(420, 495), (505, 559)],
+        [(884, 950), (1105, 1166)],
         [
             {
                 "id": "ans-figure-drift",

@@ -102,12 +102,12 @@ export function GuidedTour({ open, onDismiss }: { open: boolean; onDismiss: () =
         <>
           <p>
             The key is stored only in this browser and is sent only to the Census Bureau. Nobody running this
-            site can see it, and there is no server here that could: the whole product is static files on a
-            content delivery network.
+            site can see it: your key never leaves this browser for the site, and the site's own counter
+            records only aggregate totals.
           </p>
           <p>
             That is also why there is no search history. Nobody — including whoever hosts the deployment —
-            can see which ZIP codes or cities anyone looked up, because nothing is recorded.
+            can see which ZIP codes or cities anyone looked up, because no search is recorded.
           </p>
         </>
       ),

@@ -29,10 +29,11 @@ export function Methodology() {
         </h2>
         <div className="mt-2 space-y-3 text-sm leading-relaxed text-slate-700">
           <p>
-            CivicScope fetches data directly from its publishers in your browser. There is no server between you
-            and the source, no database of our own, and no record of what you searched for. That is a technical
-            decision with a purpose: an operator that cannot see who searched where cannot deliver different
-            results to different people.
+            CivicScope fetches data directly from its publishers in your browser. For the data itself there is
+            no server between you and the source, no database of our own, and no record of what you searched
+            for; the assistant runs through a metered proxy on this site that keeps only aggregate totals.
+            That is a technical decision with a purpose: an operator that cannot see who searched where cannot
+            deliver different results to different people.
           </p>
           <p>
             We show three things for every figure: the value, its margin of error where the publisher supplies
@@ -70,6 +71,11 @@ export function Methodology() {
             the site&rsquo;s browser storage to remove the key, preferences, and cache.
           </li>
           <li>No accounts, analytics, advertising, third-party scripts, or cookies.</li>
+          <li>
+            The assistant&rsquo;s shared allowance is counted by one aggregate counter on this site — totals
+            only (requests, tokens, modelled spend, error classes), never searches, keys, question text, or
+            content.
+          </li>
         </ul>
       </section>
 

@@ -49,10 +49,13 @@ a composite score, and there is no payment integration anywhere in `src/`.
 
 The strongest stewardship property here is not organisational, it is technical:
 
-**The product has no server.** There is no database, no account system, no
-analytics, no search logging and no runtime backend. The whole tool is static
-files on a CDN. The Census API key is the visitor's own, stored in their browser
-and never sent anywhere.
+**The data layer has no server.** There is no database, no account system, no
+analytics and no search logging behind the data itself: the tool that serves
+the figures is static files on a CDN. The Census API key is the visitor's own,
+stored in their browser and never sent anywhere — a deployment may instead
+supply a shared application key, which a visitor's own key replaces. The
+assistant layer adds a metered proxy whose only store is one aggregate
+counter (totals only), described in the privacy text.
 
 That means nobody — including whoever runs the deployment — can:
 

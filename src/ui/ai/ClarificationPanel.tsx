@@ -75,6 +75,30 @@ export function ClarificationPanel({
           ? 'Choose a place and a measure before anything runs — or just a measure, to screen the whole country by it.'
           : 'Choose the place and measure before anything runs.'}
       </p>
+      {/*
+        Panel-reads-its-parse (P3 step 8, battery E6): the places the
+        parse already holds are choices already made, shown as such.
+        The shipped panel filtered candidates against the parse and
+        then printed "No candidate places for this request" directly
+        under a parse carrying geographies (["Hilo, HI"] in E6) — the
+        copy contradicted the state it sat under. The no-candidates
+        line now renders only when the parse holds no places at all.
+      */}
+      {intent.geographies.length > 0 && (
+        <div className="mt-2">
+          <span className="text-sm font-medium text-slate-900">Choices already made</span>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {intent.geographies.map((place) => (
+              <span
+                key={place}
+                className="inline-flex min-h-[44px] items-center rounded-full border border-slate-900 bg-slate-100 px-3 py-2 text-sm text-slate-900"
+              >
+                {place}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {places.length > 0 ? (
         <div className="mt-2">
           <span className="text-sm font-medium text-slate-900">Places</span>
@@ -96,11 +120,13 @@ export function ClarificationPanel({
             ))}
           </div>
         </div>
+      ) : intent.geographies.length === 0 ? (
+        <p className="mt-2 text-sm text-slate-700">
+          {'No candidate places for this request — pick a measure below to screen the whole country by it.'}
+        </p>
       ) : (
         <p className="mt-2 text-sm text-slate-700">
-          {intent.geographies.length === 0
-            ? 'No candidate places for this request — pick a measure below to screen the whole country by it.'
-            : 'No candidate places for this request — use the measures below and the choices already made.'}
+          {'No further candidate places — use the measures below and the choices already made.'}
         </p>
       )}
       {metrics.length > 0 ? (

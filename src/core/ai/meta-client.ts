@@ -36,7 +36,8 @@ import type {
   TranscribeResult,
 } from './provider'
 import { PROXY_ERRORS, type ProxyError } from './proxy-errors'
-import { VALIDATOR_FAILURES, findBannedConstruction, type ValidatorFailure } from './validator'
+import { VALIDATOR_FAILURES, type ValidatorFailure } from './validator'
+import { filterBannedSentences } from './answer'
 
 /** Meta Model API origin and shape (dev.meta.ai docs, verified 2026-10-29). */
 export const META_API_BASE = 'https://api.meta.ai/v1'
@@ -186,6 +187,12 @@ const INTENT_SYSTEM_PROMPT = [
   'If a place is missing, ambiguous, or cannot be resolved, return mode "lookup" with no geographies',
   'and no metric keys and clarificationNeeded true.',
   'Express percentage bounds with one decimal place (for example 33.3).',
+  // Non-English servability (P3 step 6, battery D6): the parsed
+  // intent is authoritative whatever language the question arrives
+  // in — a fully servable Spanish question parses to the same intent
+  // shape as its English twin, and no downstream lexical layer may
+  // veto it for not matching English trigger words.
+  'Questions may arrive in any language. Parse their meaning exactly as you would the same question in English.',
   'Return only the JSON object.',
 ].join(' ')
 
@@ -636,19 +643,15 @@ export function createMetaDirectProvider(
       const { prose, sources } = parseResearchResult(reply)
       // The citation gate: ungrounded prose is not a research result.
       if (!prose || sources.length === 0) throw new ProviderCallError('provider_down')
-      // The fair-housing gate (2026-11-02): the banned-construction
-      // scan applies to research prose on this direct path too (the
-      // proxy route re-checks it and records the class; here the
-      // failure lands on the same unavailable state the UI already
-      // uses for ungrounded research, rather than rendering prose
-      // the figure surfaces would have withheld). Criteria-grounded
-      // context (rescoped 2026-11-02): the prose names screened
-      // places against the reader's stated criteria; protected-class
-      // steering, recommendation, and superlatives still withhold.
-      if (findBannedConstruction(prose, { criteriaGrounded: true })) {
-        throw new ProviderCallError('provider_down')
-      }
-      return { prose, sources }
+      // Claim-level prose refusal (P3 step 9): the banned-construction
+      // scan drops the offending sentence, not the whole result, when
+      // the rest verifies — the shipped word-level scan refused an
+      // entire result over "avoid the worst of the Highway 17 peak"
+      // (battery A-cluster note). Only a result with no surviving
+      // sentence lands on the unavailable state.
+      const filtered = filterBannedSentences(prose)
+      if (!filtered.prose) throw new ProviderCallError('provider_down')
+      return { prose: filtered.prose, sources }
     },
 
     async transcribe(req: TranscribeRequest, signal: AbortSignal): Promise<TranscribeResult> {
@@ -901,13 +904,14 @@ export function parseResearchReply(value: unknown): ResearchResult {
     throw new ProviderCallError('provider_down')
   }
   // Client re-check of the route's fair-housing gate, mirroring the
-  // explain path's double enforcement: a reply carrying a banned
-  // construction (or a withheld flag from a gated deployment) never
-  // reaches the render. Same criteria-grounded context as the route.
-  if (findBannedConstruction(rec.prose, { criteriaGrounded: true })) {
+  // explain path's double enforcement, at claim level (P3 step 9):
+  // offending sentences drop, the rest of the reply still renders;
+  // a reply with no surviving sentence never reaches the render.
+  const filtered = filterBannedSentences(rec.prose.trim())
+  if (!filtered.prose) {
     throw new ProviderCallError('provider_down')
   }
-  return { prose: rec.prose.trim(), sources }
+  return { prose: filtered.prose, sources }
 }
 
 /** True when a figure key can be sent for validation. Kept here so the client

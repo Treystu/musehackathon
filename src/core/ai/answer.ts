@@ -247,6 +247,16 @@ export interface ResearchCriterion {
    * count the source did not publish.
    */
   quantitative: boolean
+  /**
+   * Decomposition onto an EXISTING Census metric (P3 step 3): when
+   * present, this criterion is served by the named metric's figures
+   * on each place — assessed on the card like any Census criterion —
+   * not by web research. Decomposition tries the metric registry
+   * before a criterion is ever declared external: "good internet
+   * access" is no_internet_access (battery C5), and "cost of living"
+   * is read on the headline cost measure, median gross rent (A2/B3).
+   */
+  decomposedMetricKey?: string
 }
 
 export type CriterionEvidenceStatus = 'met' | 'partially_measured' | 'not_measurable'
@@ -629,6 +639,8 @@ const RESEARCH_CRITERION_CATALOG: readonly {
   label: string
   pattern: RegExp
   keywords: readonly string[]
+  /** Decomposition onto an existing Census metric (see ResearchCriterion). */
+  decomposedMetricKey?: string
 }[] = [
   { id: 'schools', label: 'School quality', pattern: /\bschools?\b|\beducation\b/i, keywords: ['school'] },
   { id: 'fast_food', label: 'Fast food restaurants', pattern: /fast[-\s]?food/i, keywords: ['fast-food', 'fast food'] },
@@ -637,9 +649,27 @@ const RESEARCH_CRITERION_CATALOG: readonly {
   { id: 'restaurants', label: 'Restaurants', pattern: /(?<!fast[-\s]food\s)\brestaurants?\b/i, keywords: ['restaurant'] },
   { id: 'coffee', label: 'Coffee nearby', pattern: /\bstarbucks\b|\bcoffee shops?\b|\bcoffee\b/i, keywords: ['starbucks', 'coffee'] },
   { id: 'groceries', label: 'Groceries', pattern: /\bgrocer(?:y|ies)\b|\bsupermarkets?\b/i, keywords: ['grocer', 'supermarket'] },
-  { id: 'safety', label: 'Safety', pattern: /\bsafety\b|\bcrime\b|\bsafe\b/i, keywords: ['safety', 'crime', 'safe'] },
+  // Superlative-form tolerance (P3 step 1, battery B5): the stem
+  // pattern saf\w* matches safe / safety / safest alike — the shipped
+  // whole-word \bsafe\b matched none of the superlative forms.
+  { id: 'safety', label: 'Safety', pattern: /\bsaf\w*\b|\bcrime\b|\bdangerous\b/i, keywords: ['saf', 'crime'] },
   { id: 'walkability', label: 'Walkability', pattern: /\bwalkable\b|\bwalkability\b/i, keywords: ['walkab'] },
   { id: 'amenities', label: 'Amenities', pattern: /\bgyms?\b|\bnightlife\b|\bplaygrounds?\b|\bhospitals?\b|\btransit\b|\bairports?\b|\blibrar(?:y|ies)\b|\bparks?\b/i, keywords: ['gym', 'nightlife', 'playground', 'hospital', 'transit', 'airport', 'librar', 'park'] },
+  // Lexical trigger gap (P3 step 3, battery D2): "farmers markets"
+  // matched neither the research trigger nor this catalog, so the
+  // criterion was silently dropped beside a "meet all" summary.
+  { id: 'farmers_markets', label: 'Farmers markets', pattern: /farmers?\s+markets?/i, keywords: ['farmers market', 'farmers'] },
+  // A3's "warm": a stated criterion with no slot in any layer
+  // disappeared entirely; climate is research-servable and now has one.
+  { id: 'climate', label: 'Warm climate', pattern: /\bwarm\b|\bclimate\b|\bsunny\b/i, keywords: ['warm', 'climate', 'weather', 'sunny'] },
+  // Current-events arm (P3 step 7, battery E4): news phrasing is a
+  // research criterion, so the pipeline researches it with citations
+  // instead of the question stranding in clarification.
+  { id: 'current_events', label: 'Current events', pattern: /\bnews\b|\bcurrent events\b|\bheadlines?\b/i, keywords: ['news', 'announced', 'reported', 'this week'] },
+  // Decomposed onto existing Census metrics (P3 step 3): these two
+  // entries never take a research pass — the metric serves them.
+  { id: 'internet', label: 'Internet access', pattern: /\binternet\b|\bbroadband\b/i, keywords: [], decomposedMetricKey: 'no_internet_access' },
+  { id: 'cost_of_living', label: 'Cost of living', pattern: /\bcost of living\b/i, keywords: [], decomposedMetricKey: 'median_gross_rent' },
 ]
 
 const COUNT_SEEKING_RE = /\bfewest\b|\bleast\b|\bnumber of\b|\bcount\b|\bdensity\b|\bhow many\b/i
@@ -664,6 +694,7 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
       // Only a count/density criterion is quantitative, and only
       // when the reader's words seek a count ("fewest", "number of").
       quantitative: quantitative && (entry.id === 'fast_food' || entry.id === 'restaurants'),
+      ...(entry.decomposedMetricKey ? { decomposedMetricKey: entry.decomposedMetricKey } : {}),
     })
   }
   if (found.length > 0) return found
@@ -784,8 +815,12 @@ export async function researchPerCriterion(
   const claims: ResearchedClaim[] = []
   const proseParts: string[] = []
   // One pass per criterion; the loop count is the contract, the
-  // query is the reader's whole question for every pass.
-  for (let pass = 0; pass < criteria.length; pass++) {
+  // query is the reader's whole question for every pass. A criterion
+  // decomposed onto a Census metric takes no pass — its figures are
+  // the service, and a web pass over it would spend research on a
+  // criterion the data already answers (P3 step 3).
+  const researched = criteria.filter((c) => !c.decomposedMetricKey)
+  for (let pass = 0; pass < researched.length; pass++) {
     const result = await provider.research({ queryText: researchQuery, places: [...places] }, signal)
     proseParts.push(result.prose)
     for (const source of result.sources) {
@@ -858,11 +893,66 @@ export function resolveCandidatesAgainstRows(
 }
 
 /* ------------------------------------------------------------------ */
+/* Claim-level prose refusal (P3 step 9)                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A ranking word in a non-ranking idiom: "avoid the worst of the
+ * Highway 17 peak" ranks nothing — the superlative is the object of
+ * a condition phrase, not a predication over a place. The shipped
+ * word-level scan refused an ENTIRE research result over that
+ * sentence (battery A-cluster note: context_blind_prose_refusal).
+ * The exemption is narrow and structural: an idiom frame (avoid /
+ * worst of the / best of the / make the best of) AND no place
+ * predication ("X is the best/worst", "the best/worst place/town/…")
+ * in the same sentence.
+ */
+const RANKING_IDIOM_RE =
+  /\b(?:avoid|worst of the|best of the|make the best of|worst of a)\b/i
+const PLACE_PREDICATION_RE =
+  /\b(?:is|are|was|were)\s+the\s+(?:best|worst|finest|greatest|nicest)\b|\b(?:best|worst|finest|greatest|nicest)\s+(?:place|town|city|area|neighbourhood|neighborhood|district|community|county|state)\b/i
+
+/** The banned-construction label for one sentence, or null when the
+ * sentence is clean at claim level (criteria-grounded context, with
+ * the non-ranking idiom exemption above). */
+export function claimBannedLabel(sentence: string): string | null {
+  const label = findBannedConstruction(sentence, { criteriaGrounded: true })
+  if (label !== 'ranking') return label
+  if (RANKING_IDIOM_RE.test(sentence) && !PLACE_PREDICATION_RE.test(sentence)) return null
+  return label
+}
+
+/**
+ * Split prose into sentences and drop only the offending ones
+ * (P3 step 9): a banned construction costs its own sentence, never
+ * the whole result, when the rest verifies. Returns the kept prose
+ * and the dropped sentences so the drop is auditable, never silent.
+ */
+export function filterBannedSentences(prose: string): { prose: string; dropped: string[] } {
+  const sentences = prose
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  const kept: string[] = []
+  const dropped: string[] = []
+  for (const sentence of sentences) {
+    if (claimBannedLabel(sentence)) dropped.push(sentence)
+    else kept.push(sentence)
+  }
+  return { prose: kept.join(' '), dropped }
+}
+
+/* ------------------------------------------------------------------ */
 /* Per-criterion evidence                                              */
 /* ------------------------------------------------------------------ */
 
 const NUMERAL_IN_CLAIM_RE =
   /\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i
+
+/** Evidence that supports a safety criterion's DIRECTION (levels,
+ * rates, comparisons) rather than merely mentioning crime data. */
+const SAFETY_DIRECTION_RE =
+  /\b(?:low|lower|below|declin\w*|reduced?|rate of|per capita|safer|safest|few(?:er)? (?:crimes|incidents|offen[cs]es))\b/i
 
 function claimServesCriterion(claim: ResearchedClaim, criterion: ResearchCriterion): boolean {
   if (criterion.id === 'combined') return true
@@ -890,6 +980,8 @@ export function criterionEvidenceFor(input: {
   countySupported?: boolean
   /** A requested figure that cannot be aggregated to county level, when one was. */
   countyFigureNotMeasurable?: string | null
+  /** The reader's question text, for stated criteria no layer serves. */
+  queryText?: string
 }): CriterionEvidence[] {
   const evidence: CriterionEvidence[] = []
   for (const criterion of input.criteria) {
@@ -943,6 +1035,33 @@ export function criterionEvidenceFor(input: {
     }
   }
   for (const criterion of input.researchCriteria) {
+    // Decomposed criteria are Census-served (P3 step 3): the
+    // criterion is ASSESSED on the card from the metric's figure on
+    // each shown place — met when every shown place carries the
+    // figure, partially measured when only some do, not measurable
+    // when none does. The direction is stated in the detail: for
+    // no_internet_access a lower figure is better access; the figure
+    // itself is the assessment, never a prose claim about it.
+    if (criterion.decomposedMetricKey) {
+      const key = criterion.decomposedMetricKey
+      const carrying = input.places.filter((p) => p.figures.some((f) => f.key === key)).length
+      evidence.push({
+        criterion: criterion.label,
+        kind: 'census',
+        status:
+          input.places.length > 0 && carrying === input.places.length
+            ? 'met'
+            : carrying > 0
+              ? 'partially_measured'
+              : 'not_measurable',
+        detail:
+          key === 'no_internet_access'
+            ? 'Assessed from the Census figure for households with no internet access shown for each place; a lower figure means better internet access.'
+            : 'Assessed from the Census cost figures shown for each place, read on median gross rent as the headline cost measure.',
+        sourceUrls: [],
+      })
+      continue
+    }
     const serving = input.claims.filter(
       (claim) => claim.sourceUrls.length > 0 && claimServesCriterion(claim, criterion),
     )
@@ -954,6 +1073,20 @@ export function criterionEvidenceFor(input: {
         status: 'not_measurable',
         detail: 'No cited source available here speaks to this criterion.',
         sourceUrls: [],
+      })
+    } else if (criterion.id === 'safety' && !serving.some((claim) => SAFETY_DIRECTION_RE.test(claim.text))) {
+      // Direction-of-fit (P3 step 5, battery D7): "low crime" is
+      // measured only by evidence about crime LEVELS — a source
+      // stating that crime statistics are published or summarised
+      // mentions the criterion without supporting its direction, so
+      // the honest label is partially measured, with the reason.
+      evidence.push({
+        criterion: criterion.label,
+        kind: 'research',
+        status: 'partially_measured',
+        detail:
+          'A cited source mentions crime statistics for this criterion but does not show crime is low, so the direction the criterion asks for is not measured.',
+        sourceUrls,
       })
     } else if (criterion.quantitative && !serving.some((claim) => NUMERAL_IN_CLAIM_RE.test(claim.text))) {
       evidence.push({
@@ -973,6 +1106,26 @@ export function criterionEvidenceFor(input: {
         sourceUrls,
       })
     }
+  }
+  // Criterion-slot accounting (P3 step 3, battery A4): a stated
+  // income the reader asks to "live well on" has no slot in any
+  // layer — nothing converts it to an affordability reading — so it
+  // is recorded not_measurable and named, never silently dropped
+  // beside the places that were shown.
+  if (
+    input.queryText &&
+    /\$\s?\d[\d,]*(?:\s?k)?\b/i.test(input.queryText) &&
+    /\b(?:salary|income|a year|per year|live well|afford)\b/i.test(input.queryText) &&
+    !evidence.some((e) => e.criterion === 'Affordability on the stated income')
+  ) {
+    evidence.push({
+      criterion: 'Affordability on the stated income',
+      kind: 'research',
+      status: 'not_measurable',
+      detail:
+        'No figure here converts a stated income into an affordability reading, so that part of the question is not measured.',
+      sourceUrls: [],
+    })
   }
   return evidence
 }
@@ -1027,10 +1180,18 @@ export function composeAnswer(input: {
   // (median gross rent, the same default the national screen uses);
   // it is a display figure, never a criterion — criterionEvidence
   // below carries no Census entry for it.
+  // Decomposed criteria (P3 step 3) pull their metric's figure onto
+  // every place, so the criterion is assessed on the card from data,
+  // exactly like a stated Census measure.
+  const decomposedKeys = (input.researchCriteria ?? [])
+    .map((c) => c.decomposedMetricKey)
+    .filter((k): k is string => !!k)
   const figureIntent: ValidatedIntent =
     input.pullMode && intent.metricKeys.length === 0
-      ? { ...intent, metricKeys: ['median_gross_rent'] }
-      : intent
+      ? { ...intent, metricKeys: [...new Set(['median_gross_rent', ...decomposedKeys])] }
+      : decomposedKeys.length > 0
+        ? { ...intent, metricKeys: [...new Set([...intent.metricKeys, ...decomposedKeys])] }
+        : intent
   const places: AnswerPlace[] = screen.rows.map((row) => {
     const figures = figuresForRow(row, figureIntent, screen.criteria)
     const meta = input.countyMeta?.get(row.zcta)
@@ -1056,13 +1217,25 @@ export function composeAnswer(input: {
   const droppedClaims: ResearchedClaim[] = []
   const generalClaims: ResearchedClaim[] = []
   const citedUrls = new Set<string>()
-  for (const claim of input.research?.claims ?? []) {
+  for (const rawClaim of input.research?.claims ?? []) {
     // The citation gate at compose: an uncited researched claim is
     // dropped, and the drop is recorded on the answer.
-    if (claim.sourceUrls.length === 0) {
-      droppedClaims.push(claim)
+    if (rawClaim.sourceUrls.length === 0) {
+      droppedClaims.push(rawClaim)
       continue
     }
+    // Claim-level prose refusal (P3 step 9): a banned construction
+    // drops its own sentence, not the whole result — the surviving
+    // sentences keep the claim and its citations; a claim with no
+    // surviving sentence is dropped whole and recorded like any
+    // other compose drop, instead of failing verify for the entire
+    // answer downstream.
+    const filtered = filterBannedSentences(rawClaim.text)
+    for (const droppedSentence of filtered.dropped) {
+      droppedClaims.push({ text: droppedSentence, sourceUrls: [...rawClaim.sourceUrls] })
+    }
+    if (filtered.prose.length === 0) continue
+    const claim: ResearchedClaim = { ...rawClaim, text: filtered.prose }
     for (const url of claim.sourceUrls) citedUrls.add(url)
     const row = claimPlace(claim, screen.rows)
     const place = row ? places.find((p) => p.zcta === row.zcta) : undefined
@@ -1074,6 +1247,36 @@ export function composeAnswer(input: {
   const status: AnswerStatus = screen.rows.length === 0 ? 'empty' : 'verified'
   // Status is provisional until verifyAnswer runs; runAnswerPipeline
   // is the entry point that stamps the final status.
+  const researchCriteria = input.researchCriteria ?? []
+  const unsupportedGeography = input.unsupportedGeography ?? null
+  const allClaims = [...places.flatMap((p) => p.claims), ...generalClaims]
+  const criterionEvidence = criterionEvidenceFor({
+    criteria: screen.criteria,
+    droppedCriteria: screen.droppedCriteria,
+    researchCriteria,
+    places,
+    claims: allClaims,
+    unsupportedGeography,
+    countySupported: input.countySupported ?? false,
+    countyFigureNotMeasurable: input.countyFigureNotMeasurable ?? null,
+    queryText: researchCriteria[0]?.text,
+  })
+  // Summary-claim rule (P3 step 4, battery A1/B5/C5/D2): the
+  // "meet all of the stated Census criteria" sentence renders ONLY
+  // when the criterion accounting is complete — at least one Census
+  // criterion was actually stated and applied, nothing was dropped
+  // as inexpressible, and every recorded criterion (Census,
+  // decomposed, researched) is met. Otherwise the summary names what
+  // is unmeasured, or — when no Census criterion was stated at all
+  // (A1's flagship) — makes no meeting claim in the first place.
+  const unmeasuredLabels = criterionEvidence
+    .filter((e) => e.status !== 'met')
+    .map((e) => e.criterion)
+  const accountingComplete =
+    screen.criteria.length > 0 &&
+    screen.droppedCriteria.length === 0 &&
+    unmeasuredLabels.length === 0 &&
+    !unsupportedGeography
   const summary =
     input.summaryOverride ??
     (screen.rows.length === 0
@@ -1082,11 +1285,11 @@ export function composeAnswer(input: {
         ? 'The places named here were named by the cited research for the stated criteria, with Census figures shown for each place.'
         : input.countySupported
           ? 'The counties named here are formed from the ZIP areas assigned to each county, with the deciding figures aggregated from those ZIP areas and shown from Census data.'
-          : 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.')
-
-  const researchCriteria = input.researchCriteria ?? []
-  const unsupportedGeography = input.unsupportedGeography ?? null
-  const allClaims = [...places.flatMap((p) => p.claims), ...generalClaims]
+          : accountingComplete
+            ? 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.'
+            : screen.criteria.length === 0
+              ? 'The places named here are shown with their Census figures for the measures in this request.'
+              : `The places named here meet the stated Census criteria, with the deciding figures shown from Census data. Not measured here: ${unmeasuredLabels.join(', ')}.`)
   return {
     status,
     stage: 'compose',
@@ -1101,16 +1304,7 @@ export function composeAnswer(input: {
     droppedClaims,
     failures: [],
     researchCriteria: [...researchCriteria],
-    criterionEvidence: criterionEvidenceFor({
-      criteria: screen.criteria,
-      droppedCriteria: screen.droppedCriteria,
-      researchCriteria,
-      places,
-      claims: allClaims,
-      unsupportedGeography,
-      countySupported: input.countySupported ?? false,
-      countyFigureNotMeasurable: input.countyFigureNotMeasurable ?? null,
-    }),
+    criterionEvidence,
     candidateCap: SCREENED_RESEARCH_CANDIDATE_CAP,
     candidateCapApplied: input.candidateCapApplied ?? false,
     unresolvedCandidates: [...(input.unresolvedCandidates ?? [])],
@@ -1183,7 +1377,10 @@ export function verifyAnswer(
     } else if (!claim.sourceUrls.every((url) => carriedUrls.has(url))) {
       failures.push(`claim cites a source the answer does not carry: ${claim.text}`)
     }
-    const banned = findBannedConstruction(claim.text, { criteriaGrounded: true })
+    // Claim-level scan (P3 step 9): the same idiom exemption compose
+    // applies, so a surviving non-ranking "worst of the peak" claim
+    // verifies instead of withholding the whole answer.
+    const banned = claimBannedLabel(claim.text)
     if (banned) failures.push(`banned construction in claim (${banned}): ${claim.text}`)
   }
 
@@ -1349,7 +1546,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // the figure pull, never the extraction).
   const screenProbe = screenCriteriaFromIntent(input.intent)
   const researchFirst =
-    researchCriteria.length > 0 &&
+    researchCriteria.some((c) => !c.decomposedMetricKey) &&
     screenProbe.criteria.length === 0 &&
     input.intent.metricKeys.length === 0 &&
     !!input.provider &&

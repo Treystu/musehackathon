@@ -305,13 +305,19 @@ describe('research-first handoff: the discriminator', () => {
   })
 
   it('keeps clarification for every not-servable shape', () => {
-    // Runnable Census content present: not research-first's shape.
+    // CHANGED (P3 step 2, battery A3 — recompiled plan is the
+    // authority): a retained metricKey alone is no longer a
+    // not-servable shape. The shipped exclusion dropped every
+    // servable part of A3 (the parse kept median_home_value and both
+    // partial-answer paths refused it); the retained measure now
+    // rides along as chosen and the handoff fires. A FILTER remains
+    // runnable Census content and still keeps clarification below.
     expect(
       researchFirstHandoff(
         { ...externalOnlyParse([]), metricKeys: ['median_gross_rent'] },
         OWNER_QUESTION,
       ),
-    ).toBeNull()
+    ).toMatchObject({ metricKeys: ['median_gross_rent'], clarificationNeeded: false })
     expect(
       researchFirstHandoff(
         {

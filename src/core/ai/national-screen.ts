@@ -88,14 +88,58 @@ export function boundedScreenIntent(metricKey: string, geographies: string[]): V
   })
 }
 
-/** Ascending superlatives the rescue recognises, as whole phrases. */
-const ASCENDING_SUPERLATIVES: readonly string[] = [
-  'cheapest',
-  'lowest',
-  'most affordable',
-  'least expensive',
-  'smallest',
-]
+/**
+ * Normalise reader text for rescue matching (P3 lexical robustness,
+ * battery F-A/B10): ASR transcripts double words ("the most the most
+ * cost effective"), drop words, and hyphenate inconsistently. The
+ * rescue reads only the reader's words for a superlative reading, so
+ * its matching — never figure extraction — tolerates that shape:
+ * lowercase, hyphens become spaces, and consecutive duplicate words
+ * collapse. Measured against the F-A garble variants in the battery
+ * register (doubled "most", doubled "place").
+ */
+export function normalizeRescueText(text: string): string {
+  const words = text
+    .toLowerCase()
+    .replace(/[-/]+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 0)
+  const collapsed: string[] = []
+  for (const word of words) {
+    if (collapsed[collapsed.length - 1] !== word) collapsed.push(word)
+  }
+  // ASR doubling is phrasal as often as it is lexical ("the most the
+  // most cost effective" — the F-A transcript): collapse an
+  // immediately repeated two- or three-word phrase the same way.
+  const phrases: string[] = []
+  let i = 0
+  while (i < collapsed.length) {
+    let repeated = 0
+    for (const n of [3, 2]) {
+      const prev = phrases.slice(-n).join(' ')
+      const next = collapsed.slice(i, i + n).join(' ')
+      if (phrases.length >= n && prev === next && next.length > 0) repeated = n
+    }
+    if (repeated > 0) {
+      i += repeated
+    } else {
+      phrases.push(collapsed[i]!)
+      i += 1
+    }
+  }
+  return phrases.join(' ')
+}
+
+/**
+ * Ascending superlatives the rescue recognises, as PATTERNS over
+ * stems (P3 step 1: morphological tolerance, not ever-longer word
+ * lists — "cheapest-class forms generally"). A stem plus an -est /
+ * most- / least- frame is the reading; a bare "safest" is not a cost
+ * reading and never rescues a screen (it routes to research instead).
+ */
+const ASCENDING_SUPERLATIVE_RE =
+  /\b(?:cheap|low|small|afford\w*|inexpens\w*|econom\w*|budget\w*)est\b|\bmost\s+(?:affordable|inexpensive|economical|cost\s+effective|budget\s+friendly|effective)\b|\bleast\s+expensive\b|\blowest\s+cost\b|\bcost\s+effective(?:ness)?\b|\bm[aá]s\s+(?:barato|econ[oó]mico)\b|\bmenor\s+(?:costo|precio)\b/
 
 /**
  * Measure phrases in precedence order: burden before rent (a burden
@@ -125,12 +169,28 @@ export const NATIONAL_SCREEN_LABELS: Readonly<Record<string, string>> = {
  * alone is a direction, not a cost — neither may default to rent.
  */
 const COST_SUPERLATIVES: readonly RegExp[] = [
-  /\bcheapest\b/,
+  /\bcheap\w*est\b/,
   /\bmost affordable\b/,
-  /\blowest[-\s]cost\b/,
+  /\blowest\s+cost\b/,
   /\bleast expensive\b/,
-  /\bmost inexpensive\b/,
+  /\bmost inexpens\w*\b/,
+  // "Cost effective" is a cost-of-living superlative in the reader's
+  // words (battery F-A: absent from both lexicons, the bounded screen
+  // never fired and Alaska/Oregon/Maine all dead-ended). It matches
+  // with or without the "most" frame, and in the ASR-dropped form
+  // "most effective" when a generic living place carries the cost
+  // reading (costDefaultMeasure requires that noun anyway).
+  /\bcost\s+effective(?:ness)?\b/,
+  /\bmost effective\b/,
+  /\bm[aá]s\s+(?:barato|econ[oó]mico)\b/,
 ]
+
+/** The cost-effective family on its own: unlike "cheapest housing",
+ * "most cost effective" names a cost-of-living reading, not the price
+ * of a thing, so it defaults to the headline cost measure even when
+ * no generic place noun survives (an ASR-dropped noun must not strand
+ * a bounded question whose geography the parse already holds). */
+const COST_EFFECTIVE_RE = /\bcost\s+effective(?:ness)?\b/
 
 /**
  * Generic places to live: the noun the cost superlative ranges over
@@ -139,7 +199,7 @@ const COST_SUPERLATIVES: readonly RegExp[] = [
  * live?" where no place noun appears at all.
  */
 const GENERIC_LIVING_PLACE_RE =
-  /\b(?:places?|areas?|neighbou?rhoods?|towns?|cities|city|locations?)(?:\s+to\s+live(?:\s+in)?)?\b|\bto\s+live(?:\s+in)?\b/
+  /\b(?:places?|areas?|neighbou?rhoods?|towns?|cities|city|locations?|lugar(?:es)?|ciudad(?:es)?|zona(?:s)?)(?:\s+to\s+live(?:\s+in)?)?\b|\bto\s+live(?:\s+in)?\b|\bpara\s+vivir\b/
 
 /**
  * Objects whose cost is not rent. A question naming one of these is
@@ -156,10 +216,10 @@ const NON_COST_OBJECT_RE =
  * place to live, or a non-cost object named instead.
  */
 export function costDefaultMeasure(text: string): string | null {
-  const lower = text.toLowerCase()
+  const lower = normalizeRescueText(text)
   if (!COST_SUPERLATIVES.some((phrase) => phrase.test(lower))) return null
-  if (!GENERIC_LIVING_PLACE_RE.test(lower)) return null
   if (NON_COST_OBJECT_RE.test(lower)) return null
+  if (!GENERIC_LIVING_PLACE_RE.test(lower) && !COST_EFFECTIVE_RE.test(lower)) return null
   return 'median_gross_rent'
 }
 
@@ -175,11 +235,14 @@ export function costDefaultMeasure(text: string): string | null {
  * does carry a measure ("cheapest home values") keeps its own.
  */
 export function superlativeMeasure(text: string): string | null {
-  const lower = text.toLowerCase()
-  if (!ASCENDING_SUPERLATIVES.some((word) => lower.includes(word))) return null
+  const lower = normalizeRescueText(text)
+  if (!ASCENDING_SUPERLATIVE_RE.test(lower)) return null
   for (const [phrase, key] of MEASURE_PHRASES) {
     if (phrase.test(lower)) return key
   }
+  // Spanish measure nouns (additive only, P3 step 6): "renta" is the
+  // rent measure the English phrases above cannot see.
+  if (/\brenta\b|\balquiler\b/.test(lower)) return 'median_gross_rent'
   return costDefaultMeasure(lower)
 }
 
@@ -246,8 +309,23 @@ export function rescueNationalScreen(
   queryText: string | undefined,
 ): ValidatedIntent | null {
   if (!intent.clarificationNeeded) return null
-  if (intent.metricKeys.length > 0) return null
   if (typeof queryText !== 'string' || queryText.trim() === '') return null
+  // Mixed-intent inclusivity (P3 step 2, battery A3): a retained
+  // measure no longer refuses the rescue outright. When the parse
+  // kept exactly one filter-legal measure and every real geography
+  // is bounded-screen resolvable, the retained measure is USED as
+  // the screen's measure — presented as chosen, never re-asked. A
+  // placeless retained measure keeps the old posture (nothing to
+  // bound, and the reader's superlative words alone do not widen a
+  // measure they already picked into a national screen).
+  if (intent.metricKeys.length > 0) {
+    const retained = intent.metricKeys[0]!
+    if (intent.metricKeys.length !== 1 || !isFilterLegal(retained)) return null
+    if (!ASCENDING_SUPERLATIVE_RE.test(normalizeRescueText(queryText))) return null
+    const real = intent.geographies.filter((g) => !isCountryGeography(g))
+    if (real.length === 0 || !real.every(isBoundedScreenGeography)) return null
+    return boundedScreenIntent(retained, real)
+  }
   const metricKey = superlativeMeasure(queryText)
   if (metricKey === null || !isFilterLegal(metricKey)) return null
   if (intent.geographies.every(isCountryGeography)) {
@@ -266,4 +344,30 @@ export function rescueNationalScreen(
   if (realGeographies.length === 0) return nationalScreenIntent(metricKey)
   if (!realGeographies.every(isBoundedScreenGeography)) return null
   return boundedScreenIntent(metricKey, realGeographies)
+}
+
+/**
+ * Parsed-intent completion (P3 step 6, battery D6): the lexical
+ * layer may ADD paths, never veto a parsed servable intent. A parse
+ * that itself declares a sweep over bounded geographies — the shape
+ * a fully parsed non-English superlative question arrives in, where
+ * the English superlative lexicon cannot see the reader's words —
+ * completes on the domain default measure (median gross rent, the
+ * stat band's headline) regardless of the question's language. This
+ * reads the PARSE, not the words: mode sweep_filter, no measure, no
+ * filter, every geography bounded-screen resolvable (or country-level,
+ * which completes placeless). A bare ambiguous place name, a lookup,
+ * or a parse carrying its own measure/filter is untouched and keeps
+ * its clarification.
+ */
+export function completeParsedBoundedScreen(intent: ValidatedIntent): ValidatedIntent | null {
+  if (!intent.clarificationNeeded) return null
+  if (intent.mode !== 'sweep_filter') return null
+  if (intent.metricKeys.length > 0 || intent.filters.length > 0) return null
+  const realGeographies = intent.geographies.filter((g) => !isCountryGeography(g))
+  if (realGeographies.length === 0) {
+    return intent.geographies.length > 0 ? nationalScreenIntent('median_gross_rent') : null
+  }
+  if (!realGeographies.every(isBoundedScreenGeography)) return null
+  return boundedScreenIntent('median_gross_rent', realGeographies)
 }

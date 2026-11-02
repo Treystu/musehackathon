@@ -23,6 +23,7 @@ import {
 import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
 import {
   NATIONAL_SCREEN_LABELS,
+  completeParsedBoundedScreen,
   rescueNationalScreen,
 } from '../../core/ai/national-screen'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
@@ -65,7 +66,7 @@ export const POLITICS_COVERAGE_NOTE =
   'One part of that question sits outside this data: these figures are Census Bureau data, with no voter registration, party affiliation, or election results, so places cannot be screened by politics here. Everything else in the question is handled below.'
 
 const POLITICS_QUESTION_RE =
-  /\b(republican|democrat|democratic|liberal|conservative|political|politics|party affiliation|voter registration|red state|blue state)\b/i
+  /\b(republicans?|democrats?|democratic|liberals?|conservatives?|political|politics|party affiliation|voter registration|red state|blue state)\b/i
 
 export function politicsCoverageNote(queryText: string | undefined): string {
   return queryText && POLITICS_QUESTION_RE.test(queryText) ? POLITICS_COVERAGE_NOTE : ''
@@ -80,8 +81,18 @@ export function politicsCoverageNote(queryText: string | undefined): string {
  * answering, with sources, and the politics coverage note above
  * remains the fallback when research itself cannot be reached.
  */
+/**
+ * Plural / superlative tolerance is morphological (P3 step 1), not a
+ * longer word list: stems carry optional plural -s and superlative
+ * -est forms. Measured misses in the battery register: "hospitals"
+ * and "Republicans" matched neither trigger (A3, D8 — \b(singular)\b
+ * forms), and "safest" matched neither this trigger nor the safety
+ * criterion pattern (B5 — \bsafe\b does not match "safest").
+ * The current-events arm (P3 step 7, battery E4) routes news phrasing
+ * to research instead of stranding it in clarification.
+ */
 const OUTSIDE_KNOWLEDGE_RE =
-  /\b(school|schools|starbucks|coffee shop|grocery|groceries|gym|gyms|nightlife|walkable|walkability|restaurant|restaurants|playground|hospital|clinic|doctor|airport|transit|commute|safety|crime|dangerous|families|kids|children|liberal|conservative|republican|democrat|democratic|political|politics|voter|voting|red state|blue state)\b/i
+  /\b(schools?|starbucks|coffee shops?|grocer(?:y|ies)|gyms?|nightlife|walkable|walkability|restaurants?|playgrounds?|hospitals?|clinics?|doctors?|airports?|transit|commute|saf\w*|crime|dangerous|families|kids|children|liberals?|conservatives?|republicans?|democrats?|democratic|political|politics|voter|voting|red state|blue state|farmers?\s+markets?|warm|climate|news|current events|headlines?)\b/i
 
 export function needsResearch(queryText: string | undefined): boolean {
   return !!queryText && OUTSIDE_KNOWLEDGE_RE.test(queryText)
@@ -185,11 +196,12 @@ export function hasAmbiguousPlaceCandidates(geographies: readonly string[]): boo
  *
  * The discriminator, built from the parse state that actually
  * exists. A clarifying intent hands off when ALL of these hold:
- *  - nothing-to-screen: the parse carries no runnable Census
- *    content — no filters and no metricKeys (the pipeline's own
- *    research-first condition is the same pair), so clarification's
- *    only forward path would be inventing a Census question the
- *    reader did not ask;
+ *  - nothing-to-screen: the parse carries no Census bound (no
+ *    filters), so clarification's only forward path would be
+ *    inventing a Census question the reader did not ask. A retained
+ *    metricKey is not runnable content on its own — it is a measure
+ *    to SHOW — and since P3 step 2 it rides along as chosen rather
+ *    than excluding the handoff (see the function body);
  *  - not ambiguous-identity: the geographies are not rival
  *    candidates for one name (hasAmbiguousPlaceCandidates) — that
  *    is the case the clarification panel exists to resolve;
@@ -213,12 +225,28 @@ export function hasAmbiguousPlaceCandidates(geographies: readonly string[]): boo
  * intent canRun still rejects is a state only this handoff
  * produces (isResearchFirstHandoff).
  */
+/** Intents this module's handoff produced, by reference: the marker
+ * that lets a metric-carrying handoff (P3 step 2) be told apart from
+ * an ordinary settled intent, since the intent shape itself is the
+ * parse verbatim and carries no spare field for the distinction. */
+const handedOffIntents = new WeakSet<ValidatedIntent>()
+
 export function researchFirstHandoff(
   intent: ValidatedIntent,
   queryText: string | undefined,
 ): ValidatedIntent | null {
   if (!intent.clarificationNeeded || canRun(intent)) return null
-  if (intent.filters.length > 0 || intent.metricKeys.length > 0) return null
+  // Mixed-intent inclusivity (P3 step 2, battery A3): a retained
+  // metricKey no longer excludes the handoff. The shipped exclusion
+  // dropped every servable part of "warm + affordable homes +
+  // hospitals": the parse kept median_home_value, both partial-answer
+  // paths refused it for carrying that key, and the panel then
+  // presented the retained measure back as still missing. Now the
+  // retained measure rides into the pipeline as a chosen measure
+  // (its figures are pulled and shown), the external criteria are
+  // researched or labelled, and the partial answer ships. A filter
+  // still excludes: a filtered intent is screen-servable as asked.
+  if (intent.filters.length > 0) return null
   if (hasAmbiguousPlaceCandidates(intent.geographies)) return null
   if (!queryText || PROTECTED_CHARACTERIZATION_RE.test(queryText)) return null
   // Characterization by politics keeps the coverage-note posture
@@ -227,7 +255,9 @@ export function researchFirstHandoff(
   // fallback whose failure produces the note.
   if (politicsCoverageNote(queryText)) return null
   if (researchFirstCriteria(queryText).length === 0) return null
-  return { ...intent, clarificationNeeded: false }
+  const handedOff = { ...intent, clarificationNeeded: false }
+  handedOffIntents.add(handedOff)
+  return handedOff
 }
 
 /**
@@ -237,6 +267,7 @@ export function researchFirstHandoff(
  * has exactly one producer.
  */
 export function isResearchFirstHandoff(intent: ValidatedIntent): boolean {
+  if (handedOffIntents.has(intent)) return true
   return (
     !intent.clarificationNeeded &&
     !canRun(intent) &&
@@ -587,6 +618,18 @@ export function AskPanel({
     // national-screen rescue runs first and keeps its precedence: a
     // question it can screen deterministically is screened, not
     // researched.
+    // Parsed-intent completion (P3 step 6): a parse that declares a
+    // bounded sweep serves on the default measure whatever language
+    // the question arrived in — the lexical rescue above is additive
+    // only and its silence here is not a veto. Runs before the
+    // handoff so a declared screen is screened, not researched.
+    if (!rescued && parsed.clarificationNeeded) {
+      const completed = completeParsedBoundedScreen(parsed)
+      if (completed) {
+        parsed = completed
+        rescued = completed
+      }
+    }
     let handedOff: ValidatedIntent | null = null
     if (!rescued && parsed.clarificationNeeded && onAnswerRequest) {
       handedOff = researchFirstHandoff(parsed, queryText)

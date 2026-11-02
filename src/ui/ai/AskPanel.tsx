@@ -15,6 +15,10 @@ import type {
 } from '../../core/ai/provider'
 import { diagnostics } from '../../core/ai/diagnostics'
 import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
+import {
+  NATIONAL_SCREEN_LABELS,
+  rescueNationalScreen,
+} from '../../core/ai/national-screen'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../core/ai/proxy-errors'
 import { AgentHandoff } from './AgentHandoff'
@@ -170,7 +174,7 @@ export function AskPanel({
 
   const errorNote = proxyErrorNote(proxyError) ?? note
 
-  function accept(result: IntentResult, spokenTranscript?: string) {
+  function accept(result: IntentResult, spokenTranscript?: string, queryText?: string) {
     const check = validateIntent(result.intent)
     if (!check.ok) {
       // Count the class only. The model's output and the reader's words are
@@ -181,7 +185,16 @@ export function AskPanel({
     }
     // One answer: the flag is stamped by its single owner, so the gate
     // below and ExplainOnAsk read the same runnability.
-    const parsed = withRunnability(check.intent)
+    let parsed = withRunnability(check.intent)
+    // National-screen rescue: a placeless superlative ("cheapest rent in
+    // America") clarifies with neither a place nor a measure, and the
+    // clarification's only forward path was adding a place — which
+    // defeats the question. When the reader's own words carry the
+    // reading deterministically, present the country-wide screen as the
+    // understood request instead; the note below discloses the reading
+    // before anything runs. See core/ai/national-screen.ts.
+    const rescued = rescueNationalScreen(parsed, queryText)
+    if (rescued) parsed = rescued
     // Spoken-number validation (mic path): every numeral heard must
     // match a number in the understood request. A mismatch fails
     // closed, the same way failed prose is withheld: the understood
@@ -202,7 +215,12 @@ export function AskPanel({
       }
     }
     setIntent(parsed)
-    if (parsed.clarificationNeeded) {
+    if (rescued) {
+      const label = NATIONAL_SCREEN_LABELS[rescued.metricKeys[0]!] ?? 'that measure'
+      setNote(
+        `No place was named, so this screens the whole country by ${label}, lowest first. Check the understood request below, then Run.`,
+      )
+    } else if (parsed.clarificationNeeded) {
       setNote('More detail is needed before anything runs. Check the understood request below.')
     }
   }
@@ -217,7 +235,7 @@ export function AskPanel({
       locale: 'en' as const,
     }
     try {
-      accept(await provider.intent(request, new AbortController().signal), spokenTranscript)
+      accept(await provider.intent(request, new AbortController().signal), spokenTranscript, queryText)
     } catch (err) {
       const known = extractProxyError(err)
       // A proxy failure is counted even when the BYO retry below recovers: the
@@ -237,6 +255,7 @@ export function AskPanel({
           accept(
             await byoProvider.intent(request, new AbortController().signal),
             spokenTranscript,
+            queryText,
           )
           return
         } catch {

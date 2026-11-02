@@ -282,6 +282,22 @@ export default function App() {
             dropped += 1
           }
         }
+        // Placeless sweep = the national screen (core/ai/national-screen.ts):
+        // the scope is the whole country and the sort is the request, so a
+        // bound is not required. Clear any state scope a previous run left,
+        // clear previous bounds, sort by the named measure, and say what the
+        // screen covers. A placed sweep without an expressible bound still
+        // stops at the note below and changes nothing.
+        if (intent.geographies.length === 0 && Object.keys(next).length === 0) {
+          const preset = PRESETS.find((item) => item.sort === intent.metricKeys[0])
+          if (preset) {
+            if (q.stateScope.length > 0) void q.applyScope([])
+            setFigureFilters({})
+            setSorting({ presetId: preset.id, sortKey: preset.sort, ascending: true })
+            setView('explore')
+            return `Screening the whole country by ${preset.label.toLowerCase()}, lowest first — the table below is sorted by that figure.`
+          }
+        }
         if (Object.keys(next).length === 0) {
           return 'This bound cannot be set on the screening table, which offers a maximum for rent, rent burden and home value and a minimum for households. Nothing was changed.'
         }
@@ -316,6 +332,17 @@ export default function App() {
           } else {
             void q.applyScope(scopePrefixes)
             scopeNote = ` The screen is narrowing to ${label} (it scopes by state${namedStates.some((s) => !intent.geographies.some((g) => asStateCode(g) === s)) ? ', not by city' : ''}); its figures fill in below.`
+          }
+        }
+
+        if (intent.geographies.length === 0) {
+          // A placeless bound applies to the whole country; widen any
+          // state scope a previous run left and say so.
+          if (q.stateScope.length > 0) {
+            void q.applyScope([])
+            scopeNote = ' The screen widened back to the whole country.'
+          } else {
+            scopeNote = ' The bound applies to the whole country.'
           }
         }
 

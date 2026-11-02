@@ -67,18 +67,29 @@ export function isKnownFigureKey(key: string): boolean {
  * everywhere; filter-legal additionally for sweep_filter/similarity, the
  * same list the schema and the intent gate enforce — never a second
  * list). Mode minimums: compare needs >=2 places (one place compares
- * against nothing); sweep_filter needs >=1 filter (zero filters returns
- * the full set).
+ * against nothing); a placed sweep_filter needs >=1 filter (zero filters
+ * returns the full set). One exception, measured 2026-11-01: a placeless
+ * sweep_filter is the national screen — its scope is the whole country
+ * and its sort is the request ("cheapest rent in America"), so it runs
+ * with zero geographies and zero filters as long as it names a
+ * filter-legal measure. Every other mode still needs a place, and a
+ * placed sweep still needs its bound.
  */
 export function canRun(intent: ValidatedIntent): boolean {
-  if (intent.geographies.length === 0) return false
+  if (intent.mode !== 'sweep_filter' && intent.geographies.length === 0) return false
   if (intent.metricKeys.length === 0) return false
   if (!intent.metricKeys.every(isDisplayableKey)) return false
   if (intent.mode === 'compare' && intent.geographies.length < 2) return false
   if (intent.mode === 'sweep_filter' || intent.mode === 'similarity') {
     if (!intent.metricKeys.every(isFilterLegal)) return false
   }
-  if (intent.mode === 'sweep_filter' && intent.filters.length === 0) return false
+  if (
+    intent.mode === 'sweep_filter' &&
+    intent.filters.length === 0 &&
+    intent.geographies.length > 0
+  ) {
+    return false
+  }
   return true
 }
 

@@ -211,8 +211,12 @@ describe('canRun mode minimums (single owner)', () => {
         Array.from(container.querySelectorAll('button')).find(
           (b) => b.textContent === 'Use these choices',
         ) as HTMLButtonElement
-      // Empty picks: place missing, so the button starts disabled.
-      expect(findResolve().disabled).toBe(true)
+      // Empty picks: the intent is a placeless bounded sweep, which runs
+      // as a national bound application since the 2026-11-01 national
+      // screen landed (canRun's placeless exception) — so the button
+      // starts ENABLED, where the pre-screen contract required a place
+      // first and started it disabled.
+      expect(findResolve().disabled).toBe(false)
       // Toggle the place chip: merged picks now run, so the button enables.
       const placeChip = Array.from(container.querySelectorAll('button')).find(
         (b) => b.textContent === 'HI',

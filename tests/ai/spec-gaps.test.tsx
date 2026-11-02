@@ -130,8 +130,10 @@ describe('spec-gap surfaces', () => {
     act(() => removeHonolulu.click())
 
     expect(container.querySelector('[aria-label="Clarify the request"]')).not.toBeNull()
+    // Placeless copy since the 2026-11-01 national screen: with no place
+    // left, a measure alone completes as a country-wide screen.
     expect(container.textContent).toContain(
-      'Choose the place and measure before anything runs.',
+      'Choose a place and a measure before anything runs — or just a measure, to screen the whole country by it.',
     )
     const run = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Run this request',

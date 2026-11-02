@@ -77,10 +77,26 @@ describe('intent editing', () => {
     }
   })
 
-  it('resolves clarification only when a place is chosen', () => {
+  it('resolves clarification with a place, or placeless as the national screen', () => {
     const unclear = { ...base, geographies: [], clarificationNeeded: true }
     expect(canResolveClarification({ mode: 'lookup', geographies: [] })).toBe(false)
-    expect(resolveClarification(unclear, { geographies: [], metricKeys: [] }).ok).toBe(false)
+    // No measure anywhere: nothing completes, placeless or not.
+    expect(
+      resolveClarification(
+        { ...unclear, metricKeys: [] },
+        { geographies: [], metricKeys: [] },
+      ).ok,
+    ).toBe(false)
+    // A screen measure with no place completes as the national screen
+    // since 2026-11-01 (core/ai/national-screen.ts) — the pre-screen
+    // contract required a place here and resolved nothing.
+    const screened = resolveClarification(unclear, { geographies: [], metricKeys: [] })
+    expect(screened.ok).toBe(true)
+    if (screened.ok) {
+      expect(screened.intent.mode).toBe('sweep_filter')
+      expect(screened.intent.geographies).toEqual([])
+      expect(screened.intent.clarificationNeeded).toBe(false)
+    }
     const resolved = resolveClarification(unclear, {
       geographies: ['Hilo'],
       metricKeys: ['median_gross_rent'],
@@ -243,7 +259,11 @@ describe('Ask surface completion', () => {
     )
     expect(html).toContain('Hilo')
     expect(html).toContain('Use these choices')
-    expect(html).toContain('disabled')
+    // The intent already carries a screen measure and no place, so the
+    // current choices complete as the national screen and the button is
+    // enabled; the pre-screen contract started it disabled until a
+    // place was picked.
+    expect(html).not.toContain('disabled')
   })
 
   it('offers BYO only on shutoff/error, not the happy path', () => {

@@ -11,7 +11,8 @@ export interface ClarificationCandidates {
 }
 
 const ERROR_COPY: Record<string, string> = {
-  clarification_required: 'Choose at least one place and one measure before continuing.',
+  clarification_required:
+    'Choose a place and a measure, or one screen measure for the whole country, before continuing.',
   not_allowlisted: 'That measure is not on the approved list.',
   shape_invalid: 'That choice is not valid.',
 }
@@ -64,7 +65,11 @@ export function ClarificationPanel({
 
   return (
     <section aria-label="Clarify the request" className="mt-4">
-      <p className="text-sm text-slate-700">Choose the place and measure before anything runs.</p>
+      <p className="text-sm text-slate-700">
+        {intent.geographies.length === 0
+          ? 'Choose a place and a measure before anything runs — or just a measure, to screen the whole country by it.'
+          : 'Choose the place and measure before anything runs.'}
+      </p>
       {places.length > 0 ? (
         <div className="mt-2">
           <span className="text-sm font-medium text-slate-900">Places</span>
@@ -88,7 +93,9 @@ export function ClarificationPanel({
         </div>
       ) : (
         <p className="mt-2 text-sm text-slate-700">
-          No candidate places were supplied. Add a place above, then use the current choices.
+          {intent.geographies.length === 0
+            ? 'No candidate places were supplied. Add a place above, or pick a measure below to screen the whole country by it.'
+            : 'No candidate places were supplied. Add a place above, then use the current choices.'}
         </p>
       )}
       {metrics.length > 0 ? (

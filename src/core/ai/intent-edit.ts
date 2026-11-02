@@ -9,6 +9,7 @@ import {
   validateIntent,
   withRunnability,
 } from './intent-schema'
+import { nationalScreenIntent } from './national-screen'
 import type { IntentMode, ValidatedIntent } from './provider'
 
 export type IntentFilter = ValidatedIntent['filters'][number]
@@ -82,7 +83,9 @@ export function removeFilter(intent: ValidatedIntent, filter: IntentFilter): Int
   )
   const next = { ...intent, filters }
   // Same contract as the other removals: restamp via the single owner so
-  // dropping the last filter takes a sweep back through clarification.
+  // dropping the last filter takes a placed sweep back through
+  // clarification (a placeless sweep is the national screen and stays
+  // runnable on its measure alone).
   return checked(withRunnability(next))
 }
 
@@ -90,6 +93,11 @@ export function removeFilter(intent: ValidatedIntent, filter: IntentFilter): Int
  * Whether clarification picks complete the intent. Delegates to the one
  * predicate, so the resolve button and the Run gate can never disagree.
  * Callers pass the clarification picks merged with the existing intent.
+ * One completion is not canRun's: with no place named or picked and no
+ * bound in play, a filter-legal measure completes as the national
+ * screen (national-screen.ts) — the placeless question's forward path.
+ * An intent that names a place, even an unresolvable one, never
+ * completes this way: its place must be resolved, not bypassed.
  */
 export function canResolveClarification(picks: {
   mode: IntentMode
@@ -97,6 +105,13 @@ export function canResolveClarification(picks: {
   metricKeys?: string[]
   filters?: ValidatedIntent['filters']
 }): boolean {
+  if (
+    picks.geographies.length === 0 &&
+    (picks.filters ?? []).length === 0 &&
+    (picks.metricKeys ?? []).some((key) => isFilterLegal(key))
+  ) {
+    return true
+  }
   return canRun({
     mode: picks.mode,
     geographies: picks.geographies,
@@ -109,6 +124,10 @@ export function canResolveClarification(picks: {
 /**
  * Merge clarification picks into the intent and clear the clarification
  * flag. Unresolvable picks stay unresolved; the rest are revalidated.
+ * Placeless picks with a filter-legal measure and no bound resolve to
+ * the national screen instead of merging into the original mode: the
+ * screen is the completion the question asked for, and the mode change
+ * is visible in the understood request before anything runs.
  */
 export function resolveClarification(
   intent: ValidatedIntent,
@@ -116,6 +135,11 @@ export function resolveClarification(
 ): IntentEditResult {
   const geographies = [...new Set([...intent.geographies, ...picks.geographies])].slice(0, 8)
   const metricKeys = [...new Set([...intent.metricKeys, ...picks.metricKeys])]
+  if (geographies.length === 0 && intent.filters.length === 0) {
+    const screenKey = metricKeys.find((key) => isFilterLegal(key))
+    if (screenKey !== undefined) return checked(nationalScreenIntent(screenKey))
+    return { ok: false, error: 'clarification_required' }
+  }
   if (geographies.length === 0 || metricKeys.length === 0) {
     return { ok: false, error: 'clarification_required' }
   }

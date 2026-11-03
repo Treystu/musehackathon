@@ -5,7 +5,7 @@
  * measured rather than assumed.
  *
  * The first is cost: a country-wide screening table has 33,791 rows, and a geocode
- * per row would be 33,791 requests against a daily allowance of 450. The mapping
+ * per row would be 33,791 requests against any plausible daily allowance. The mapping
  * is baked instead, served from `/map/` under an immutable year-long header, so
  * it costs one request the first time and nothing thereafter.
  *

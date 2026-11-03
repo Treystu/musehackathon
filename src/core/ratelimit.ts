@@ -14,15 +14,45 @@
  *      800-row query.
  *   2. A minimum interval between requests, with jitter so many clients do not
  *      synchronise into a thundering herd.
- *   3. A daily request budget, counted per key, so exhaustion is reported
- *      before it is hit rather than after.
+ *   3. A daily request budget, counted per browser, so usage is reported
+ *      truthfully and a runaway loop has a backstop.
  *
  * Backoff is handled in `http.ts`; this file owns pacing and budget.
  */
 
 const MIN_INTERVAL_MS = 400
 const MAX_CONCURRENCY = 2
-const DEFAULT_DAILY_BUDGET = 450
+/**
+ * The per-browser daily allowance (Lane completion K10, owner
+ * directive 2026-11-03: "Increase it, so judges can't hit any
+ * caps"). This was 450, set just under the Bureau's published
+ * 500/day per-key ceiling — and on 2026-11-03 a single morning of
+ * verification runs in one browser profile spent all 450 and the
+ * exhaustion state then failed country-wide loads and an answer's
+ * map in that profile. The measured shape of real use: a heavy
+ * state-wide research run costs ~60 counted requests, a
+ * country-wide sweep 43. At 100,000, a single session would need
+ * well over a thousand heavy runs in one UTC day to reach the
+ * wall — unreachable by construction, which is the point.
+ *
+ * What the mechanism retains: the counter still counts every
+ * counted request and budgetState() still reports used/limit/
+ * remaining truthfully; the drilldown-reserve arithmetic below
+ * stays coherent against this figure (the sweep checks the same
+ * remaining count it always did); the concurrency cap and minimum
+ * interval — the mechanisms that actually protect the key from
+ * stampedes — are untouched. What it no longer pretends to do:
+ * bound the aggregate draw on a shared key across many parallel
+ * browsers. A per-browser counter never could (the residual is
+ * recorded in the completion program's RESULTS.md); the shipped
+ * mitigation for the aggregate is per-session draw reduction —
+ * cache-first fetches (a cache hit spends nothing), baked data
+ * where it exists, and keyless paths riding the keyless posture.
+ * The observed evidence for the Bureau's side: on 2026-11-03
+ * multiple verification profiles each consumed hundreds of Census
+ * requests in one day, with zero Census refusals observed.
+ */
+const DEFAULT_DAILY_BUDGET = 100_000
 
 export interface RateLimitConfig {
   minIntervalMs: number
@@ -101,11 +131,15 @@ export function recordRequest(): void {
 /**
  * Requests held back from the country-wide sweep so a deep dive always works.
  *
- * The sweep is 43 requests against an allowance of 450, so it cannot actually
- * exhaust a day. The risk runs the other way and is less obvious: a reader who
- * opens a ZIP code, then browses ten more, has spent enough that the *next*
- * sweep — which is what makes their search meaningful — starts being refused
- * and the screen sits half-built.
+ * The sweep is 43 requests against an allowance of 100,000 (see
+ * DEFAULT_DAILY_BUDGET), so it cannot plausibly exhaust a day. The
+ * risk this floor guards is the less obvious one: a reader who opens
+ * a ZIP code, then browses ten more, has spent enough that the *next*
+ * sweep — which is what makes their search meaningful — starts being
+ * refused and the screen sits half-built. The arithmetic is
+ * unchanged since the allowance was 450: the sweep stops when the
+ * remaining count falls to this floor, a state the new allowance
+ * puts beyond any real session's reach.
  *
  * This is the floor the sweep stops at. A drilldown is not subject to it,
  * because the thing someone asked for in the last moment should not be the

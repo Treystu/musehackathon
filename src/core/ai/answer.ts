@@ -273,6 +273,19 @@ export interface ResearchCriterion {
 export type CriterionEvidenceStatus = 'met' | 'partially_measured' | 'not_measurable'
 
 /**
+ * The no-place lookup outcome's detail text (Lane A10 FM-18),
+ * shared verbatim: criterionEvidenceFor stamps it on a researched
+ * criterion whose material produced no shown place, and the UI
+ * runner matches on it to restamp those entries when the flexible
+ * completion completes the answer (Lane completion K0, 2026-11-03
+ * — the wording states the outcome without presenting the Census
+ * match as the reason the question went unanswered, per the
+ * owner's no-loophole directive).
+ */
+export const NO_PLACE_LOOKUP_DETAIL =
+  'Research returned material for this, but it produced no place that could be shown here.'
+
+/**
  * Per-criterion evidence: what serves each stated criterion, honestly labelled.
  *
  * The stored `criterion` value is an identifier, not display text: a
@@ -2001,6 +2014,30 @@ export function extractBareCandidateNames(
     if (!lead) continue
     const words = lead[1]!.split(' ')
     if (words[0]!.includes("'")) continue
+    // Wholeness guard (Lane completion K0, 2026-11-03): the take
+    // loop below descends from the full sentence lead to shorter
+    // prefixes, and a prefix can be a DIFFERENT place than the
+    // lead names — the owner's specimen lead "University City"
+    // found no whole-form hit, descended to "University", and
+    // recorded that fragment as an ambiguous name (rows named
+    // University exist in FL and MS), dismantling the multi-word
+    // name the research wrote. A unique RESOLUTION on a prefix
+    // stays legitimate ("New York City" descends to the exact
+    // bound name New York — the prefix is the place, the last
+    // word is framing), so the guard arms only the RECORDING
+    // outcomes: when every word after the first is itself a
+    // place-name component word and the whole lead is
+    // place-shaped, an ambiguous recording made from a descended
+    // prefix records the WHOLE lead instead — the mention the
+    // prose actually made, unresolved exactly as the fragment
+    // was, and whole for the flexible lane's provenance record.
+    const wholeLead = words.join(' ').replace(/\.+$/, '')
+    const guardWholeLead =
+      words.length > 1 &&
+      isPlaceShapedMention(wholeLead, componentWords) &&
+      words
+        .slice(1)
+        .every((w) => componentWords.has(w.toLowerCase().replace(/\.+$/, '')))
     let settled = false
     for (let take = words.length; take >= 1; take--) {
       // A sentence-final mention keeps the sentence's period in
@@ -2028,6 +2065,22 @@ export function extractBareCandidateNames(
             seen.add(key)
             if ('rowName' in completion) {
               if (!names.includes(completion.rowName)) names.push(completion.rowName)
+            } else if (isFragmentShapedMention(candidate, boundStateNames)) {
+              // The suffix index completes a generic fragment
+              // ambiguously by construction — "City" is a suffix
+              // of every "... City" in the bound — and this branch
+              // recorded it as a name where the byBare branch
+              // below counts the same shape as a fragment (Lane
+              // completion K0: the owner's specimen printed
+              // "City" as a named place). The FM-20 gate now
+              // applies at this recording point too: fragment-
+              // shaped completions count, never record.
+              fragments++
+            } else if (take < words.length && guardWholeLead && !seen.has(wholeLead.toLowerCase())) {
+              // Wholeness guard (above): an ambiguous recording
+              // from a descended prefix names the whole lead.
+              seen.add(wholeLead.toLowerCase())
+              ambiguous.push(wholeLead)
             } else {
               ambiguous.push(candidate)
             }
@@ -2042,6 +2095,15 @@ export function extractBareCandidateNames(
       seen.add(key)
       if (hits.length === 1) names.push(hits[0]!)
       else if (isFragmentShapedMention(candidate, boundStateNames)) fragments++
+      else if (take < words.length && guardWholeLead && !seen.has(wholeLead.toLowerCase())) {
+        // Wholeness guard (above): the descended prefix hit two
+        // or more DIFFERENT places, so it is no resolution at
+        // all — the recording names the whole lead the prose
+        // wrote ("University City"), not the fragment it was
+        // dismantled into ("University").
+        seen.add(wholeLead.toLowerCase())
+        ambiguous.push(wholeLead)
+      }
       else ambiguous.push(candidate)
       break
     }
@@ -2719,13 +2781,17 @@ export function criterionEvidenceFor(input: {
       // Cards that name places keep the "met" stamp below. This
       // branch reads the same pre-partition places the census
       // branch above reads — evidence is composed before the
-      // FM-4 direction partition, by design.
+      // FM-4 direction partition, by design. The detail text is a
+      // shared constant (NO_PLACE_LOOKUP_DETAIL) because the UI
+      // runner restamps exactly these entries when the flexible
+      // completion lands (Lane completion K0): a completed card
+      // shows places, so the no-place outcome must not stand
+      // beside them.
       evidence.push({
         criterion: criterion.label,
         kind: 'research',
         status: 'not_measurable',
-        detail:
-          'Research returned material for this, but none of the places it named could be matched to Census data, so no place is shown for it.',
+        detail: NO_PLACE_LOOKUP_DETAIL,
         sourceUrls,
       })
     } else if (criterion.id === 'safety' && !serving.some((claim) => SAFETY_DIRECTION_RE.test(claim.text))) {
@@ -3821,7 +3887,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         cappedRows.length === 0
           ? firstResearchFailed
             ? 'The research lookup for the stated criteria did not return, so no place is named here.'
-            : 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
+            : 'Research for the stated criteria did not produce a place that could be shown here.'
           : // The researched-only superlative class stated no
             // Census measure at all, so the pulled figures are
             // context for the named places — the summary says so
@@ -3835,7 +3901,33 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     })
     const composedWithMarker = {
       ...composedRaw,
-      researchNamedPlaces: [...extracted],
+      // The FULL extraction record (Lane completion K0, 2026-11-03):
+      // this field's own contract (see the type) is every name the
+      // extraction stage pulled from the findings, resolved and
+      // unresolved alike, but the stamp carried only `extracted` —
+      // the state-suffixed extractions plus the bare names that
+      // resolved. The bare AMBIGUOUS and bare UNRESOLVED buckets
+      // were left out, and they are exactly where a zero-yield run's
+      // names live: the owner's phone specimen terminated on the
+      // no-place note with its findings' names ("University",
+      // "City", and the rest) sitting in those buckets while this
+      // field read empty. The flexible completion's packet and its
+      // provenance validator both read this field
+      // (flexible-runner's researchNamedPlacesOf), so the lane
+      // designed to complete that terminal was offered none of the
+      // places the research named and its validator rejected a
+      // draft naming them — the rescue could not pass its own gate
+      // on the shape it exists for. The stamp now carries the whole
+      // record, in the unresolvedCandidates composition's order.
+      researchNamedPlaces: [
+        ...extracted,
+        ...bare.ambiguous.filter(
+          (name) => !extracted.some((e) => e.toLowerCase() === name.toLowerCase()),
+        ),
+        ...bare.unresolved.filter(
+          (name) => !extracted.some((e) => e.toLowerCase() === name.toLowerCase()),
+        ),
+      ],
       ...(cappedRows.length === 0 && !firstResearchFailed ? { noCensusMatch: true } : {}),
       ...(research.failedCriteria?.length
         ? { researchFailures: research.failedCriteria }

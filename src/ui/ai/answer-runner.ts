@@ -1,5 +1,6 @@
 import {
   decomposeResearchCriteria,
+  NO_PLACE_LOOKUP_DETAIL,
   runAnswerPipeline,
   screenCriteriaFromIntent,
   type ComposedAnswer,
@@ -1085,10 +1086,30 @@ export async function composeAnswerForRequest(input: {
     wonderConcerns?: string[]
     jev: { roundsUsed: number; passed: boolean } | 'not-run'
   } | null = null
+  // The material test (Lane completion K0, 2026-11-03): the
+  // fall-through engages on ANY research material the strict run
+  // gathered — the full extraction record, the unresolved record,
+  // or surviving cited claims — not only on the noCensusMatch
+  // marker and the extraction stamp. The owner's no-loophole
+  // directive makes the completion the terminal of last resort
+  // for every lane shape: a researched place question that ends
+  // with zero named places and any material in hand completes
+  // here, whatever internal terminal stamped the answer. The
+  // fences stand: a total research failure carries no names and
+  // no claims, so it never satisfies the test; a genuine Census
+  // screen with no match and no research material likewise; the
+  // researched-question fence (researchCriteria present, or the
+  // marker) keeps an unresearched data answer out of the lane.
+  const hasResearchMaterial =
+    answer.noCensusMatch === true ||
+    (answer.researchNamedPlaces?.length ?? 0) > 0 ||
+    answer.unresolvedCandidates.length > 0 ||
+    answer.generalClaims.length > 0
   if (
     stack &&
     answer.status === 'empty' &&
-    (answer.noCensusMatch || (answer.researchNamedPlaces?.length ?? 0) > 0)
+    (answer.researchCriteria.length > 0 || answer.noCensusMatch === true) &&
+    hasResearchMaterial
   ) {
     // Lane A9 FM-13: the flexible lane owns the run from here, and
     // its shape has no honest percent (the A7 contract — Jev-loop
@@ -1122,6 +1143,34 @@ export async function composeAnswerForRequest(input: {
         ...answer,
         status: 'flexible',
         flexible: completion.flexible,
+        // The no-place evidence entries restamp (Lane completion
+        // K0): the strict run's FM-18 entries state that the
+        // research's material produced no place that could be
+        // shown — true of the strict terminal the completion
+        // replaces, and false on the card the reader now sees,
+        // which shows those places with their evidence labels.
+        // Exactly the entries carrying the shared no-place detail
+        // restamp to served-by-the-completion; failed-lookup
+        // entries (a different detail) and Census entries are
+        // untouched, and the restamp runs only when the
+        // completion actually names places.
+        ...(completion.flexible.places.length > 0
+          ? {
+              criterionEvidence: answer.criterionEvidence.map((entry) =>
+                entry.kind === 'research' &&
+                entry.status === 'not_measurable' &&
+                entry.detail === NO_PLACE_LOOKUP_DETAIL
+                  ? {
+                      ...entry,
+                      status: 'met' as const,
+                      detail:
+                        'Served by the completed answer below — the places the research ' +
+                        'named are shown with their evidence labels.',
+                    }
+                  : entry,
+              ),
+            }
+          : {}),
         summary:
           'The cited research named places for the stated criteria, but none could be ' +
           'matched to Census data. This answer is completed from the research and the ' +

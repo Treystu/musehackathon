@@ -122,14 +122,64 @@ export async function composeFlexibleCompletion(input: {
     rawDraft = null
   }
   timings['flexible-draft'] = performance.now() - draftStarted
-  const draft = parseFlexibleDraft(rawDraft)
-  if (!draft) return null
+  let draft = parseFlexibleDraft(rawDraft)
 
   // The deterministic gate runs BEFORE the Jev loop, exactly as
   // verify runs before J-LOOP on the strict path: Jev never
-  // evaluates a completion the facts would reject, and a rejected
-  // draft ends the lane (fail-closed — the note stands).
-  if (!verifyFlexibleAnswer(draft, validationContext).ok) return null
+  // evaluates a completion the facts would reject. A zero-place
+  // draft fails the gate alongside the validator's own failures
+  // when the research named places — a completion that names no
+  // place does not answer a place question (Lane completion K0).
+  const gateFailures = (candidate: FlexibleAnswer | null): string[] => {
+    if (!candidate) return ['the draft could not be read']
+    const failures = [...verifyFlexibleAnswer(candidate, validationContext).failures]
+    if (
+      candidate.places.length === 0 &&
+      validationContext.researchNamedPlaces.length > 0
+    ) {
+      failures.push(
+        'the completion named no places, though the research named places for the stated criteria',
+      )
+    }
+    return failures
+  }
+  let failures = gateFailures(draft)
+  if (failures.length > 0) {
+    // ONE bounded re-draft (Lane completion K0, 2026-11-03; the
+    // FM-11 budget discipline applied to the completion lane):
+    // the owner's answer-every-time floor makes a single rejected
+    // draft too cheap a terminal when the failure strings tell
+    // the drafter exactly what to fix — the provenance failure
+    // names the place, the zero-place failure names the omission.
+    // A transport/parse failure retries the same request (a flap
+    // is not a drafting error); a validator failure re-drafts as
+    // a revision carrying the failure strings as its gaps. The
+    // re-draft is held to the identical gate, and a second
+    // failure ends the lane exactly as before (fail-closed — the
+    // note stands). Draft calls for one completion: at most two,
+    // plus the Jev loop's own patch calls below.
+    const redraftStarted = performance.now()
+    let rawRedraft: unknown = null
+    try {
+      rawRedraft = await deps.flexibleTransport(
+        conformFlexibleDraftRequest({
+          ...request,
+          ...(draft
+            ? { revision: { draftText: flexibleAnswerText(draft), gaps: failures } }
+            : {}),
+        }),
+      )
+    } catch {
+      rawRedraft = null
+    }
+    timings['flexible-redraft'] = performance.now() - redraftStarted
+    const redraft = parseFlexibleDraft(rawRedraft)
+    if (redraft && gateFailures(redraft).length === 0) {
+      draft = redraft
+      failures = []
+    }
+  }
+  if (!draft || failures.length > 0) return null
 
   let flexible = draft
   let jev: FlexibleCompletionOutcome['verification']['jev'] = 'not-run'

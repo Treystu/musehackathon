@@ -568,7 +568,7 @@ describe('honest notes (composeSpokenNote)', () => {
     'The answer to this question could not be composed just now. The data views below still work.',
     'That question could not be screened as asked, so no answer was composed. The data views below still work.',
     'The place named in this question could not be resolved, so no answer was composed. The data views below still work.',
-    'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.',
+    'Research for the stated criteria did not produce a place that could be shown here.',
     'Research for the stated criteria did not name a place, so no city is claimed here.',
   ]
   for (const note of NOTES) {

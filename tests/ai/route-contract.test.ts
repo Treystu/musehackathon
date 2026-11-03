@@ -232,7 +232,7 @@ function richZeroMatchAnswer(over: Record<string, unknown> = {}): ComposedAnswer
   ]
   return {
     status: 'empty',
-    summary: 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.',
+    summary: 'Research for the stated criteria did not produce a place that could be shown here.',
     places: [],
     generalClaims: claims,
     sources: Array.from({ length: 16 }, (_, i) => srcAt(i)),

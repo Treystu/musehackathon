@@ -26,7 +26,7 @@ import { SCREEN_VARS } from '../../src/core/plugins/acs'
  */
 
 const SENTENCE_1 = 'Where can I find the best schools but also the fewest fast food restaurants?'
-const NOT_MATCHED_NOTE = 'did not name a place that could be matched to Census data'
+const NOT_MATCHED_NOTE = 'did not produce a place that could be shown here'
 
 const EXTERNAL_ONLY_INTENT = {
   mode: 'lookup',

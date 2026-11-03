@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AreaRow } from '../../src/core/plugins/acs'
 import {
   decomposeResearchCriteria,
+  extractBareCandidateNames,
   researchPerCriterion,
   runAnswerPipeline,
   type ComposedAnswer,
@@ -46,7 +47,7 @@ const ROWS: AreaRow[] = [
 
 const SENTENCE_1 = 'Where can I find the best schools but also the fewest fast food restaurants?'
 const NOT_MATCHED_NOTE =
-  'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
+  'Research for the stated criteria did not produce a place that could be shown here.'
 
 const EXTERNAL_ONLY: ValidatedIntent = {
   mode: 'lookup',
@@ -672,5 +673,278 @@ describe('screen-path research failure degrade', () => {
     expect(answer.summary).toContain('did not return')
     expect(answer.researchFailures).toEqual(['School quality', 'Fast food restaurants'])
     expect(answer.noCensusMatch).toBeUndefined()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* K0: the answer-every-time floor (owner directive, 2026-11-03)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The owner's phone specimen on production 6027031: a researched
+ * place question whose findings named places only in bare form,
+ * zero resolved, terminated on the no-place note — although the
+ * flexible lane exists to complete exactly that terminal. The
+ * diagnosis, from source: (1) the pipeline stamped
+ * researchNamedPlaces with `extracted` only, leaving the bare
+ * ambiguous/unresolved buckets — where this shape's names live —
+ * out of the field the completion's packet and provenance
+ * validator read, so the lane was offered none of the findings'
+ * names and rejected drafts naming them; (2) bare extraction
+ * dismantled a multi-word lead ("University City") into a shorter
+ * different place ("University") when the whole form found no
+ * hit; (3) a generic fragment ("City") recorded as an ambiguous
+ * NAME through the bound-completion branch, which never applied
+ * the FM-20 fragment gate the byBare branch applies. The pins
+ * below hold the cures per class, plus the floor's fences: a
+ * total research failure still completes nothing, and a draft
+ * that keeps failing the validator still leaves the note.
+ */
+
+const K0_ROWS: AreaRow[] = [
+  ...ROWS,
+  { zcta: '33612', name: 'University, FL', metrics: { median_gross_rent: 1390 }, moes: { median_gross_rent: 90 } },
+  { zcta: '38677', name: 'University, MS', metrics: { median_gross_rent: 890 }, moes: { median_gross_rent: 140 } },
+  { zcta: '64106', name: 'Kansas City, MO', metrics: { median_gross_rent: 1050 }, moes: { median_gross_rent: 60 } },
+  { zcta: '33701', name: 'St. Petersburg, FL', metrics: { median_gross_rent: 1531 }, moes: { median_gross_rent: 84 } },
+]
+
+const K0_BARE_ONLY_RESEARCH = {
+  prose:
+    'University City is praised for its schools in the cited guide. ' +
+    'Petersburg is known for its few fast-food outlets.',
+  sources: [{ title: 'Regional guide', url: 'https://example.org/guide' }],
+}
+
+const K0_DRAFT = {
+  prose:
+    'The cited research named University City for the stated school criterion and ' +
+    'Petersburg for the fast-food criterion; both are shown with the evidence behind them.',
+  places: [
+    { name: 'University City', basis: 'research', note: 'Named by the cited research for school quality.', figures: [] },
+    { name: 'Petersburg', basis: 'research', note: 'Named by the cited research for few fast-food outlets.', figures: [] },
+  ],
+  figures: [],
+}
+
+describe('K0 extraction wholeness', () => {
+  it('a multi-word lead records whole when its descended prefix is only an ambiguous fragment of it', () => {
+    const bare = extractBareCandidateNames(
+      'University City is an inner-ring suburb praised for its schools.',
+      [],
+      K0_ROWS,
+    )
+    expect(bare.names).toEqual([])
+    expect(bare.ambiguous).toEqual(['University City'])
+    expect(bare.unresolved).toEqual([])
+    expect(bare.fragments).toBe(0)
+  })
+
+  it('a generic fragment completing ambiguously against the bound counts as a fragment, never a name', () => {
+    const boundRows: AreaRow[] = [
+      { zcta: '64106', name: 'Kansas City, MO', metrics: {}, moes: {} },
+      { zcta: '73102', name: 'Oklahoma City, OK', metrics: {}, moes: {} },
+      { zcta: '33701', name: 'St. Petersburg, FL', metrics: {}, moes: {} },
+    ]
+    const bare = extractBareCandidateNames(
+      'City leaders announced a new school plan this week.',
+      [],
+      boundRows,
+      boundRows,
+    )
+    expect(bare.names).toEqual([])
+    expect(bare.ambiguous).toEqual([])
+    expect(bare.unresolved).toEqual([])
+    expect(bare.fragments).toBe(1)
+  })
+
+  it('a descended prefix that resolves uniquely still resolves (New York City -> New York)', () => {
+    const rows: AreaRow[] = [
+      { zcta: '10001', name: 'New York, NY', metrics: {}, moes: {} },
+      { zcta: '64106', name: 'Kansas City, MO', metrics: {}, moes: {} },
+    ]
+    const bare = extractBareCandidateNames(
+      'New York City is described as a major cultural center.',
+      [],
+      rows,
+    )
+    expect(bare.names).toEqual(['New York, NY'])
+    expect(bare.ambiguous).toEqual([])
+  })
+})
+
+describe('K0 the floor at the pipeline and the runner', () => {
+  it('the pipeline stamps the FULL extraction record: bare ambiguous and bare unresolved names included', async () => {
+    const provider = createStubProvider({ research: async () => K0_BARE_ONLY_RESEARCH })
+    const answer = await runAnswerPipeline({
+      intent: EXTERNAL_ONLY,
+      rows: K0_ROWS,
+      researchQuery: SENTENCE_1,
+      queryText: SENTENCE_1,
+      provider,
+    })
+    expect(answer.status).toBe('empty')
+    expect(answer.noCensusMatch).toBe(true)
+    expect(answer.summary).toBe(NOT_MATCHED_NOTE)
+    // The whole multi-word name, never its fragment.
+    expect(answer.unresolvedCandidates).toContain('University City')
+    expect(answer.unresolvedCandidates).not.toContain('University')
+    expect(answer.unresolvedCandidates).toContain('Petersburg')
+    expect(answer.researchNamedPlaces).toEqual(
+      expect.arrayContaining(['University City', 'Petersburg']),
+    )
+  })
+
+  it('the specimen shape completes: bare-only names are offered to the draft and pass provenance', async () => {
+    let flexibleCalls = 0
+    const answer = await composeAnswerForRequest({
+      intent: EXTERNAL_ONLY,
+      queryText: SENTENCE_1,
+      rows: K0_ROWS,
+      resolved: resolveAnswerGeographies(EXTERNAL_ONLY, null),
+      provider: createStubProvider({ research: async () => K0_BARE_ONLY_RESEARCH }),
+      research: true,
+      stack: {
+        decisions: {},
+        ...NO_PLAN,
+        ...VERIFIED_BOOKEND,
+        jevTransport: jevTransportWith(0.95),
+        flexibleTransport: async () => {
+          flexibleCalls += 1
+          return K0_DRAFT
+        },
+      },
+    })
+    expect(flexibleCalls).toBe(1)
+    expect(answer?.status).toBe('flexible')
+    expect(answer?.flexible?.places.map((p) => [p.name, p.evidenceClass])).toEqual([
+      ['University City', 'research_named'],
+      ['Petersburg', 'research_named'],
+    ])
+    // The no-place evidence entries restamped: the completed card
+    // shows places, so no entry may still state that none could
+    // be shown.
+    const entry = answer?.criterionEvidence.find((e) => e.criterion === 'School quality')
+    expect(entry?.status).toBe('met')
+    expect(entry?.detail).toContain('completed answer below')
+  })
+
+  it('a validator-rejected draft gets ONE bounded re-draft carrying the failure strings, then completes', async () => {
+    const seen: { revision?: { gaps: string[] } }[] = []
+    const answer = await composeAnswerForRequest({
+      intent: EXTERNAL_ONLY,
+      queryText: SENTENCE_1,
+      rows: K0_ROWS,
+      resolved: resolveAnswerGeographies(EXTERNAL_ONLY, null),
+      provider: createStubProvider({ research: async () => K0_BARE_ONLY_RESEARCH }),
+      research: true,
+      stack: {
+        decisions: {},
+        ...NO_PLAN,
+        ...VERIFIED_BOOKEND,
+        jevTransport: jevTransportWith(0.95),
+        flexibleTransport: async (req: unknown) => {
+          const request = req as { revision?: { gaps: string[] } }
+          seen.push(request)
+          if (!request.revision) {
+            return {
+              prose: 'Atlantis is the place.',
+              places: [{ name: 'Atlantis', basis: 'research', figures: [] }],
+              figures: [],
+            }
+          }
+          return K0_DRAFT
+        },
+      },
+    })
+    expect(seen).toHaveLength(2)
+    expect(seen[1]?.revision?.gaps.join(' ')).toContain('Atlantis')
+    expect(answer?.status).toBe('flexible')
+  })
+
+  it('a draft that keeps failing the validator leaves the note standing, with exactly two draft calls', async () => {
+    let flexibleCalls = 0
+    const answer = await composeAnswerForRequest({
+      intent: EXTERNAL_ONLY,
+      queryText: SENTENCE_1,
+      rows: K0_ROWS,
+      resolved: resolveAnswerGeographies(EXTERNAL_ONLY, null),
+      provider: createStubProvider({ research: async () => K0_BARE_ONLY_RESEARCH }),
+      research: true,
+      stack: {
+        decisions: {},
+        ...NO_PLAN,
+        ...VERIFIED_BOOKEND,
+        jevTransport: jevTransportWith(0.95),
+        flexibleTransport: async () => {
+          flexibleCalls += 1
+          return {
+            prose: 'Atlantis is the place.',
+            places: [{ name: 'Atlantis', basis: 'research', figures: [] }],
+            figures: [],
+          }
+        },
+      },
+    })
+    expect(flexibleCalls).toBe(2)
+    expect(answer?.status).toBe('empty')
+    expect(answer?.summary).toBe(NOT_MATCHED_NOTE)
+    expect(answer?.flexible).toBeUndefined()
+  })
+
+  it('a zero-place draft fails the gate when the research named places; the re-draft can cure it', async () => {
+    let flexibleCalls = 0
+    const answer = await composeAnswerForRequest({
+      intent: EXTERNAL_ONLY,
+      queryText: SENTENCE_1,
+      rows: K0_ROWS,
+      resolved: resolveAnswerGeographies(EXTERNAL_ONLY, null),
+      provider: createStubProvider({ research: async () => K0_BARE_ONLY_RESEARCH }),
+      research: true,
+      stack: {
+        decisions: {},
+        ...NO_PLAN,
+        ...VERIFIED_BOOKEND,
+        jevTransport: jevTransportWith(0.95),
+        flexibleTransport: async () => {
+          flexibleCalls += 1
+          return flexibleCalls === 1
+            ? { prose: 'Some prose with no places.', places: [], figures: [] }
+            : K0_DRAFT
+        },
+      },
+    })
+    expect(flexibleCalls).toBe(2)
+    expect(answer?.status).toBe('flexible')
+    expect(answer?.flexible?.places).toHaveLength(2)
+  })
+
+  it('a total research failure completes nothing: no material, no draft call, the honest note stands', async () => {
+    let flexibleCalls = 0
+    const answer = await composeAnswerForRequest({
+      intent: EXTERNAL_ONLY,
+      queryText: SENTENCE_1,
+      rows: K0_ROWS,
+      resolved: resolveAnswerGeographies(EXTERNAL_ONLY, null),
+      provider: createStubProvider({
+        research: async () => {
+          throw new Error('provider down')
+        },
+      }),
+      research: true,
+      stack: {
+        decisions: {},
+        ...NO_PLAN,
+        ...VERIFIED_BOOKEND,
+        jevTransport: jevTransportWith(0.95),
+        flexibleTransport: async () => {
+          flexibleCalls += 1
+          return K0_DRAFT
+        },
+      },
+    })
+    expect(flexibleCalls).toBe(0)
+    expect(answer?.status).toBe('empty')
+    expect(answer?.summary).toContain('did not return')
   })
 })

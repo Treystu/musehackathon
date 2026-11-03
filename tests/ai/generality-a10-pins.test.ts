@@ -608,7 +608,7 @@ describe('FM-18 no-place criterion status (unit)', () => {
     const entry = evidence.find((e) => e.criterion === 'Healthcare access')!
     expect(entry.status).toBe('not_measurable')
     expect(entry.detail).toBe(
-      'Research returned material for this, but none of the places it named could be matched to Census data, so no place is shown for it.',
+      'Research returned material for this, but it produced no place that could be shown here.',
     )
     expect(entry.sourceUrls).toEqual(['https://example.com/f'])
   })
@@ -647,7 +647,7 @@ describe('FM-18 no-place criterion status (the VA healthcare specimen, sheet A)'
     const entry = answer.criterionEvidence.find((e) => e.kind === 'research')!
     expect(entry.status).toBe('not_measurable')
     expect(entry.detail).toBe(
-      'Research returned material for this, but none of the places it named could be matched to Census data, so no place is shown for it.',
+      'Research returned material for this, but it produced no place that could be shown here.',
     )
   })
 

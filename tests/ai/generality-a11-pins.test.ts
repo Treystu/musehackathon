@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  collapseModifierPrefix,
+  extractBareCandidateNames,
+  extractCandidateNamesFromProse,
+  isFragmentShapedMention,
   runAnswerPipeline,
   type ComposedAnswer,
 } from '../../src/core/ai/answer'
@@ -261,5 +265,162 @@ describe('FM-23 pipeline specimens (production resolver, real index)', () => {
     expect(answer.places.map((p) => p.name)).toEqual(['Red Lodge, MT', 'West Yellowstone, MT', 'Bigfork, MT'])
     expect(answer.unresolvedCandidates).toContain('Livingston')
     expect(answer.places.some((p) => p.zcta === '59047')).toBe(false)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* FM-20 — fragment-shaped mentions are counted, never printed as      */
+/* names (deterministic shape tightening, the gated cure shape); the   */
+/* ambiguous common-noun class stays recorded as the parked residual   */
+/* ------------------------------------------------------------------ */
+
+describe('FM-20 fragment shape (the verbatim live specimens)', () => {
+  it('every printed specimen is fragment-shaped', () => {
+    expect(isFragmentShapedMention('Florida', new Set(['florida']))).toBe(true)
+    expect(isFragmentShapedMention('Oregon', new Set(['oregon']))).toBe(true)
+    expect(isFragmentShapedMention('City')).toBe(true)
+    expect(isFragmentShapedMention('Town')).toBe(true)
+    expect(isFragmentShapedMention('Other Michigan')).toBe(true)
+    expect(isFragmentShapedMention('Surrounding Custer Gallatin')).toBe(true)
+    expect(isFragmentShapedMention('Ballad Health Dickenson')).toBe(true)
+    expect(isFragmentShapedMention('Meeting ALL')).toBe(true)
+  })
+
+  it('genuine mentions are not fragment-shaped', () => {
+    // The bound-state arm is bound-scoped: the same string under a
+    // different bound is a town's record, not the geography restated.
+    expect(isFragmentShapedMention('Florida', new Set(['texas']))).toBe(false)
+    expect(isFragmentShapedMention('Sanibel', new Set(['florida']))).toBe(false)
+    expect(isFragmentShapedMention('Livingston', new Set(['montana']))).toBe(false)
+    expect(isFragmentShapedMention('Petersburg', new Set(['florida']))).toBe(false)
+    expect(isFragmentShapedMention('Medical Lake')).toBe(false)
+    expect(isFragmentShapedMention('University Park')).toBe(false)
+    expect(isFragmentShapedMention('Charles Town')).toBe(false)
+    expect(isFragmentShapedMention('Stowe-area', new Set(['vermont']))).toBe(false)
+  })
+
+  it('the ambiguous common noun stays recorded — the parked residual class', () => {
+    // "Hurricane" is a real place name twice over (UT, WV) and a
+    // common noun; at this seam it is deterministically
+    // indistinguishable from a genuine ambiguous town mention
+    // (Livingston, pinned in FM-23 above), so no shape rule
+    // suppresses it. Semantic discrimination is a separate gated
+    // decision, recorded in the phase-4 RESULTS.
+    expect(isFragmentShapedMention('Hurricane', new Set(['florida']))).toBe(false)
+  })
+})
+
+const FM20_ROWS = [
+  fm23Row('32208', 'Jacksonville, FL', 1250),
+  fm23Row('33101', 'Miami, FL', 2100),
+  fm23Row('33602', 'Tampa, FL', 1650),
+  fm23Row('33701', 'St. Petersburg, FL', 1450),
+  fm23Row('33034', 'Florida City, FL', 1200),
+  fm23Row('84737', 'Hurricane, UT', 1100),
+  fm23Row('25510', 'Hurricane, WV', 950),
+  fm23Row('25438', 'Charles Town, WV', 1050),
+  fm23Row('24523', 'Dickenson, VA', 700),
+  fm23Row('59301', 'Custer, MT', 800),
+  fm23Row('59730', 'Gallatin Gateway, MT', 1300),
+  fm23Row('46360', 'Michigan City, IN', 900),
+  fm23Row('97103', 'Astoria, OR', 1150),
+  fm23Row('97530', 'Ruch, OR', 900),
+  fm23Row('97045', 'Oregon City, OR', 1250),
+]
+const FM20_FL_BOUND = FM20_ROWS.filter((r) => r.name.endsWith(', FL'))
+const FM20_OR_BOUND = FM20_ROWS.filter((r) => r.name.endsWith(', OR'))
+
+describe('FM-20 bare-mention recording (the live specimens at the seam)', () => {
+  it('the asked state restated is counted, not recorded — Florida and Oregon', () => {
+    const fl = extractBareCandidateNames('Florida is known for its year-round warmth and sunshine.', [], FM20_ROWS, FM20_FL_BOUND)
+    expect(fl.unresolved).toEqual([])
+    expect(fl.fragments).toBe(1)
+    const or = extractBareCandidateNames('Oregon draws visitors for its coastline and forests.', [], FM20_ROWS, FM20_OR_BOUND)
+    expect(or.unresolved).toEqual([])
+    expect(or.fragments).toBe(1)
+  })
+
+  it('generic place-nouns standing alone are counted, not recorded', () => {
+    const city = extractBareCandidateNames('City leaders announced the results this week.', [], FM20_ROWS)
+    expect(city.unresolved).toEqual([])
+    expect(city.fragments).toBe(1)
+    const town = extractBareCandidateNames('Town officials confirmed the plan on Tuesday.', [], FM20_ROWS)
+    expect(town.unresolved).toEqual([])
+    expect(town.fragments).toBe(1)
+  })
+
+  it('descriptive leads and organization names are counted, not recorded', () => {
+    const surrounding = extractBareCandidateNames('Surrounding Custer Gallatin National Forest lands, the trails run for miles.', [], FM20_ROWS)
+    expect(surrounding.unresolved).toEqual([])
+    expect(surrounding.fragments).toBe(1)
+    const other = extractBareCandidateNames('Other Michigan towns also draw summer visitors.', [], FM20_ROWS)
+    expect(other.unresolved).toEqual([])
+    expect(other.fragments).toBe(1)
+    const org = extractBareCandidateNames('Ballad Health Dickenson serves the valley with a regional clinic network.', [], FM20_ROWS)
+    expect(org.unresolved).toEqual([])
+    expect(org.fragments).toBe(1)
+  })
+
+  it('"Tampa." loses the sentence period and completes against the bound', () => {
+    const bare = extractBareCandidateNames('Tampa. The bay area anchors the Gulf coast.', [], FM20_ROWS, FM20_FL_BOUND)
+    expect(bare.names).toEqual(['Tampa, FL'])
+    expect(bare.unresolved).toEqual([])
+  })
+
+  it('a genuine ambiguous mention still records (Livingston, the FM-23 keep)', () => {
+    const rows = [...FM20_ROWS, fm23Row('77351', 'Livingston, TX', 950), fm23Row('70754', 'Livingston, LA', 900)]
+    const bare = extractBareCandidateNames('Livingston is the classic rail town gateway to the valley.', [], rows)
+    expect(bare.ambiguous).toEqual(['Livingston'])
+    expect(bare.fragments).toBe(0)
+  })
+
+  it('the ambiguous common noun still records — boundary pin for the parked class', () => {
+    const bare = extractBareCandidateNames('Hurricane season runs from June through November.', [], FM20_ROWS, FM20_FL_BOUND)
+    expect(bare.ambiguous).toEqual(['Hurricane'])
+  })
+})
+
+describe('FM-20 modifier collapse (Historic Jacksonville)', () => {
+  it('extraction collapses a modifier-prefixed mention to the place name', () => {
+    expect(extractCandidateNamesFromProse('Historic Jacksonville, OR preserves its brick main street.')).toEqual(['Jacksonville, OR'])
+    expect(extractCandidateNamesFromProse('Downtown Jacksonville, FL is the urban core.')).toEqual(['Jacksonville, FL'])
+    expect(collapseModifierPrefix('Historic Jacksonville, OR')).toBe('Jacksonville, OR')
+    expect(collapseModifierPrefix('Jacksonville, OR')).toBe('Jacksonville, OR')
+    expect(collapseModifierPrefix('Historic')).toBe('Historic')
+  })
+
+  it('the pipeline records the collapsed name once, never the modifier form', async () => {
+    const answer = await fm23Run({
+      q: 'Where in Oregon is the most charming small town?',
+      geographies: ['Oregon'],
+      rows: [
+        fm23Row('97103', 'Astoria, OR', 1150),
+        fm23Row('97365', 'Newport, OR', 1200),
+        fm23Row('97530', 'Ruch, OR', 900),
+      ],
+      prose:
+        'Historic Jacksonville, OR preserves its brick main street and festival calendar. ' +
+        'Jacksonville, OR is often called the most charming small town in the state.',
+    })
+    expect(answer.unresolvedCandidates).toEqual(['Jacksonville, OR'])
+    expect(answer.unresolvedCandidates).not.toContain('Historic Jacksonville, OR')
+  })
+})
+
+describe('FM-20 Florida weather pipeline specimen (sheet Q1 shape)', () => {
+  it('Tampa cards through the bare seam; "Florida" and "Tampa." never print', async () => {
+    const answer = await fm23Run({
+      q: 'What city in Florida has the best weather year-round?',
+      geographies: ['Florida'],
+      rows: [...FM20_FL_BOUND, fm23Row('32801', 'Orlando, FL', 1550), fm23Row('32501', 'Pensacola, FL', 1050)],
+      prose:
+        'Florida enjoys mild winters across the peninsula. ' +
+        'St. Petersburg, FL records more sunny days than any other large city in the state. ' +
+        'Tampa. The bay city nearby shares the same dry winter pattern.',
+    })
+    expect(answer.places.map((p) => p.name)).toEqual(['St. Petersburg, FL', 'Tampa, FL'])
+    expect(answer.unresolvedCandidates).not.toContain('Florida')
+    expect(answer.unresolvedCandidates).not.toContain('Tampa.')
+    expect(answer.unmatchedFragmentCount ?? 0).toBeGreaterThanOrEqual(1)
   })
 })

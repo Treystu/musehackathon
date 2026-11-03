@@ -1665,6 +1665,42 @@ const CANDIDATE_NAME_FULL_STATE_RE = new RegExp(
   'g',
 )
 
+/** Single-word state names by abbreviation (for the FM-20 bound-state test). */
+const SINGLE_WORD_STATE_NAME_BY_ABBR: ReadonlyMap<string, string> = new Map(
+  Object.entries(STATE_NAME_TO_ABBR)
+    .filter(([name]) => !name.includes(' '))
+    .map(([name, abbr]) => [abbr, name.toLowerCase()]),
+)
+
+/**
+ * Descriptive modifier words that can precede a place name in
+ * findings prose without being part of the name (Lane A11 FM-20):
+ * research writes "Historic Jacksonville, OR" for the town of
+ * Jacksonville, and the modifier form resolves to nothing — the
+ * name the research means is the place under its own name, so the
+ * mention collapses to it, at extraction and at bare-mention
+ * recording alike. Neither word opens a Census place name, which
+ * is what makes the strip safe: there is no "Historic X" or
+ * "Downtown X" in the shipped index to shadow.
+ */
+const MODIFIER_PREFIX_WORDS: ReadonlySet<string> = new Set(['historic', 'downtown'])
+
+/**
+ * Drop a leading descriptive modifier from a candidate name
+ * ("Historic Jacksonville, OR" -> "Jacksonville, OR"; bare form
+ * "Historic Jacksonville" -> "Jacksonville"). Names of fewer than
+ * two bare words, and names whose first word is not a modifier,
+ * pass through untouched.
+ */
+export function collapseModifierPrefix(name: string): string {
+  const commaAt = name.indexOf(',')
+  const bare = (commaAt >= 0 ? name.slice(0, commaAt) : name).trim()
+  const words = bare.split(/\s+/)
+  if (words.length < 2 || !MODIFIER_PREFIX_WORDS.has(words[0]!.toLowerCase())) return name
+  const collapsed = words.slice(1).join(' ')
+  return commaAt >= 0 ? collapsed + name.slice(commaAt) : collapsed
+}
+
 /**
  * Default extraction: "Name, ST" mentions in the findings prose, in
  * mention order, de-duplicated. Prose names without a state are not
@@ -1706,7 +1742,16 @@ export function extractCandidateNamesFromProse(prose: string): string[] {
     if (breakAt >= 3) name = name.slice(breakAt + 2)
     if (!names.includes(name)) names.push(name)
   }
-  return names
+  // Modifier-prefixed mentions collapse to the place's own name
+  // (FM-20, above): the collapsed form is what resolution tests
+  // and what the unmatched record names — "Historic Jacksonville,
+  // OR" is not a second candidate beside Jacksonville.
+  const collapsed: string[] = []
+  for (const name of names) {
+    const canonical = collapseModifierPrefix(name)
+    if (!collapsed.includes(canonical)) collapsed.push(canonical)
+  }
+  return collapsed
 }
 
 /** Sentence openers that are never a bare candidate mention. */
@@ -1747,6 +1792,74 @@ function isPlaceShapedMention(mention: string, componentWords: ReadonlySet<strin
     .map((w) => w.replace(/\.+$/, ''))
     .filter((w) => w.length > 0)
   return words.some((w) => componentWords.has(w))
+}
+
+/** Generic place-nouns: as a whole mention they name a category, not a place. */
+const GENERIC_PLACE_NOUNS: ReadonlySet<string> = new Set([
+  'city', 'town', 'village', 'county', 'area', 'region', 'district', 'community', 'state',
+])
+
+/**
+ * Sentence-lead words that describe rather than name, from the
+ * measured specimens: a mention opening with one is prose framing
+ * ("Surrounding Custer Gallatin ...", "Other Michigan towns ...",
+ * "Meeting ALL the criteria ..."), never a place's own name —
+ * no Census place name opens with any of them.
+ */
+const NON_NAME_LEAD_WORDS: ReadonlySet<string> = new Set(['surrounding', 'other', 'meeting'])
+
+/**
+ * Healthcare-organization words (the "Ballad Health Dickenson"
+ * specimen): in a non-initial position they mark an organization
+ * named for a region, not a place. Initial position is exempt —
+ * Medical Lake, WA is a place, and its first word is the name.
+ */
+const ORG_CLASS_WORDS: ReadonlySet<string> = new Set(['health', 'hospital', 'medical', 'clinic'])
+
+const STATE_ABBRS: ReadonlySet<string> = new Set(Object.values(STATE_NAME_TO_ABBR))
+
+/**
+ * Fragment shape (Lane A11 FM-20): a recorded mention can pass the
+ * FM-14 place-shaped test — some word of it is a real place-name
+ * component somewhere — and still be prose, not a name. The live
+ * re-verification sheet on 44f90ff printed "Florida", "City",
+ * "Town", "Other Michigan", "Surrounding Custer Gallatin",
+ * "Ballad Health Dickenson" and "Meeting ALL" as named places.
+ * Each is shape-regular, and the shapes are the ones a genuine
+ * mention never takes:
+ * - the asked geography's own state name standing alone (the
+ *   prose is talking about the geography, not naming a place in
+ *   it) — tested only against the bound states the caller passes,
+ *   so a same-named town outside the bound keeps its record;
+ * - a generic place-noun as the whole mention ("City", "Town");
+ * - a descriptive lead word (above);
+ * - an all-caps emphasis word that is not a state code ("ALL");
+ * - a healthcare-organization word in non-initial position.
+ * A mention none of these describes records exactly as before —
+ * the genuinely ambiguous token (Livingston, Howard) still reads
+ * as a name, per the FM-5/FM-14 trade. The one specimen class no
+ * shape separates is the ambiguous common noun ("Hurricane",
+ * recorded because two real places carry the name while the prose
+ * meant the weather): it is deterministically indistinguishable
+ * from a genuine ambiguous town mention at this seam and stays
+ * recorded, as the phase-3 FM-20 note anticipated — semantic
+ * discrimination for it is a separate, gated decision.
+ */
+export function isFragmentShapedMention(
+  mention: string,
+  boundStateNames?: ReadonlySet<string>,
+): boolean {
+  const rawWords = mention.split(/[\s-]+/).filter((w) => w.length > 0)
+  const words = rawWords
+    .map((w) => w.toLowerCase().replace(/\.+$/, ''))
+    .filter((w) => w.length > 0)
+  if (words.length === 0) return false
+  if (words.length === 1 && boundStateNames?.has(words[0]!)) return true
+  if (words.length === 1 && GENERIC_PLACE_NOUNS.has(words[0]!)) return true
+  if (NON_NAME_LEAD_WORDS.has(words[0]!)) return true
+  if (rawWords.some((w) => /^[A-Z]{2,}$/.test(w) && !STATE_ABBRS.has(w))) return true
+  if (words.slice(1).some((w) => ORG_CLASS_WORDS.has(w))) return true
+  return false
 }
 
 /**
@@ -1868,6 +1981,19 @@ export function extractBareCandidateNames(
   // the caller supplies them; without a bound there is no index
   // to normalize against and the all-rows reading below stands.
   const boundIndex = boundRows && boundRows.length > 0 ? boundNameIndex(boundRows) : null
+  // The bound geography's own state names (Lane A11 FM-20): a
+  // bare mention that merely restates the asked state ("Florida"
+  // opening a Florida answer's findings) is prose about the
+  // geography, not a candidate in it — the fragment-shape test
+  // below reads the mention against these names.
+  const boundStateNames = new Set<string>()
+  if (boundRows) {
+    for (const row of boundRows) {
+      const abbr = stateSuffixOf(row.name)
+      const full = abbr ? SINGLE_WORD_STATE_NAME_BY_ABBR.get(abbr) : undefined
+      if (full) boundStateNames.add(full)
+    }
+  }
   const seen = new Set<string>()
   for (const sentence of prose.split(/(?<=[.!?])\s+/)) {
     if (/^Answer:/.test(sentence)) continue
@@ -1877,7 +2003,13 @@ export function extractBareCandidateNames(
     if (words[0]!.includes("'")) continue
     let settled = false
     for (let take = words.length; take >= 1; take--) {
-      const candidate = words.slice(0, take).join(' ')
+      // A sentence-final mention keeps the sentence's period in
+      // the lead capture ("Tampa." as a one-word fragment
+      // sentence): the period is punctuation, not part of the
+      // name — strip it before every test, so the mention can
+      // complete against the bound (FM-16) and records under the
+      // name itself rather than as a punctuated token (FM-20).
+      const candidate = words.slice(0, take).join(' ').replace(/\.+$/, '')
       const key = candidate.toLowerCase()
       if (covered.has(key)) {
         settled = true
@@ -1909,6 +2041,7 @@ export function extractBareCandidateNames(
       if (seen.has(key)) break
       seen.add(key)
       if (hits.length === 1) names.push(hits[0]!)
+      else if (isFragmentShapedMention(candidate, boundStateNames)) fragments++
       else ambiguous.push(candidate)
       break
     }
@@ -1935,13 +2068,29 @@ export function extractBareCandidateNames(
     // count on the card (FM-17) — accounted, never silent, and
     // never guessed into a place (the FM-5 invariant, restated
     // for the sparser loads a fixture or a scoped sweep carries).
-    const mention = words.join(' ')
+    //
+    // The recorded form is the name itself (Lane A11 FM-20): the
+    // sentence's trailing period stripped and any descriptive
+    // modifier collapsed, the same canonical form extraction
+    // produces — and a mention that is fragment-SHAPED
+    // (isFragmentShapedMention: the asked state restated, a
+    // generic noun, a descriptive lead, an emphasis word, an
+    // organization) is counted as a fragment even when some word
+    // of it is place-shaped, because printing it as a name was
+    // the re-verification sheet's defect.
+    const mention = collapseModifierPrefix(words.join(' ').replace(/\.+$/, ''))
     const key = mention.toLowerCase()
     if (BARE_MENTION_OPENERS.has(words[0]!.toLowerCase())) continue
     if (seen.has(key) || covered.has(key)) continue
     seen.add(key)
-    if (isPlaceShapedMention(mention, componentWords)) unresolved.push(mention)
-    else fragments++
+    if (
+      isPlaceShapedMention(mention, componentWords) &&
+      !isFragmentShapedMention(mention, boundStateNames)
+    ) {
+      unresolved.push(mention)
+    } else {
+      fragments++
+    }
   }
   return { names, ambiguous, unresolved, fragments }
 }

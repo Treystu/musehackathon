@@ -620,7 +620,20 @@ describe('A9 pins — variance (FM-11: one bounded re-ask of an all-empty stage)
       queryText: text,
       provider,
     })
-    expect(calls.n).toBe(2)
+    // Adapted 2026-11-03 (Lane completion K1): the count was 2 —
+    // the stage's own two passes. The scenario's yield is material
+    // with ZERO resolution (Durango is not among the loaded rows),
+    // which is exactly the pipeline-level resolution re-ask's
+    // trigger (K1): one more researchPerCriterion invocation (two
+    // passes: schools returns again, coffee fails again) brings
+    // the total to 4. The FM-11 invariant this pin names is
+    // unchanged — researchPerCriterion itself still never re-asks
+    // a stage with material (pinned at function level in the
+    // flexible-lane partial-tolerance suite); the added calls are
+    // the pipeline's separate, bounded resolution mechanism, and
+    // the failure record survives the merge (a criterion stays
+    // failed only when both stages failed it).
+    expect(calls.n).toBe(4)
     expect(answer.researchFailures).toContain('Coffee nearby')
   })
 })

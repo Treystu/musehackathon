@@ -3,6 +3,7 @@ import type { AreaRow } from '../../src/core/plugins/acs'
 import {
   decomposeResearchCriteria,
   extractBareCandidateNames,
+  filterWorkingNarration,
   researchPerCriterion,
   runAnswerPipeline,
   type ComposedAnswer,
@@ -946,5 +947,197 @@ describe('K0 the floor at the pipeline and the runner', () => {
     expect(flexibleCalls).toBe(0)
     expect(answer?.status).toBe('empty')
     expect(answer?.summary).toContain('did not return')
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* K1 — reliability: the resolution re-ask + interim narration        */
+/* (2026-11-03 completion program; Jev gate proceed / destructive     */
+/* 0.10 / advances 0.96 under policy v1)                              */
+/* ------------------------------------------------------------------ */
+
+const K1_ROWS: AreaRow[] = [
+  ...ROWS,
+  { zcta: '33602', name: 'Tampa, FL', metrics: { median_gross_rent: 1280 }, moes: { median_gross_rent: 70 } },
+  { zcta: '78701', name: 'Austin, TX', metrics: { median_gross_rent: 1450 }, moes: { median_gross_rent: 80 } },
+]
+
+function k1ResearchStub(responses: Array<{ prose: string; claims: string[] } | Error>) {
+  const queries: string[] = []
+  let call = 0
+  const provider = createStubProvider({
+    research: (input) => {
+      queries.push(input.queryText)
+      const response = responses[Math.min(call, responses.length - 1)]
+      call += 1
+      if (response instanceof Error) throw response
+      return {
+        prose: response.prose,
+        sources: [{ url: 'https://example.org/k1', title: 'K1 source' }],
+      }
+    },
+  })
+  return { provider, queries, calls: () => call }
+}
+
+const K1_INTENT_FL: ValidatedIntent = {
+  mode: 'lookup',
+  geographies: ['FL'],
+  metricKeys: [],
+  filters: [],
+  clarificationNeeded: false,
+}
+
+describe('K1 the resolution re-ask', () => {
+  it('a zero-yield stage gets one steered re-ask, and the merged yield cards', async () => {
+    const stub = k1ResearchStub([
+      {
+        prose: 'Educators mention Traverse City, MI for its schools.',
+        claims: ['Traverse City, MI is known for its schools.'],
+      },
+      {
+        prose: 'Families also name Tampa, FL for its schools.',
+        claims: ['Tampa, FL is known for its schools.'],
+      },
+    ])
+    const answer = await runAnswerPipeline({
+      provider: stub.provider,
+      intent: K1_INTENT_FL,
+      rows: K1_ROWS,
+      researchQuery: 'best schools in florida',
+      queryText: 'best schools in florida',
+      researchCriteria: ['best schools in florida'],
+    })
+    expect(stub.calls()).toBe(2)
+    expect(stub.queries[1]).toContain('incorporated cities or towns')
+    expect(stub.queries[1]).toContain('U.S. Census data')
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name)).toContain('Tampa, FL')
+  })
+
+  it('a double zero-yield stays bounded at two stage calls and keeps the honest note shape', async () => {
+    const stub = k1ResearchStub([
+      {
+        prose: 'Educators mention Traverse City, MI for its schools.',
+        claims: ['Traverse City, MI is known for its schools.'],
+      },
+      {
+        prose: 'Educators also mention Marquette, MI for its schools.',
+        claims: ['Marquette, MI is known for its schools.'],
+      },
+    ])
+    const answer = await runAnswerPipeline({
+      provider: stub.provider,
+      intent: K1_INTENT_FL,
+      rows: K1_ROWS,
+      researchQuery: 'best schools in florida',
+      queryText: 'best schools in florida',
+      researchCriteria: ['best schools in florida'],
+    })
+    expect(stub.calls()).toBe(2)
+    expect(answer.status).toBe('empty')
+    expect(answer.noCensusMatch).toBe(true)
+    expect(answer.unresolvedCandidates).toContain('Traverse City, MI')
+    expect(answer.unresolvedCandidates).toContain('Marquette, MI')
+  })
+
+  it('a re-ask failure keeps the first yield untouched', async () => {
+    const stub = k1ResearchStub([
+      {
+        prose: 'Educators mention Traverse City, MI for its schools.',
+        claims: ['Traverse City, MI is known for its schools.'],
+      },
+      new Error('re-ask transport down'),
+    ])
+    const answer = await runAnswerPipeline({
+      provider: stub.provider,
+      intent: K1_INTENT_FL,
+      rows: K1_ROWS,
+      researchQuery: 'best schools in florida',
+      queryText: 'best schools in florida',
+      researchCriteria: ['best schools in florida'],
+    })
+    // Three provider calls: the first stage, then the re-ask stage's
+    // own two attempts — researchPerCriterion's FM-11 discipline
+    // retries a totally-failed stage once before it throws, and the
+    // throw is what lands here. The bound that matters is the
+    // pipeline's: ONE resolution re-ask, never a loop.
+    expect(stub.calls()).toBe(3)
+    expect(answer.status).toBe('empty')
+    expect(answer.unresolvedCandidates).toContain('Traverse City, MI')
+  })
+
+  it('a run that cards on the first yield never re-asks', async () => {
+    const stub = k1ResearchStub([
+      {
+        prose: 'Families name Tampa, FL for its schools.',
+        claims: ['Tampa, FL is known for its schools.'],
+      },
+    ])
+    const answer = await runAnswerPipeline({
+      provider: stub.provider,
+      intent: K1_INTENT_FL,
+      rows: K1_ROWS,
+      researchQuery: 'best schools in florida',
+      queryText: 'best schools in florida',
+      researchCriteria: ['best schools in florida'],
+    })
+    expect(stub.calls()).toBe(1)
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name)).toContain('Tampa, FL')
+  })
+})
+
+describe('K1 interim-state narration', () => {
+  it('the interim line drops; the finding form survives', () => {
+    const { prose, dropped } = filterWorkingNarration(
+      'Initial results point to Austin. Austin, TX is described by residents as strongly liberal.',
+      [],
+    )
+    expect(dropped).toContain('Initial results point to Austin.')
+    expect(prose).toContain('Austin, TX is described by residents as strongly liberal.')
+    expect(prose).not.toContain('Initial results')
+  })
+
+  it('a source-reporting sentence with the interim subject but no direction verb survives', () => {
+    const { prose, dropped } = filterWorkingNarration(
+      'Initial findings from the county survey recorded high satisfaction among residents.',
+      [],
+    )
+    expect(dropped).toEqual([])
+    expect(prose).toContain('Initial findings from the county survey')
+  })
+
+  it('the interim claim never reaches a terminal card', async () => {
+    const provider = createStubProvider({
+      research: () => ({
+        prose:
+          'Initial results point to Austin, TX as the most liberal. ' +
+          'Austin, TX is described by the cited guide as strongly liberal.',
+        sources: [{ url: 'https://example.org/k1tx', title: 'K1 Texas source' }],
+      }),
+    })
+    const answer = await runAnswerPipeline({
+      provider,
+      intent: {
+        mode: 'lookup',
+        geographies: ['TX'],
+        metricKeys: [],
+        filters: [],
+        clarificationNeeded: false,
+      },
+      rows: K1_ROWS,
+      researchQuery: 'most liberal city in texas',
+      queryText: 'most liberal city in texas',
+      researchCriteria: ['most liberal city in texas'],
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name)).toContain('Austin, TX')
+    expect(answer.droppedClaims?.map((c) => c.text).join(' ')).toContain(
+      'Initial results point to Austin',
+    )
+    const keptClaims = answer.places.flatMap((p) => p.claims.map((c) => c.text)).join(' ')
+    expect(keptClaims).not.toContain('Initial results')
+    expect(keptClaims).toContain('strongly liberal')
   })
 })

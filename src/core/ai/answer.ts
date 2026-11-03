@@ -1619,6 +1619,38 @@ export async function researchPerCriterion(
   }
 }
 
+/**
+ * Merge two research stage yields into one (Lane completion K1,
+ * 2026-11-03): prose concatenates, sources dedupe by URL, claims
+ * dedupe by text, and a criterion stays in failedCriteria only
+ * when BOTH stages failed it — a criterion the second stage
+ * served is served. The first stage's re-ask record (FM-11)
+ * carries over; the merge introduces no bookkeeping of its own.
+ */
+export function mergeResearchStages(
+  first: ResearchStageResult,
+  second: ResearchStageResult,
+): ResearchStageResult {
+  const sources = [...first.sources]
+  for (const source of second.sources) {
+    if (!sources.some((s) => s.url === source.url)) sources.push(source)
+  }
+  const claims = [...first.claims]
+  for (const claim of second.claims) {
+    if (!claims.some((c) => c.text === claim.text)) claims.push(claim)
+  }
+  const failedCriteria = (first.failedCriteria ?? []).filter((label) =>
+    (second.failedCriteria ?? []).includes(label),
+  )
+  return {
+    prose: [first.prose, second.prose].filter((p) => p.trim() !== '').join('\n'),
+    sources,
+    claims,
+    ...(failedCriteria.length > 0 ? { failedCriteria } : {}),
+    ...(first.reAsked ? { reAsked: true } : {}),
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Research-first candidate extraction                                 */
 /* ------------------------------------------------------------------ */
@@ -2417,6 +2449,20 @@ const NARRATION_FIRST_PERSON_PAST_RE =
   /\bI\s+(?:checked|gathered|mapped|looked|searched|examined|reviewed|verified|compared|assessed|investigated|researched)\b/i
 const NARRATION_PROGRESS_RE =
   /\b(?:show|shows|showed|showing|found|lean|leans|leaning|stand|stands|results?)\b[^.!?]*\bso far\b/i
+/**
+ * Interim-state assertions (Lane completion K1, 2026-11-03): a
+ * segment whose subject is the research's own preliminary state
+ * — "Initial results point to Austin." on the R21 Texas terminal
+ * — reports the RUN's intermediate standing, not a finding about
+ * a place; the finding form names the place as its subject
+ * ("Austin is described as..."). The shape needs both halves:
+ * the interim subject (initial/early/preliminary results or
+ * findings) and a direction verb (point/suggest/indicate/show/
+ * lean/favor), so a source-reporting sentence ("Initial findings
+ * from the county survey recorded...") survives.
+ */
+const NARRATION_INTERIM_RE =
+  /\b(?:initial|early|preliminary)\s+(?:results?|findings?)\b[^.!?]*\b(?:points?|suggests?|indicates?|shows?|leans?|favou?rs?)\b/i
 const NARRATION_META_RE =
   /\bresearch covered the first\b|\bwere not researched\b|\bnot addressed here\b|\bno web support found for\b|\bper pre-screening\b|\bfigures are shown separately\b|\bnot from the web\b/i
 const RAW_METRIC_KEY_RE =
@@ -2435,6 +2481,7 @@ function isWorkingNarration(segment: string, sources: readonly AnswerSource[]): 
   }
   if (/^Let(?:'s| us| me)\b/i.test(segment)) return true
   if (NARRATION_PROGRESS_RE.test(segment)) return true
+  if (NARRATION_INTERIM_RE.test(segment)) return true
   if (NARRATION_META_RE.test(segment)) return true
   if (/^Question:/i.test(segment)) return true
   if (RAW_METRIC_KEY_RE.test(segment)) return true
@@ -3768,55 +3815,6 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   }
   if (researchFirst && firstResearch) {
     // Stage order inverts: research -> extract -> resolve -> pull.
-    const research = firstResearch
-    const extractor = input.candidateExtractor ?? (({ prose }) => extractCandidateNamesFromProse(prose))
-    // Extraction reads hygienic prose (Lane A10 FM-14): compose
-    // has always refused the research model's working narration
-    // as claims, but extraction read the raw prose, so narration
-    // sentence openings entered the candidate stream as names —
-    // sheet A's unmatched lines carried "Now I'll" among the
-    // fragments. The same filter now runs before extraction;
-    // claims derivation is untouched (compose still filters per
-    // claim from the stage's prose).
-    const extractionProse = filterWorkingNarration(research.prose, research.sources).prose
-    const extractedStd = await extractor({ prose: extractionProse, sources: research.sources })
-    // Bare names the prose carries with no state at all join the
-    // candidate list when the bound rows carry exactly one match
-    // (FM-5, extractBareCandidateNames); ambiguous bare names are
-    // recorded with the unresolved names below, never resolved.
-    const bare = extractBareCandidateNames(extractionProse, extractedStd, input.rows, candidateBoundRows)
-    const extracted = [
-      ...extractedStd,
-      ...bare.names.filter((n) => !extractedStd.includes(n)),
-    ]
-    const resolver = input.candidateResolver ?? ((names) => resolveCandidatesAgainstRows(names, input.rows))
-    const resolved = await resolver(extracted)
-    // Resolution is by name, exactly as extracted: a resolver either
-    // returns the extracted name with its ZCTAs or it does not, and
-    // a name it does not return is reported, never repaired.
-    const resolvedNames = new Set(resolved.map((r) => r.name.toLowerCase()))
-    const unresolvedCandidates = [
-      ...extracted.filter((name) => !resolvedNames.has(name.toLowerCase())),
-      ...bare.ambiguous.filter((name) => !resolvedNames.has(name.toLowerCase())),
-      ...bare.unresolved.filter(
-        (name) =>
-          !resolvedNames.has(name.toLowerCase()) &&
-          !extracted.some((e) => e.toLowerCase() === name.toLowerCase()),
-      ),
-    ]
-    // Geography binding (FM-15): the resolved set is tested
-    // against the question's bound before any row is selected —
-    // resolution itself is national (the index and the loaded rows
-    // know every state), so this is the first point where the
-    // asked geography speaks. Out-of-bound candidates are recorded
-    // on the answer, never carded.
-    const binding = bindResolvedCandidates(resolved, candidateBound, input.rows)
-    // One representative row per resolved candidate, in research
-    // order (representativeCandidateRows — the battery B3 rule:
-    // places count by place, not by ZIP). The claim that names the
-    // place still attributes to the representative by name mention
-    // in compose, so no researched claim is lost with a split ZIP.
-    const candidateRows = representativeCandidateRows(binding.bound, research.claims, input.rows)
     // A top-N ask bounds the composed places at the asked count
     // (never above the candidate cap): "top five" answered with ten
     // places has not answered the question that was asked. The
@@ -3827,39 +3825,142 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       requestedCount !== null
         ? Math.min(SCREENED_RESEARCH_CANDIDATE_CAP, requestedCount)
         : SCREENED_RESEARCH_CANDIDATE_CAP
-    const candidateCapApplied = candidateRows.length > SCREENED_RESEARCH_CANDIDATE_CAP
-    // Intersection ranking (2026-11-03, the Colorado cure): on the
-    // state-bounded arm, when the question also carries a criterion
-    // decomposed onto a Census metric (cost of living onto median
-    // gross rent), the research order is not the answer's order —
-    // the candidates are the researched criterion's places, ranked
-    // by the decomposed measure, lowest first, because both shipped
-    // decomposed measures read low-is-better (rent is the cost
-    // reading; the no-internet count is the access reading).
-    // Candidates with no published figure for the measure sort
-    // last, in research order — a missing figure is not the lowest
-    // — and the evidence detail discloses that they are not ranked
-    // on it. The sort is stable, so equal figures keep the research
-    // order, and it runs before the cap so the cap keeps the
-    // best-ranked candidates. The pre-existing research-first arms
-    // keep research order untouched: that order is their pinned
-    // contract (the B3 counting pin, geo-resolution), and the
-    // ranking belongs to the state-bounded intersection class this
-    // arm serves.
     const rankKey = researchCriteria.find((c) => c.decomposedMetricKey)?.decomposedMetricKey
-    const rankedRows = rankKey && widenedStateBound
-      ? [...candidateRows].sort((a, b) => {
-          const av = a.metrics[rankKey]
-          const bv = b.metrics[rankKey]
-          const aKnown = typeof av === 'number' && Number.isFinite(av)
-          const bKnown = typeof bv === 'number' && Number.isFinite(bv)
-          if (aKnown && bKnown) return av - bv
-          if (aKnown) return -1
-          if (bKnown) return 1
-          return 0
-        })
-      : candidateRows
-    const cappedRows = rankedRows.slice(0, placeLimit)
+    /**
+     * Materialize one research stage result into candidate rows:
+     * extract -> resolve -> bind -> rank -> cap, through the same
+     * seams in the same order for the first yield and for the
+     * resolution re-ask's merged yield below, so a place the
+     * re-ask rescues is materialized exactly as a first-yield
+     * place is.
+     */
+    const materialize = async (stage: ResearchStageResult) => {
+      const extractor =
+        input.candidateExtractor ?? (({ prose }) => extractCandidateNamesFromProse(prose))
+      // Extraction reads hygienic prose (Lane A10 FM-14): compose
+      // has always refused the research model's working narration
+      // as claims, but extraction read the raw prose, so narration
+      // sentence openings entered the candidate stream as names —
+      // sheet A's unmatched lines carried "Now I'll" among the
+      // fragments. The same filter now runs before extraction;
+      // claims derivation is untouched (compose still filters per
+      // claim from the stage's prose).
+      const extractionProse = filterWorkingNarration(stage.prose, stage.sources).prose
+      const extractedStd = await extractor({ prose: extractionProse, sources: stage.sources })
+      // Bare names the prose carries with no state at all join the
+      // candidate list when the bound rows carry exactly one match
+      // (FM-5, extractBareCandidateNames); ambiguous bare names are
+      // recorded with the unresolved names below, never resolved.
+      const bare = extractBareCandidateNames(extractionProse, extractedStd, input.rows, candidateBoundRows)
+      const extracted = [
+        ...extractedStd,
+        ...bare.names.filter((n) => !extractedStd.includes(n)),
+      ]
+      const resolver =
+        input.candidateResolver ?? ((names) => resolveCandidatesAgainstRows(names, input.rows))
+      const resolved = await resolver(extracted)
+      // Resolution is by name, exactly as extracted: a resolver either
+      // returns the extracted name with its ZCTAs or it does not, and
+      // a name it does not return is reported, never repaired.
+      const resolvedNames = new Set(resolved.map((r) => r.name.toLowerCase()))
+      const unresolvedCandidates = [
+        ...extracted.filter((name) => !resolvedNames.has(name.toLowerCase())),
+        ...bare.ambiguous.filter((name) => !resolvedNames.has(name.toLowerCase())),
+        ...bare.unresolved.filter(
+          (name) =>
+            !resolvedNames.has(name.toLowerCase()) &&
+            !extracted.some((e) => e.toLowerCase() === name.toLowerCase()),
+        ),
+      ]
+      // Geography binding (FM-15): the resolved set is tested
+      // against the question's bound before any row is selected —
+      // resolution itself is national (the index and the loaded rows
+      // know every state), so this is the first point where the
+      // asked geography speaks. Out-of-bound candidates are recorded
+      // on the answer, never carded.
+      const binding = bindResolvedCandidates(resolved, candidateBound, input.rows)
+      // One representative row per resolved candidate, in research
+      // order (representativeCandidateRows — the battery B3 rule:
+      // places count by place, not by ZIP). The claim that names the
+      // place still attributes to the representative by name mention
+      // in compose, so no researched claim is lost with a split ZIP.
+      const candidateRows = representativeCandidateRows(binding.bound, stage.claims, input.rows)
+      const candidateCapApplied = candidateRows.length > SCREENED_RESEARCH_CANDIDATE_CAP
+      // Intersection ranking (2026-11-03, the Colorado cure): on the
+      // state-bounded arm, when the question also carries a criterion
+      // decomposed onto a Census metric (cost of living onto median
+      // gross rent), the research order is not the answer's order —
+      // the candidates are the researched criterion's places, ranked
+      // by the decomposed measure, lowest first, because both shipped
+      // decomposed measures read low-is-better (rent is the cost
+      // reading; the no-internet count is the access reading).
+      // Candidates with no published figure for the measure sort
+      // last, in research order — a missing figure is not the lowest
+      // — and the evidence detail discloses that they are not ranked
+      // on it. The sort is stable, so equal figures keep the research
+      // order, and it runs before the cap so the cap keeps the
+      // best-ranked candidates. The pre-existing research-first arms
+      // keep research order untouched: that order is their pinned
+      // contract (the B3 counting pin, geo-resolution), and the
+      // ranking belongs to the state-bounded intersection class this
+      // arm serves.
+      const rankedRows = rankKey && widenedStateBound
+        ? [...candidateRows].sort((a, b) => {
+            const av = a.metrics[rankKey]
+            const bv = b.metrics[rankKey]
+            const aKnown = typeof av === 'number' && Number.isFinite(av)
+            const bKnown = typeof bv === 'number' && Number.isFinite(bv)
+            if (aKnown && bKnown) return av - bv
+            if (aKnown) return -1
+            if (bKnown) return 1
+            return 0
+          })
+        : candidateRows
+      const cappedRows = rankedRows.slice(0, placeLimit)
+      return { extracted, bare, unresolvedCandidates, binding, candidateCapApplied, cappedRows }
+    }
+    let research = firstResearch
+    let m = await materialize(research)
+    // The resolution re-ask (Lane completion K1, 2026-11-03): the
+    // stage returned material and extraction named candidates, but
+    // ZERO resolved against the bound index — the Michigan shape
+    // (carded on one build, no-place on the next, on identical
+    // questions): FM-11's re-ask cannot see this case, because the
+    // stage is not empty; the yield died one layer down, at
+    // resolution. Exactly one bounded re-ask, steered at the
+    // failure: name specific incorporated cities and towns, each
+    // with its state, preferring places Census data carries. The
+    // yields merge (the stage's own dedupe rules; a criterion
+    // stays failed only when both stages failed it) and the merged
+    // stage re-materializes through the same seams. A re-ask that
+    // throws keeps the first yield untouched — the run is never
+    // worse for having asked. Runs that card never re-ask, and a
+    // stage with no extraction record at all has nothing to steer
+    // toward (that is FM-11's and the honest note's ground).
+    if (
+      m.cappedRows.length === 0 &&
+      !firstResearchFailed &&
+      m.extracted.length + m.bare.ambiguous.length + m.bare.unresolved.length > 0
+    ) {
+      try {
+        const steered = await researchPerCriterion(
+          input.provider!,
+          input.intent.geographies,
+          researchCriteria,
+          `${input.researchQuery!}\n` +
+            'Name the places you find as specific incorporated cities or towns, each ' +
+            'with its U.S. state (for example, "Traverse City, Michigan"), and prefer ' +
+            'places that appear in U.S. Census data over neighborhoods, regions, or ' +
+            'organizations.',
+          signal,
+        )
+        research = mergeResearchStages(research, steered)
+        m = await materialize(research)
+      } catch {
+        // The first yield stands, exactly as gathered.
+      }
+    }
+    const { extracted, bare, unresolvedCandidates, binding, candidateCapApplied, cappedRows } = m
     const baseScreen = screenRows(input.intent, input.rows, input.geographyZctas)
     const pullScreen: ScreenResult = {
       criteria: [],

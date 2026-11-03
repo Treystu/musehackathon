@@ -167,7 +167,7 @@ function appLikeAnswerHandler(store: AskSessionStore) {
 
 describe('tab switch and the Ask session (item 17a)', () => {
   it('mid-flight: the parse and the answer complete into the store while the panel is unmounted', async () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const gate = deferred<IntentResult>()
     let intentCalls = 0
     const provider = createStubProvider({
@@ -213,7 +213,7 @@ describe('tab switch and the Ask session (item 17a)', () => {
   })
 
   it('after an answer: question, thread, and answer survive a switch away and back', async () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const provider = createStubProvider({
       intent: async () => ({ intent: sweepIntent }),
     })
@@ -238,7 +238,7 @@ describe('tab switch and the Ask session (item 17a)', () => {
 describe('staged status (item 17b)', () => {
   it('under one second the ack suffices; past it the stage line appears; the live text changes only on transitions', async () => {
     let now = 50_000
-    const store = new AskSessionStore(null, () => now)
+    const store = new AskSessionStore(() => now)
     const token = store.beginStageRun('understanding')
     render(
       <p>
@@ -281,7 +281,7 @@ describe('staged status (item 17b)', () => {
 
   it('a fast run never shows the staged line', async () => {
     let now = 90_000
-    const store = new AskSessionStore(null, () => now)
+    const store = new AskSessionStore(() => now)
     const token = store.beginStageRun('understanding')
     render(
       <p>

@@ -49,7 +49,7 @@ import {
 import { createSpeechDriver, type SpeechDriver } from './ai/speech-driver'
 import { composeSpokenSummary, guardSpokenSentences } from './ai/spoken-answer'
 import { StagedStatus } from './ai/StagedStatus'
-import { AskSessionStore } from './ai/session-store'
+import { AskSessionStore, type SessionAnswerRequest } from './ai/session-store'
 import { researchAck } from './ai/ack'
 import {
   canRefine,
@@ -330,7 +330,7 @@ export default function App() {
     getAnswerSnapshot,
   )
   const answerRequest = answerState.request
-  const setAnswerRequest = (value: { id: number; intent: ValidatedIntent; queryText: string } | null) =>
+  const setAnswerRequest = (value: SessionAnswerRequest | null) =>
     sessionStore.setAnswerState({ request: value })
   const answer = answerState.answer
   const setAnswer = (value: ComposedAnswer | null) => sessionStore.setAnswerState({ answer: value })
@@ -387,6 +387,17 @@ export default function App() {
   const [composeInFlight, setComposeInFlight] = useState(false)
   const [generalInFlight, setGeneralInFlight] = useState(false)
   const [refineInFlight, setRefineInFlight] = useState(false)
+  /**
+   * The ask generation whose execution produced the selection and
+   * drilldowns the Ask surface's supporting blocks render
+   * (ask-surface reset cure): stamped by the panel's execution
+   * wrapper below at the moment an ask's execution runs. The stat
+   * band needs no stamp — it is screen state, not an execution's
+   * output, and the reset retires it from the first ask on.
+   */
+  const [executionEpoch, setExecutionEpoch] = useState(0)
+  /** The ask generation the in-flight refinement belongs to. */
+  const refineEpochRef = useRef(0)
   const answerLoadIds = useRef(new Set<number>())
   const answerComposedIds = useRef(new Set<number>())
   const answerInFlightIds = useRef(new Set<number>())
@@ -429,6 +440,41 @@ export default function App() {
   const generalSeq = useRef(0)
   const generalQueryRef = useRef<string | null>(null)
 
+  /**
+   * A new ask has begun (ask-surface reset cure, 2026-11-02; fired
+   * by AskPanel's runQuery before the parse): the previous run's
+   * surface state retires NOW, at ask time — not at hand-off, which
+   * left the previous answer standing through the whole new parse
+   * and, for a question ending in clarification, standing as its
+   * outcome. Concretely: the ask generation bumps (the answer
+   * column's render gates key on it, so the previous answer and its
+   * note stop rendering on the Ask surface from this moment); a
+   * live decision modal expires (its refinement could otherwise be
+   * chosen mid-parse and land unguarded over the new run); the
+   * general card and note clear and the general sequence bumps, so
+   * a general landing from the previous question discards itself;
+   * and the answer sequence bumps, so a previous compose still in
+   * flight discards its landing and the answer effect refuses to
+   * start or note work for the superseded request. The landed
+   * answer itself stays in the store — the Map tab reads it as the
+   * last answer's results (item 18) until the new request replaces
+   * it at hand-off; only the Ask surface stops showing it.
+   */
+  const handleAskStart = useCallback((_queryText: string) => {
+    const epoch = sessionStore.getSnapshot().answer.askEpoch + 1
+    generalSeq.current += 1
+    generalQueryRef.current = null
+    setGeneralInFlight(false)
+    answerRequestSeq.current += 1
+    setComposeInFlight(false)
+    sessionStore.setAnswerState({
+      askEpoch: epoch,
+      generalAnswer: null,
+      generalNote: null,
+    })
+    setModalState((state) => expireModalForNewQuestion(state))
+  }, [])
+
   const handleAnswerRequest = useCallback((intent: ValidatedIntent, queryText: string) => {
     const id = ++answerRequestSeq.current
     // Adopt the run's staged-status clock (item 17): the parse began
@@ -452,7 +498,12 @@ export default function App() {
       setGeneralNote(null)
     }
     setModalState((state) => expireModalForNewQuestion(state))
-    setAnswerRequest({ id, intent, queryText })
+    setAnswerRequest({
+      id,
+      intent,
+      queryText,
+      epoch: sessionStore.getSnapshot().answer.askEpoch,
+    })
   }, [])
 
   /**
@@ -568,6 +619,12 @@ export default function App() {
       // lifecycle cure): previously the refinement's stage ran with
       // no mount anywhere, the card standing unchanged over seconds
       // of staged work.
+      // The refinement belongs to this ask generation (ask-surface
+      // reset cure): a new ask begun while it runs retires it — its
+      // landing is discarded, the same supersession the compose
+      // landing has always had, and its frame stops rendering.
+      const epochAtChoose = sessionStore.getSnapshot().answer.askEpoch
+      refineEpochRef.current = epochAtChoose
       const refineToken = sessionStore.beginStageRun('screening')
       setRefineInFlight(true)
       void (async () => {
@@ -585,6 +642,7 @@ export default function App() {
             option: optionId,
             onStage: (stage, subject) => sessionStore.setStage(refineToken, stage, subject ?? null),
           })
+          if (sessionStore.getSnapshot().answer.askEpoch !== epochAtChoose) return
           setAnswer(refined)
           if (refined !== answer) {
             setModalState((state) => markRefined(state, branch))
@@ -605,6 +663,16 @@ export default function App() {
   useEffect(() => {
     if (!answerRequest) return
     const { id, intent, queryText } = answerRequest
+    // Superseded before its work started (ask-surface reset cure):
+    // a new ask bumped the sequence past this request, so no scoped
+    // load, no terminal note, and no compose starts for it from
+    // here — its landing guard below was never the whole story,
+    // because the effect itself could still spend work and land
+    // notes for a question the reader has already replaced. (A
+    // request restored from a previous page life also reads as
+    // superseded here; it is only ever restored together with its
+    // landed outcome, which needs no work.)
+    if (answerRequestSeq.current !== id) return
     if (answerComposedIds.current.has(id) || answerInFlightIds.current.has(id)) return
     // A re-run re-arms the bounded wait's timer below if this
     // request is still waiting; a stale timer never outlives the
@@ -1226,6 +1294,24 @@ export default function App() {
     [addZip, placeIndex, countyIndex, q.applyScope, q.stateScope],
   )
 
+  /**
+   * The execution the panel runs, wrapped to stamp the ask
+   * generation that caused it (ask-surface reset cure): the Ask
+   * surface's execution-derived blocks — the selected-places
+   * briefing and the ask-mode comparison — render only for the
+   * generation whose execution produced the selection behind them,
+   * so a new ask retires the previous run's blocks until its own
+   * execution lands, and a run that never executes (a general
+   * question, a clarification) leaves them retired.
+   */
+  const executeIntentForPanel = useCallback(
+    (intent: ValidatedIntent) => {
+      setExecutionEpoch(sessionStore.getSnapshot().answer.askEpoch)
+      return executeIntent(intent)
+    },
+    [executeIntent],
+  )
+
   /*
    * A comparison carried in the URL.
    *
@@ -1740,9 +1826,10 @@ export default function App() {
                   session={sessionStore}
                   provider={HOUSE_PROVIDER}
                   figures={askFigures}
-                  onExecute={executeIntent}
+                  onExecute={executeIntentForPanel}
                   onAnswerRequest={handleAnswerRequest}
                   onGeneralRequest={handleGeneralRequest}
+                  onAskStart={handleAskStart}
                   onVoiceModeChange={setVoiceMode}
                   clarificationCandidates={{
                     geographies: [],
@@ -1811,7 +1898,7 @@ export default function App() {
                 </p>
               </div>
             ) : null}
-            {answer ? (
+            {answer && answerRequest && (answerRequest.epoch ?? 0) === answerState.askEpoch ? (
               <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
                 {voiceMode && !voiceMuted && speechDriverRef.current?.isAvailable() ? (
                   <div className="mb-2 text-right">
@@ -1829,7 +1916,10 @@ export default function App() {
                 ) : null}
                 <AnswerCard answer={answer} />
               </div>
-            ) : answerNote && answerRequest && answerNote.id === answerRequest.id ? (
+            ) : answerNote &&
+              answerRequest &&
+              answerNote.id === answerRequest.id &&
+              (answerRequest.epoch ?? 0) === answerState.askEpoch ? (
               <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
                 <section
                   aria-label="Answer"
@@ -1870,7 +1960,7 @@ export default function App() {
                 </p>
               </div>
             ) : null}
-            {refineInFlight && stage !== null && answer ? (
+            {refineInFlight && refineEpochRef.current === answerState.askEpoch && stage !== null && answer ? (
               <div className="anim-rise mx-auto mt-2 max-w-3xl px-2">
                 {/*
                   A decision-modal refinement's working frame
@@ -1896,7 +1986,11 @@ export default function App() {
                 />
               </div>
             )}
-            {mode === 'ask' && q.selected.length === 0 && q.sweepStatus === 'ready' && screenStats && (
+            {mode === 'ask' &&
+              answerState.askEpoch === 0 &&
+              q.selected.length === 0 &&
+              q.sweepStatus === 'ready' &&
+              screenStats && (
               <div className="anim-rise anim-rise-2 mx-auto mt-10 grid max-w-4xl grid-cols-1 gap-6 border-t border-slate-200 pt-8 text-center sm:grid-cols-3">
                 <div>
                   <p className="figure-value text-3xl">{num.format(screenStats.count)}</p>
@@ -1922,7 +2016,8 @@ export default function App() {
                 </div>
               </div>
             )}
-            {briefingPlaces.length > 0 && (
+            {briefingPlaces.length > 0 &&
+              (mode === 'data' || executionEpoch === answerState.askEpoch) && (
               <div className="mx-auto mt-12 max-w-3xl border-t border-slate-200 pt-8">
                 <BriefingView
                   provider={HOUSE_PROVIDER}
@@ -2204,8 +2299,12 @@ export default function App() {
             {/* Keep the comparison visible until the first sweep rows arrive.
                 In Ask mode it is the result region, so it shows whenever a
                 selection exists (the sweep-section comparison covers the
-                data mode when rows are loaded). */}
-            {q.selected.length > 0 && (mode === 'ask' || q.sweep.length === 0) && (
+                data mode when rows are loaded). Ask mode adds the ask
+                generation gate (ask-surface reset cure): the selection it
+                renders must be the current ask's own execution output, not
+                an earlier run's. */}
+            {q.selected.length > 0 &&
+              (mode === 'ask' ? executionEpoch === answerState.askEpoch : q.sweep.length === 0) && (
               <Comparison
                 drilldowns={q.drilldowns}
                 onDeselect={q.deselect}

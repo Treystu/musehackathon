@@ -33,24 +33,26 @@ import type { GeneralAnswerData } from './general-runner'
  * is waiting on return. Unmounting a surface now unsubscribes a
  * listener and nothing else.
  *
- * Persistence: the serializable session is written to sessionStorage
- * on every change (the same storage class the decision modals
- * already use for their decisions record — see
- * core/ai/decision-branches.ts, DECISIONS_SESSION_KEY — and the
- * intent-url channel for shareable state), so an accidental reload
- * restores the thread. Precisely what survives a reload: the
- * question text, the understood request (intent), the panel notes,
- * finished web research (prose + sources), the last answer request
- * together with its landed outcome (the last composed answer or
- * its terminal note), the general lane's answer/note, and the
- * decision modal's closed/refined branch sets (the decisions
- * themselves live in their own session record, unchanged). What
- * does NOT survive a reload: any in-flight run (busy and the stage
- * state restore cleared — a run cannot resume across a page load,
- * and claiming it was still running would be inventing state), an
- * answer request whose run was still in flight (the projection
- * below drops it: it has no landed outcome to restore), the
- * ack line, and a transient proxy error.
+ * Persistence: NONE across a page load (refresh-starts-clean cure,
+ * 2026-11-02, owner live finding: "somehow my refreshing (hard
+ * refresh even) is keeping the query in the tool... ensure that
+ * caching isn't too sticky"). Item 17 originally wrote the
+ * serializable session to sessionStorage on every change, so a
+ * reload restored the thread: the question text, the understood
+ * request, the panel notes, finished web research, the last answer
+ * request with its landed outcome, the general lane's answer/note,
+ * and the modal branch sets. That restore is retired: the store is
+ * memory-only, a page load starts a clean session — empty question
+ * box, no restored answer presented as the standing state — and
+ * the query/thread now follows the same contract the indicator
+ * lifecycle cure already established for runs (an in-flight run
+ * does not resume across a load). What item 17's ownership change
+ * exists for is untouched: within one page life the store lives
+ * above the tab surfaces, so Ask → Map → back preserves the
+ * in-flight run and the thread exactly as before. State a reader
+ * deliberately carries across loads travels by its own channels,
+ * unchanged: shared-link decisions in the URL, and the reader's own
+ * keys and saved searches in their own stores.
  */
 
 /** The panel's standalone-research state (AskPanel's original union). */
@@ -76,6 +78,14 @@ export interface SessionAnswerRequest {
   id: number
   intent: ValidatedIntent
   queryText: string
+  /**
+   * The ask generation that minted this request (ask-surface reset
+   * cure, 2026-11-02): App stamps each request with the askEpoch
+   * current when the answer layer adopts the run. Optional only so
+   * requests seeded directly in tests read as generation 0 — every
+   * live mint sets it.
+   */
+  epoch?: number
 }
 
 /** The answer column's state, formerly App useState, now store-owned. */
@@ -86,6 +96,16 @@ export interface AnswerState {
   generalAnswer: GeneralAnswerData | null
   generalNote: string | null
   modal: ModalState
+  /**
+   * The ask generation (ask-surface reset cure, 2026-11-02): bumped
+   * by App at every new ask's start, before the parse. The Ask
+   * surface renders a landed answer or note only when the request
+   * that produced it belongs to the current generation, so a
+   * previous run's outcome can never stand as — or beside — the new
+   * run's. The Map tab's contract is untouched: it reads the last
+   * landed answer itself, not this generation gate.
+   */
+  askEpoch: number
 }
 
 /**
@@ -163,31 +183,6 @@ export function stagedStatusVisible(stage: StageState | null, now: number): bool
   return stage !== null && now - stage.startedAt >= STAGED_STATUS_THRESHOLD_MS
 }
 
-export const ASK_SESSION_STORAGE_KEY = 'civicscope.ask-session.v1'
-
-/** The minimal storage shape (sessionStorage in the browser, a stub in tests). */
-export interface SessionStorageLike {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-}
-
-/** sessionStorage when it exists and works, else null (private modes throw). */
-export function defaultSessionStorage(): SessionStorageLike | null {
-  try {
-    const candidate = (globalThis as { sessionStorage?: unknown }).sessionStorage
-    if (
-      candidate &&
-      typeof (candidate as SessionStorageLike).getItem === 'function' &&
-      typeof (candidate as SessionStorageLike).setItem === 'function'
-    ) {
-      return candidate as SessionStorageLike
-    }
-  } catch {
-    return null
-  }
-  return null
-}
-
 export function initialPanelState(): PanelState {
   return {
     text: '',
@@ -210,6 +205,7 @@ export function initialAnswerState(): AnswerState {
     generalAnswer: null,
     generalNote: null,
     modal: initialModalState(),
+    askEpoch: 0,
   }
 }
 
@@ -217,104 +213,9 @@ export function initialSessionSnapshot(): SessionSnapshot {
   return { panel: initialPanelState(), answer: initialAnswerState(), stage: null }
 }
 
-/**
- * The persistence projection for the answer slice (indicator
- * lifecycle cure, 2026-11-02): a request whose run was still in
- * flight — no composed answer and no terminal note landed — does
- * not survive a reload. Busy and the stage state were already
- * projected out on exactly this reasoning (an in-flight run cannot
- * resume across a page load), but the request itself survived, and
- * the answer area keys its working-state mount off the request
- * alone: a restored in-flight request rendered the ack + thinking
- * dots forever, with no run behind them — its re-driven compose's
- * result is discarded by the per-page-life supersession guard in
- * App, so no terminal ever arrived (audit evidence C4a/C4b). A
- * request that DID land — an answer or a note — survives whole.
- * Applied on both sides of the storage boundary: serialize never
- * writes the phantom, and deserialize drops one written by an
- * earlier build.
- */
-function projectAnswerForPersistence(answer: AnswerState): AnswerState {
-  if (answer.request !== null && answer.answer === null && answer.note === null) {
-    return { ...answer, request: null }
-  }
-  return answer
-}
-
-/**
- * The reload-persistence projection (see the file header for the
- * exact survives / does-not-survive contract): busy, a loading
- * research state, the ack, a transient error, a live modal, the
- * stage state, and an unlanded answer request are all reset rather
- * than serialized, because none of them can truthfully resume
- * after a page load.
- */
-export function serializeSession(snapshot: SessionSnapshot): string {
-  const { panel, answer } = snapshot
-  const projectedAnswer = projectAnswerForPersistence(answer)
-  return JSON.stringify({
-    v: 1,
-    panel: {
-      ...panel,
-      busy: false,
-      ack: '',
-      caughtError: null,
-      research:
-        panel.research.status === 'loading' ? { status: 'idle' } : panel.research,
-    },
-    answer: {
-      request: projectedAnswer.request,
-      answer: projectedAnswer.answer,
-      note: projectedAnswer.note,
-      generalAnswer: projectedAnswer.generalAnswer,
-      generalNote: projectedAnswer.generalNote,
-      modal: {
-        live: null,
-        closedBranches: [...answer.modal.closedBranches],
-        refinedBranches: [...answer.modal.refinedBranches],
-      },
-    },
-  })
-}
-
-/** Parse a persisted session back; any doubt returns null (a fresh session). */
-export function deserializeSession(raw: string | null): SessionSnapshot | null {
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw) as {
-      v?: unknown
-      panel?: Partial<PanelState>
-      answer?: Partial<AnswerState> & {
-        modal?: { closedBranches?: unknown; refinedBranches?: unknown }
-      }
-    }
-    if (parsed.v !== 1 || !parsed.panel || !parsed.answer) return null
-    const panel: PanelState = { ...initialPanelState(), ...parsed.panel, busy: false }
-    const closed = Array.isArray(parsed.answer.modal?.closedBranches)
-      ? (parsed.answer.modal.closedBranches as ModalState['closedBranches'])
-      : []
-    const refined = Array.isArray(parsed.answer.modal?.refinedBranches)
-      ? (parsed.answer.modal.refinedBranches as ModalState['refinedBranches'])
-      : []
-    const answer: AnswerState = projectAnswerForPersistence({
-      ...initialAnswerState(),
-      ...parsed.answer,
-      modal: {
-        live: null,
-        closedBranches: new Set(closed) as ModalState['closedBranches'],
-        refinedBranches: new Set(refined) as ModalState['refinedBranches'],
-      },
-    })
-    return { panel, answer, stage: null }
-  } catch {
-    return null
-  }
-}
-
 export class AskSessionStore {
   private snapshot: SessionSnapshot
   private listeners = new Set<() => void>()
-  private readonly storage: SessionStorageLike | null
   private readonly nowFn: () => number
   private stageTokenSeq = 0
   private readonly inFlight = new Map<string, Promise<unknown>>()
@@ -343,18 +244,16 @@ export class AskSessionStore {
     requestAtRunStart: null as SessionAnswerRequest | null,
   }
 
-  constructor(storage: SessionStorageLike | null = defaultSessionStorage(), now: () => number = () => Date.now()) {
-    this.storage = storage
+  /**
+   * Memory-only (refresh-starts-clean cure, see the file header):
+   * the constructor takes no storage because there is nothing to
+   * restore from — every page life starts from the initial
+   * snapshot, and within the page life this one instance carries
+   * the session across tab switches.
+   */
+  constructor(now: () => number = () => Date.now()) {
     this.nowFn = now
-    let restored: SessionSnapshot | null = null
-    if (storage) {
-      try {
-        restored = deserializeSession(storage.getItem(ASK_SESSION_STORAGE_KEY))
-      } catch {
-        restored = null
-      }
-    }
-    this.snapshot = restored ?? initialSessionSnapshot()
+    this.snapshot = initialSessionSnapshot()
   }
 
   /** useSyncExternalStore contract: stable references, bound once. */
@@ -373,13 +272,6 @@ export class AskSessionStore {
 
   private emit(): void {
     for (const listener of [...this.listeners]) listener()
-    if (this.storage) {
-      try {
-        this.storage.setItem(ASK_SESSION_STORAGE_KEY, serializeSession(this.snapshot))
-      } catch {
-        // A full or blocked sessionStorage must never break the session.
-      }
-    }
   }
 
   setPanel(patch: Partial<PanelState>): void {

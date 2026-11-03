@@ -426,6 +426,7 @@ export function AskPanel({
   onExecute,
   onAnswerRequest,
   onGeneralRequest,
+  onAskStart,
   onVoiceModeChange,
   proxyError,
   clarificationCandidates,
@@ -489,6 +490,15 @@ export function AskPanel({
    */
   onGeneralRequest?: (intent: ValidatedIntent, queryText: string) => void
   /**
+   * A new ask has begun (ask-surface reset cure, 2026-11-02): fired
+   * once per runQuery, before the parse, so the owner of the answer
+   * column can clear the previous run's surface state at ask time —
+   * not at hand-off time, which left the previous answer, its modal,
+   * and its general card standing through the whole new parse. The
+   * inquiry wave-off is not an ask and never fires this.
+   */
+  onAskStart?: (queryText: string) => void
+  /**
    * Voice-mode activation for spoken answers (plan C10): called with
    * true only when a mic transcript is ACCEPTED (the question arrived
    * by voice), and with false on a typed submit. A clarified
@@ -525,7 +535,7 @@ export function AskPanel({
    * research variant naming its first criterion.
    */
   const localStoreRef = useRef<AskSessionStore | null>(null)
-  if (localStoreRef.current === null) localStoreRef.current = new AskSessionStore(null)
+  if (localStoreRef.current === null) localStoreRef.current = new AskSessionStore()
   const session = sessionProp ?? localStoreRef.current
   // The third argument is the server snapshot: several surface pins
   // render this panel with renderToStaticMarkup, and
@@ -536,6 +546,8 @@ export function AskPanel({
   const panel = useSyncExternalStore(session.subscribe, getPanelSnapshot, getPanelSnapshot)
   const getAnswerSnapshot = () => session.getSnapshot().answer
   const answerSlice = useSyncExternalStore(session.subscribe, getAnswerSnapshot, getAnswerSnapshot)
+  const getStageSnapshot = () => session.getSnapshot().stage
+  const stage = useSyncExternalStore(session.subscribe, getStageSnapshot, getStageSnapshot)
   const text = panel.text
   const setText = (value: string) => session.setPanel({ text: value })
   const ack = panel.ack
@@ -828,6 +840,21 @@ export function AskPanel({
   }
 
   async function runQuery(queryText: string, spokenTranscript?: string) {
+    // Single active run (run lockout cure, 2026-11-02): every
+    // run-start vector funnels through this function — the form's
+    // submit (button and Enter), the example chips, and the mic's
+    // final transcript — and the busy flag is the state-layer token
+    // they all answer to. The form and the chips disable themselves
+    // in the DOM as well, but the voice path calls this function
+    // directly, and before this guard a transcript landing mid-parse
+    // started a second, concurrent run: a new stage token, an
+    // overwritten ack, and two finally blocks racing on the same
+    // panel state. A call that arrives while the parse is in flight
+    // now starts nothing. (An ask that arrives after the parse —
+    // while the previous answer still composes — is a new ask, not
+    // a concurrent run: the reset below supersedes the composing
+    // run at the answer layer, so exactly one run is ever active.)
+    if (session.getSnapshot().panel.busy) return
     // The inquiry wave-off (plan C13 beat 2, battery E9): after the
     // session's one inquiry, a short wave-off reply closes it
     // gracefully — no parse, no second inquiry, no panel. A reply
@@ -842,6 +869,13 @@ export function AskPanel({
       setCaughtError(null)
       return
     }
+    // New-ask reset (ask-surface reset cure, 2026-11-02): the ask
+    // itself — not the hand-off minutes later — is when the previous
+    // run's surface state clears. App clears the answer column
+    // (previous answer, note, general card, live modal) through
+    // onAskStart; this panel's own previous-run state clears with
+    // the setters below.
+    onAskStart?.(queryText)
     // The run's stage clock starts at the parse (item 17): the stage
     // state lives in the session store, so it — and the run it
     // describes — continues across any tab switch from here. The
@@ -870,6 +904,20 @@ export function AskPanel({
     setNote('')
     setCoverageNote('')
     setCaughtError(null)
+    // The previous run's understood request (its editor, its
+    // clarification, its explanation), its execution note, and its
+    // web findings are the previous run's surface state: they clear
+    // with the ask, so nothing from an earlier question renders
+    // through this run or beside its answer — and so no pick on a
+    // stale understood request can pair it with this question's
+    // text. The research counter bump supersedes any standalone
+    // research still in flight from the earlier question (its
+    // settle checks the counter and discards itself); the deferred
+    // research decision below re-arms the state for this question.
+    setIntent(null)
+    setExecutionNote('')
+    session.counters.researchRun += 1
+    setResearch({ status: 'idle' })
     session.counters.lastQueryText = queryText
     // Research answers a different part of the question (what the
     // Census data cannot cover). Without an answer layer wired, it
@@ -891,10 +939,11 @@ export function AskPanel({
       } else {
         startResearch(queryText)
       }
-    } else {
-      session.counters.researchRun += 1
-      setResearch({ status: 'idle' })
     }
+    // A non-research question needs no counterpart branch here: the
+    // reset above already superseded and idled the research state
+    // for every run, which is what the old else arm did for this
+    // case alone.
     const settleResearch = (parsed: ValidatedIntent | null) => {
       if (!researchDeferred) return
       researchDeferred = false
@@ -1055,6 +1104,18 @@ export function AskPanel({
    * renders.
    */
 
+  /**
+   * Run lockout (owner ruling, 2026-11-02: "when the ask is running,
+   * then remove the ask button so it's not tempting to click it
+   * again"): a run is in flight from the ask until its terminal —
+   * the parse (busy) and every staged phase after it, the stage
+   * living until the terminal clears it. For that whole span the
+   * Ask button is REMOVED from the DOM (not disabled: no control
+   * stands there inviting a second submit) and the example chips
+   * disable; the button returns exactly when the run ends.
+   */
+  const runInFlight = busy || stage !== null
+
   return (
     <section aria-labelledby="ask-heading">
       {/*
@@ -1116,9 +1177,11 @@ export function AskPanel({
                 GuidedTour, so the two cannot drift apart. */}
             <p className="mt-2">{censusLoadSentence()}</p>
           </HelpTip>
-          <button type="submit" disabled={busy} className="btn-primary shrink-0">
-            Ask
-          </button>
+          {!runInFlight && (
+            <button type="submit" className="btn-primary shrink-0">
+              Ask
+            </button>
+          )}
         </div>
       </form>
       <div className="mt-3 flex justify-center">
@@ -1147,7 +1210,7 @@ export function AskPanel({
           <button
             key={example}
             type="button"
-            disabled={busy}
+            disabled={runInFlight}
             onClick={() => {
               setText(example)
               void runQuery(example)

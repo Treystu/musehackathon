@@ -280,27 +280,23 @@ export interface DecisionsStorage {
   setItem(key: string, value: string): void
 }
 
-function browserSessionStorage(): DecisionsStorage | null {
-  try {
-    const candidate = (globalThis as { sessionStorage?: unknown }).sessionStorage
-    if (
-      candidate &&
-      typeof (candidate as DecisionsStorage).getItem === 'function' &&
-      typeof (candidate as DecisionsStorage).setItem === 'function'
-    ) {
-      return candidate as DecisionsStorage
-    }
-  } catch {
-    // Storage can throw in locked-down contexts; decisions then live in memory only.
-  }
-  return null
-}
-
+/**
+ * Memory-only in production (refresh-starts-clean cure, 2026-11-02):
+ * landed decisions are ask-session state, so they follow the
+ * session store's contract — they live for the page life and a page
+ * load restarts them. An earlier build also mirrored them to
+ * sessionStorage, which let a refresh resurrect a previous
+ * session's picks into a new session's compositions. Decisions a
+ * reader deliberately shares travel in the URL parameter above,
+ * which is untouched. The storage parameter remains as an
+ * injection seam for tests; production callers pass nothing and
+ * get memory.
+ */
 let memoryDecisions: DecisionsRecord = {}
 
-/** Read the session's landed decisions (session storage, memory fallback). */
+/** Read the page life's landed decisions. */
 export function readSessionDecisions(
-  storage: DecisionsStorage | null = browserSessionStorage(),
+  storage: DecisionsStorage | null = null,
 ): DecisionsRecord {
   if (!storage) return { ...memoryDecisions }
   try {
@@ -312,11 +308,11 @@ export function readSessionDecisions(
   }
 }
 
-/** Write one landed decision into session state (and memory, as the fallback copy). */
+/** Write one landed decision into the page life's decision state. */
 export function writeSessionDecision(
   branch: BranchId,
   option: string,
-  storage: DecisionsStorage | null = browserSessionStorage(),
+  storage: DecisionsStorage | null = null,
 ): DecisionsRecord {
   const next = { ...readSessionDecisions(storage), [branch]: option }
   memoryDecisions = next

@@ -18,12 +18,10 @@ import { _resetPacing, resetBudget } from '../../src/core/ratelimit'
 import { AskPanel } from '../../src/ui/ai/AskPanel'
 import { StagedStatus } from '../../src/ui/ai/StagedStatus'
 import {
-  ASK_SESSION_STORAGE_KEY,
   AskSessionStore,
-  deserializeSession,
   initialAnswerState,
   initialPanelState,
-  serializeSession,
+  initialSessionSnapshot,
 } from '../../src/ui/ai/session-store'
 
 /**
@@ -55,12 +53,23 @@ import {
  *    indicator and no phantom pending state. The seed writes a
  *    RAW legacy payload (a pre-cure persisted session), because
  *    serializeSession itself now projects the request out.
+ * REVISED (refresh-starts-clean cure, 2026-11-02, owner live
+ * finding: a refresh keeps the query in the tool): the
+ * sessionStorage restore the C4 pins exercised is retired — the
+ * store is memory-only and no code path reads the persisted
+ * payload. C4a/C4b keep their seeds and their assertions (no
+ * indicator, no phantom state, at any stall length) and now pin
+ * the stronger contract: a legacy payload is not read at all.
+ * D1's projection pins are replaced by the memory-only pins: a
+ * new store starts from the initial snapshot whatever a previous
+ * page life held, landed or not.
  * Added with the cures:
  *  - C5: a fresh request whose sweep load stalls forever lands
  *    the load-failed note at the bounded wait and clears the
  *    indicator (fake timers drive the 45 s bound).
  *  - D1: the projection pins at the store level (serialize +
- *    deserialize; landed requests survive whole).
+ *    deserialize; landed requests survive whole). [Superseded by
+ *    the refresh-starts-clean revision above.]
  *  - D2: single frame ownership — the panel's frame stands down
  *    once the answer layer adopts the run.
  *  - D3: the general lane's compose renders under the working
@@ -144,7 +153,7 @@ const QUESTION = 'where is rent under $1,500'
 
 describe('A. StagedStatus rendering per store state', () => {
   it('A1 no run at all (stage null): ack alone — no dots, no staged line, live region empty (cure: necessity gating)', () => {
-    const store = new AskSessionStore(null, () => 100_000)
+    const store = new AskSessionStore(() => 100_000)
     render(
       <p>
         <StagedStatus session={store} ack="Let me look into that." />
@@ -159,7 +168,7 @@ describe('A. StagedStatus rendering per store state', () => {
 
   it('A2 run under one second: ack alone; dots and staged line withheld; live region already holds the stage label (cure: necessity gating)', async () => {
     let now = 100_000
-    const store = new AskSessionStore(null, () => now)
+    const store = new AskSessionStore(() => now)
     store.beginStageRun('understanding')
     render(
       <p>
@@ -175,7 +184,7 @@ describe('A. StagedStatus rendering per store state', () => {
 
   it('A3 run past one second: the staged line joins ack + dots', async () => {
     let now = 100_000
-    const store = new AskSessionStore(null, () => now)
+    const store = new AskSessionStore(() => now)
     store.beginStageRun('understanding')
     render(
       <p>
@@ -190,7 +199,7 @@ describe('A. StagedStatus rendering per store state', () => {
 
   it('A4 stage cleared but component still mounted: ack alone remains — the dots are stage-gated, not parent-gated (cure: completion gating)', async () => {
     let now = 100_000
-    const store = new AskSessionStore(null, () => now)
+    const store = new AskSessionStore(() => now)
     const token = store.beginStageRun('understanding')
     render(
       <p>
@@ -264,7 +273,7 @@ async function ask(text: string) {
 
 describe('B. AskPanel busy-gated mount', () => {
   it('B1 idle: no indicator anywhere in the panel', () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const provider = createStubProvider({ intent: async () => ({ intent: sweepIntent }) })
     render(<Harness store={store} provider={provider} onAnswerRequest={() => {}} />)
     expect(dots()).toBe(0)
@@ -272,7 +281,7 @@ describe('B. AskPanel busy-gated mount', () => {
   })
 
   it('B2 mid-parse (under one second): ack present, dots withheld until the run passes one second, staged line absent (cure: necessity gating)', async () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const gate = deferred<IntentResult>()
     const provider = createStubProvider({ intent: () => gate.promise })
     render(<Harness store={store} provider={provider} onAnswerRequest={() => {}} />)
@@ -284,7 +293,7 @@ describe('B. AskPanel busy-gated mount', () => {
   })
 
   it('B3 parse settles into a hand-off: panel indicator ends at parse settle, before any downstream answer exists', async () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const gate = deferred<IntentResult>()
     const provider = createStubProvider({ intent: () => gate.promise })
     let handedOff: string | null = null
@@ -308,7 +317,7 @@ describe('B. AskPanel busy-gated mount', () => {
   })
 
   it('B4 parse error terminal: note renders, indicator gone', async () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const provider = createStubProvider({
       intent: async () => {
         throw new Error('boom')
@@ -323,7 +332,7 @@ describe('B. AskPanel busy-gated mount', () => {
   })
 
   it('B5 clarification terminal: clarification renders, indicator gone', async () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const unclear: ValidatedIntent = {
       mode: 'lookup',
       geographies: [],
@@ -340,7 +349,7 @@ describe('B. AskPanel busy-gated mount', () => {
   })
 
   it('B6 tab-switch round trip: mid-run the panel unmounts (no dots in DOM) and remounts with the run; post-run it stays clean', async () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const gate = deferred<IntentResult>()
     const provider = createStubProvider({ intent: () => gate.promise })
     render(<Harness store={store} provider={provider} onAnswerRequest={() => {}} />)
@@ -460,12 +469,13 @@ function installFetch(shape: { enumeration: 'fail' | 'ok' }, log: FetchLog) {
 }
 
 function seedRestoredInFlightRequest() {
-  // A session persisted by the PRE-CURE build, written raw:
-  // serializeSession now projects an unlanded request out, so
-  // seeding through it would erase the very state under test. The
-  // shape below is exactly what the old build wrote for a request
-  // that was in flight at reload (request present, answer and
-  // note both null).
+  // A session persisted by a PRE-CURE build, written raw under the
+  // retired storage key. The shape below is exactly what the old
+  // build wrote for a request that was in flight at reload
+  // (request present, answer and note both null). Since the
+  // refresh-starts-clean cure the key is read by nothing — the
+  // seed now proves exactly that: the payload can sit in
+  // sessionStorage and a fresh page life never sees it.
   const legacy = {
     v: 1,
     panel: { ...initialPanelState(), busy: false, ack: '', caughtError: null },
@@ -478,7 +488,7 @@ function seedRestoredInFlightRequest() {
       modal: { live: null, closedBranches: [], refinedBranches: [] },
     },
   }
-  sessionStorage.setItem(ASK_SESSION_STORAGE_KEY, JSON.stringify(legacy))
+  sessionStorage.setItem('civicscope.ask-session.v1', JSON.stringify(legacy))
 }
 
 
@@ -515,7 +525,7 @@ describe('C. Real App: answer-area mount lifecycle', () => {
     expect(stagedLine()).toBeNull()
   }, 90_000)
 
-  it('C4a restored in-flight request (legacy payload) + stalled loads: no indicator, no phantom pending state (cure: persistence projection)', async () => {
+  it('C4a legacy persisted payload + stalled loads: the payload is never read; no indicator, no phantom pending state (cure: refresh starts clean)', async () => {
     seedRestoredInFlightRequest()
     vi.stubGlobal(
       'fetch',
@@ -523,7 +533,7 @@ describe('C. Real App: answer-area mount lifecycle', () => {
     )
     render(<App />)
     await flush(400)
-    // The restore projection dropped the unlanded request: the
+    // No restore exists to resurrect the seeded request: the
     // answer area has no mount key, so nothing renders — at any
     // point, however long the loads stall.
     expect(dots()).toBe(0)
@@ -534,24 +544,26 @@ describe('C. Real App: answer-area mount lifecycle', () => {
     expect(pageText()).not.toContain(LOAD_FAILED_NOTE)
   }, 30_000)
 
-  it('C4b restored in-flight request (legacy payload) + healthy loads: the projection drops the request; no indicator ever renders (cure: persistence projection)', async () => {
+  it('C4b legacy persisted payload + healthy loads: the payload is never read; no indicator ever renders (cure: refresh starts clean)', async () => {
     seedRestoredInFlightRequest()
     const log: FetchLog = { tigerweb: 0, census: 0, intent: 0, research: 0 }
     installFetch({ enumeration: 'ok' }, log)
     render(<App />)
-    // The sweep loads healthily; nothing re-drives the dropped
+    // The sweep loads healthily; nothing re-drives the seeded
     // request and nothing renders for it.
     expect(await waitFor(() => log.census >= 1, 15000)).toBe(true)
     await flush(1500)
     expect(dots()).toBe(0)
     expect(stagedLine()).toBeNull()
     expect(pageText()).not.toContain('Let me look into that.')
-    // The restore-side projection, read directly: the stored
-    // legacy payload deserializes with no request.
-    const restored = deserializeSession(sessionStorage.getItem(ASK_SESSION_STORAGE_KEY))
-    expect(restored?.answer.request ?? null).toBeNull()
-    expect(restored?.answer.answer ?? null).toBeNull()
-    expect(restored?.answer.note ?? null).toBeNull()
+    // The store-level half of the same contract: a fresh store —
+    // what a page load constructs — starts from the initial
+    // snapshot even with the legacy payload sitting in storage.
+    const fresh = new AskSessionStore()
+    expect(fresh.getSnapshot()).toEqual(initialSessionSnapshot())
+    expect(fresh.getSnapshot().answer.request).toBeNull()
+    expect(fresh.getSnapshot().answer.answer).toBeNull()
+    expect(fresh.getSnapshot().answer.note).toBeNull()
   }, 90_000)
 
   it('C5 fresh request + sweep load stalls forever: the bounded wait lands the load-failed note and clears the indicator (cure: bounded wait)', async () => {
@@ -615,57 +627,44 @@ describe('C. Real App: answer-area mount lifecycle', () => {
 
 /* ---------------- D. Cure pins ---------------- */
 
-describe('D1. Persistence projection (store level)', () => {
+describe('D1. Refresh starts clean (store level)', () => {
+  // REPLACED (refresh-starts-clean cure, 2026-11-02): these pins
+  // asserted the persistence projection — serialize/deserialize
+  // dropping an unlanded request while landed requests survived a
+  // reload whole. The restore they served is retired with the
+  // projection: the store is memory-only, so the store-level
+  // contract is now that NO state crosses a page load, landed or
+  // not. The phantom-indicator defect class the projection cured
+  // is impossible by construction (a fresh store has no request
+  // at all), and C4a/C4b pin the user-visible half against a
+  // seeded legacy payload through the real App.
   const request = { id: 3, intent: sweepIntent, queryText: QUESTION }
 
-  it('serialize drops a request with neither an answer nor a note landed', () => {
-    const raw = serializeSession({
-      panel: initialPanelState(),
-      answer: { ...initialAnswerState(), request },
-      stage: null,
-    })
-    const parsed = JSON.parse(raw) as { answer: { request: unknown } }
-    expect(parsed.answer.request).toBeNull()
-  })
-
-  it('deserialize drops an unlanded request from a raw legacy payload', () => {
-    const legacy = JSON.stringify({
-      v: 1,
-      panel: initialPanelState(),
-      answer: {
-        request,
-        answer: null,
-        note: null,
-        generalAnswer: null,
-        generalNote: null,
-        modal: { live: null, closedBranches: [], refinedBranches: [] },
-      },
-    })
-    const restored = deserializeSession(legacy)
-    expect(restored?.answer.request ?? null).toBeNull()
-  })
-
-  it('a landed request survives whole: with a terminal note', () => {
-    const raw = serializeSession({
-      panel: initialPanelState(),
-      answer: { ...initialAnswerState(), request, note: { id: 3, text: 'a terminal note' } },
-      stage: null,
-    })
-    const restored = deserializeSession(raw)
-    expect(restored?.answer.request?.id).toBe(3)
-    expect(restored?.answer.note?.text).toBe('a terminal note')
-  })
-
-  it('a landed request survives whole: with a composed answer', () => {
+  it('a fresh store starts initial even after a previous store landed a full session', () => {
     const answer = { status: 'verified' } as unknown as ComposedAnswer
-    const raw = serializeSession({
-      panel: initialPanelState(),
-      answer: { ...initialAnswerState(), request, answer },
-      stage: null,
+    const first = new AskSessionStore()
+    first.setPanel({ ...initialPanelState(), text: QUESTION, intent: sweepIntent })
+    first.setAnswerState({ ...initialAnswerState(), request, answer })
+    first.beginStageRun('composing')
+
+    const fresh = new AskSessionStore()
+    expect(fresh.getSnapshot()).toEqual(initialSessionSnapshot())
+    expect(fresh.getSnapshot().panel.text).toBe('')
+    expect(fresh.getSnapshot().answer.request).toBeNull()
+    expect(fresh.getSnapshot().answer.answer).toBeNull()
+    expect(fresh.getSnapshot().stage).toBeNull()
+  })
+
+  it('a fresh store starts initial after a previous store ended in a terminal note', () => {
+    const first = new AskSessionStore()
+    first.setAnswerState({
+      ...initialAnswerState(),
+      request,
+      note: { id: 3, text: 'a terminal note' },
     })
-    const restored = deserializeSession(raw)
-    expect(restored?.answer.request?.id).toBe(3)
-    expect(restored?.answer.answer).toEqual({ status: 'verified' })
+    const fresh = new AskSessionStore()
+    expect(fresh.getSnapshot()).toEqual(initialSessionSnapshot())
+    expect(fresh.getSnapshot().answer.note).toBeNull()
   })
 })
 
@@ -683,7 +682,7 @@ describe('D2. Single frame ownership (AskPanel mount)', () => {
   }
 
   function busyRunStore(): AskSessionStore {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     store.counters.lastQueryText = QUESTION
     store.setPanel({ busy: true, ack: 'On it — checking that for you.' })
     store.beginStageRun('understanding')
@@ -710,7 +709,7 @@ describe('D2. Single frame ownership (AskPanel mount)', () => {
   })
 
   it('a re-asked identical question: the request current at run start does not suppress the parse frame', async () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const prior = { id: 4, intent: sweepIntent, queryText: QUESTION }
     store.setAnswerState({ request: prior })
     store.counters.requestAtRunStart = prior

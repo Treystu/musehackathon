@@ -12,11 +12,9 @@ import {
 } from '../../src/ui/ai/answer-runner'
 import {
   AskSessionStore,
-  deserializeSession,
-  serializeSession,
+  initialSessionSnapshot,
   stageLabel,
   stagedStatusVisible,
-  type SessionStorageLike,
   type StageId,
 } from '../../src/ui/ai/session-store'
 
@@ -63,19 +61,9 @@ async function verifiedAnswer(): Promise<ComposedAnswer> {
   return answer
 }
 
-class MemoryStorage implements SessionStorageLike {
-  private map = new Map<string, string>()
-  getItem(key: string): string | null {
-    return this.map.get(key) ?? null
-  }
-  setItem(key: string, value: string): void {
-    this.map.set(key, value)
-  }
-}
-
 describe('session store: thread and in-flight run survive a tab switch', () => {
   it('a run in flight when every listener detaches completes into the store, invoked once', async () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const answer = await verifiedAnswer()
     // A surface mounts (subscribes) and the reader asks a question.
     const unsubscribe = store.subscribe(() => {})
@@ -112,7 +100,7 @@ describe('session store: thread and in-flight run survive a tab switch', () => {
   })
 
   it('question, intent, notes, and decisions survive with no listener attached', () => {
-    const store = new AskSessionStore(null)
+    const store = new AskSessionStore()
     const unsubscribe = store.subscribe(() => {})
     store.setPanel({
       text: 'cheapest rent in Hawaii',
@@ -137,7 +125,7 @@ describe('session store: thread and in-flight run survive a tab switch', () => {
 describe('session store: staged status', () => {
   it('stage transitions are ordered, token-guarded, and same-stage sets do not notify', () => {
     let now = 10_000
-    const store = new AskSessionStore(null, () => now)
+    const store = new AskSessionStore(() => now)
     let notifications = 0
     store.subscribe(() => {
       notifications += 1
@@ -183,11 +171,20 @@ describe('session store: staged status', () => {
   })
 })
 
-describe('session store: reload persistence', () => {
-  it('the serializable session restores into a fresh store; in-flight state does not', async () => {
-    const storage = new MemoryStorage()
+describe('session store: refresh starts clean (cure D)', () => {
+  // REVISED PINS (refresh-starts-clean cure, 2026-11-02): this
+  // describe pinned item 17's sessionStorage restore — a fresh
+  // store over the same storage restored the thread, with the
+  // in-flight projection dropping unlanded state. The owner's
+  // live finding retired the restore itself ("my refreshing is
+  // keeping the query in the tool"): the store is memory-only,
+  // takes no storage at all, and a page load — a brand-new store —
+  // starts from the initial snapshot whatever a previous page
+  // life accumulated. The tab-switch pins above are untouched:
+  // within one page life the one store carries everything.
+  it('a new store starts from the initial snapshot, whatever a previous page life held', async () => {
     const answer = await verifiedAnswer()
-    const first = new AskSessionStore(storage)
+    const first = new AskSessionStore()
     first.setPanel({ text: 'where is rent under $1,500', intent: intent({}), busy: true })
     first.setAnswerState({
       request: { id: 1, intent: intent({}), queryText: 'where is rent under $1,500' },
@@ -199,32 +196,13 @@ describe('session store: reload persistence', () => {
     }))
     first.beginStageRun('researching')
 
-    // A reload: a brand-new store over the same sessionStorage.
-    const restored = new AskSessionStore(storage)
-    const snapshot = restored.getSnapshot()
-    expect(snapshot.panel.text).toBe('where is rent under $1,500')
-    expect(snapshot.panel.intent?.mode).toBe('sweep_filter')
-    expect(snapshot.answer.request?.queryText).toBe('where is rent under $1,500')
-    expect(snapshot.answer.answer?.status).toBe('verified')
-    expect(snapshot.answer.answer?.places).toHaveLength(2)
-    expect([...snapshot.answer.modal.closedBranches]).toEqual(['transport'])
-    // What does not survive, stated in session-store's contract: the
-    // in-flight run (busy cleared, no stage) — a page load cannot
-    // resume it, and the store does not pretend otherwise.
-    expect(snapshot.panel.busy).toBe(false)
-    expect(snapshot.stage).toBeNull()
-    expect(restored.inFlightKeys()).toEqual([])
-  })
-
-  it('serialize/deserialize round-trips and rejects foreign payloads', async () => {
-    const store = new AskSessionStore(null)
-    store.setPanel({ text: 'q', busy: true })
-    const restored = deserializeSession(serializeSession(store.getSnapshot()))
-    expect(restored?.panel.text).toBe('q')
-    expect(restored?.panel.busy).toBe(false)
-    expect(deserializeSession(null)).toBeNull()
-    expect(deserializeSession('{"v":99}')).toBeNull()
-    expect(deserializeSession('not json')).toBeNull()
+    // The refresh: a brand-new store, as a page load constructs.
+    const fresh = new AskSessionStore()
+    expect(fresh.getSnapshot()).toEqual(initialSessionSnapshot())
+    expect(fresh.getSnapshot().panel.text).toBe('')
+    expect(fresh.getSnapshot().answer.answer).toBeNull()
+    expect(fresh.getSnapshot().answer.request).toBeNull()
+    expect(fresh.inFlightKeys()).toEqual([])
   })
 })
 

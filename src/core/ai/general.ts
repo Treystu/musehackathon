@@ -188,26 +188,21 @@ export interface InquiryStorage {
   setItem(key: string, value: string): void
 }
 
-function browserSessionStorage(): InquiryStorage | null {
-  try {
-    const candidate = (globalThis as { sessionStorage?: unknown }).sessionStorage
-    if (
-      candidate &&
-      typeof (candidate as InquiryStorage).getItem === 'function' &&
-      typeof (candidate as InquiryStorage).setItem === 'function'
-    ) {
-      return candidate as InquiryStorage
-    }
-  } catch {
-    // Storage can throw in locked-down contexts; the session then lives in memory only.
-  }
-  return null
-}
-
+/**
+ * Memory-only in production (refresh-starts-clean cure, 2026-11-02):
+ * the inquiry flags are part of the ask session's conversation, so
+ * they follow the session store's contract — they live for the
+ * page life and a page load restarts them. An earlier build also
+ * mirrored them to sessionStorage, which let a refresh resurrect
+ * the conversation's state (the inquiry already spent, the
+ * wave-off already given) into a session the reader experiences as
+ * new. The storage parameter remains as an injection seam for
+ * tests; production callers pass nothing and get memory.
+ */
 let memoryInquiry: InquirySession = { asked: false, wavedOff: false }
 
 export function readInquirySession(
-  storage: InquiryStorage | null = browserSessionStorage(),
+  storage: InquiryStorage | null = null,
 ): InquirySession {
   if (!storage) return { ...memoryInquiry }
   try {
@@ -225,7 +220,7 @@ export function readInquirySession(
 
 function writeInquirySession(
   next: InquirySession,
-  storage: InquiryStorage | null = browserSessionStorage(),
+  storage: InquiryStorage | null = null,
 ): InquirySession {
   memoryInquiry = next
   if (storage) {
@@ -240,7 +235,7 @@ function writeInquirySession(
 
 /** Record that the session's one inquiry turn has been shown. */
 export function markInquiryAsked(
-  storage: InquiryStorage | null = browserSessionStorage(),
+  storage: InquiryStorage | null = null,
 ): InquirySession {
   const current = readInquirySession(storage)
   if (current.asked) return current
@@ -249,7 +244,7 @@ export function markInquiryAsked(
 
 /** Record a wave-off: the inquiry closes for the session thread (battery E9). */
 export function markInquiryWavedOff(
-  storage: InquiryStorage | null = browserSessionStorage(),
+  storage: InquiryStorage | null = null,
 ): InquirySession {
   return writeInquirySession({ asked: true, wavedOff: true }, storage)
 }

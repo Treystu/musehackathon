@@ -1037,8 +1037,14 @@ describe('K1 the resolution re-ask', () => {
     expect(stub.calls()).toBe(2)
     expect(answer.status).toBe('empty')
     expect(answer.noCensusMatch).toBe(true)
-    expect(answer.unresolvedCandidates).toContain('Traverse City, MI')
-    expect(answer.unresolvedCandidates).toContain('Marquette, MI')
+    // K3 adaptation (2026-11-03): both names carry an explicit MI
+    // suffix against this pin's Florida bound, so the state-
+    // contradiction partition accounts them as out-of-state names
+    // rather than in the ordinary unmatched record. The boundedness
+    // and terminal assertions above are unchanged.
+    expect(answer.outOfStateCandidates).toContain('Traverse City, MI')
+    expect(answer.outOfStateCandidates).toContain('Marquette, MI')
+    expect(answer.unresolvedCandidates).not.toContain('Traverse City, MI')
   })
 
   it('a re-ask failure keeps the first yield untouched', async () => {
@@ -1064,7 +1070,10 @@ describe('K1 the resolution re-ask', () => {
     // pipeline's: ONE resolution re-ask, never a loop.
     expect(stub.calls()).toBe(3)
     expect(answer.status).toBe('empty')
-    expect(answer.unresolvedCandidates).toContain('Traverse City, MI')
+    // K3 partition, as in the double zero-yield pin above: the
+    // first yield's name is accounted as an out-of-state name
+    // against the Florida bound — present, under its own record.
+    expect(answer.outOfStateCandidates).toContain('Traverse City, MI')
   })
 
   it('a run that cards on the first yield never re-asks', async () => {

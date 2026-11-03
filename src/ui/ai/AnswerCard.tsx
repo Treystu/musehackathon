@@ -216,6 +216,24 @@ export function outOfBoundCandidatesLine(answer: ComposedAnswer): string | null 
     : `${list} were named in the research but are outside the area this question asks about, so they were not used.`
 }
 
+/**
+ * Names that matched no Census data and state a state outside the
+ * asked geography in their own suffix (Lane completion K3): the
+ * line says the stated state is the disqualifier, so the name does
+ * not read as an in-bound candidate that merely failed to match.
+ * Distinct from the unmatched line (no state contradiction) and
+ * from the out-of-bound line above (those names DID match Census
+ * data, in the wrong place).
+ */
+export function outOfStateCandidatesLine(answer: ComposedAnswer): string | null {
+  const names = answer.outOfStateCandidates ?? []
+  if (names.length === 0) return null
+  const list = names.join(', ')
+  return names.length === 1
+    ? `${list} was named in the research with a state outside the area this question asks about, so it was not used.`
+    : `${list} were named in the research with a state outside the area this question asks about, so they were not used.`
+}
+
 /** One quiet line for a requested geography level the shipped data cannot serve. */
 export function unsupportedGeographyLine(answer: ComposedAnswer): string | null {
   if (!answer.unsupportedGeography) return null
@@ -505,6 +523,7 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
   const shortfallLine = requestedCountLine(answer)
   const unresolvedCandidates = unresolvedCandidatesLine(answer)
   const outOfBoundLine = outOfBoundCandidatesLine(answer)
+  const outOfStateLine = outOfStateCandidatesLine(answer)
   const notMeetingLine = consideredNotMeetingLine(answer)
   const unsupportedLine = unsupportedGeographyLine(answer)
   const countyLine = countyMethodLine(answer)
@@ -644,6 +663,11 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
       {outOfBoundLine && (
         <p role="note" className="mt-1 text-sm text-slate-500">
           {outOfBoundLine}
+        </p>
+      )}
+      {outOfStateLine && (
+        <p role="note" className="mt-1 text-sm text-slate-500">
+          {outOfStateLine}
         </p>
       )}
       {notMeetingLine && (

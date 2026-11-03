@@ -16,6 +16,7 @@ import {
 } from '../../src/core/ai/run-progress'
 import { decodePlaces, PlaceIndex } from '../../src/core/zcta-place-index'
 import { resolveCandidatesWithIndex } from '../../src/ui/ai/answer-runner'
+import { outOfStateCandidatesLine } from '../../src/ui/ai/AnswerCard'
 import { createStubProvider, type ValidatedIntent } from '../../src/core/ai/provider'
 import type { AreaRow } from '../../src/core/plugins/acs'
 
@@ -422,5 +423,93 @@ describe('FM-20 Florida weather pipeline specimen (sheet Q1 shape)', () => {
     expect(answer.unresolvedCandidates).not.toContain('Florida')
     expect(answer.unresolvedCandidates).not.toContain('Tampa.')
     expect(answer.unmatchedFragmentCount ?? 0).toBeGreaterThanOrEqual(1)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* K3 — FM-20 leftovers (Lane completion program, 2026-11-03)         */
+/* ------------------------------------------------------------------ */
+
+describe('K3a discourse-modifier collapse (Only Detroit)', () => {
+  it('the discourse openers collapse like the descriptive modifiers', () => {
+    expect(collapseModifierPrefix('Only Detroit, MI')).toBe('Detroit, MI')
+    expect(collapseModifierPrefix('Just Toledo, OH')).toBe('Toledo, OH')
+    expect(collapseModifierPrefix('Near Tulsa, OK')).toBe('Tulsa, OK')
+    expect(
+      extractCandidateNamesFromProse('Only Detroit, MI has the strongest music scene in the state.'),
+    ).toEqual(['Detroit, MI'])
+    // A single-word name is never collapsed — a place actually
+    // named "Only" would keep its name.
+    expect(collapseModifierPrefix('Only')).toBe('Only')
+  })
+
+  it('the pipeline resolves the collapsed name under the place\u2019s own name', async () => {
+    const answer = await fm23Run({
+      q: 'Where in Michigan has the strongest music scene?',
+      geographies: ['Michigan'],
+      rows: [fm23Row('48201', 'Detroit, MI', 1100), fm23Row('49503', 'Grand Rapids, MI', 1250)],
+      prose: 'Only Detroit, MI has the strongest music scene in the state, the cited guide says.',
+    })
+    expect(answer.places.map((p) => p.name)).toContain('Detroit, MI')
+    expect(answer.unresolvedCandidates).not.toContain('Only Detroit, MI')
+  })
+
+  it('a bare mention under a discourse opener records the place, not the opener form', () => {
+    const oneRow = [fm23Row('48201', 'Detroit, MI', 1100)]
+    const unique = extractBareCandidateNames(
+      'Only Detroit anchors the region\u2019s music scene.',
+      [],
+      oneRow,
+      oneRow,
+    )
+    expect(unique.names).toContain('Detroit, MI')
+    expect(unique.unresolved).not.toContain('Only Detroit')
+    // With no bound supplied, two rows for the same place make the
+    // bare match ambiguous — recorded under the collapsed form,
+    // never the opener form. (With a bound, the bound completion
+    // is place-grained and the same two rows resolve, as above.)
+    const twoRows = [fm23Row('48201', 'Detroit, MI', 1100), fm23Row('48226', 'Detroit, MI', 1150)]
+    const ambiguous = extractBareCandidateNames(
+      'Only Detroit anchors the region\u2019s music scene.',
+      [],
+      twoRows,
+    )
+    expect(ambiguous.ambiguous).toContain('Detroit')
+    expect(ambiguous.ambiguous).not.toContain('Only Detroit')
+  })
+})
+
+describe('K3b state-contradicting unmatched names (Tazewell, WA)', () => {
+  it('a name whose stated state contradicts the bound is accounted separately', async () => {
+    const answer = await fm23Run({
+      q: 'What town in Virginia has the best hiking access?',
+      geographies: ['Virginia'],
+      rows: [fm23Row('24382', 'Wytheville, VA', 950), fm23Row('24651', 'Tazewell, VA', 800)],
+      prose:
+        'Tazewell, WA appears in the cited roundup of trail towns. ' +
+        'Fictional Falls, VA is praised for its trailheads.',
+    })
+    expect(answer.outOfStateCandidates).toEqual(['Tazewell, WA'])
+    expect(answer.unresolvedCandidates).not.toContain('Tazewell, WA')
+    // The neutral unmatched name — stated state in-bound, simply
+    // not a Census place — stays in the ordinary unmatched record.
+    expect(answer.unresolvedCandidates).toContain('Fictional Falls, VA')
+    // The flexible packet's record is untouched: the completion
+    // may still name the place with its stated state and label.
+    expect(answer.researchNamedPlaces).toContain('Tazewell, WA')
+    const line = outOfStateCandidatesLine(answer)
+    expect(line).toContain('Tazewell, WA')
+    expect(line).toContain('outside the area this question asks about')
+  })
+
+  it('an in-bound stated state never partitions', async () => {
+    const answer = await fm23Run({
+      q: 'What town in Virginia has the best hiking access?',
+      geographies: ['Virginia'],
+      rows: [fm23Row('24382', 'Wytheville, VA', 950)],
+      prose: 'Fictional Falls, VA is praised for its trailheads.',
+    })
+    expect(answer.outOfStateCandidates).toBeUndefined()
+    expect(answer.unresolvedCandidates).toContain('Fictional Falls, VA')
   })
 })

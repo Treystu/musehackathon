@@ -388,6 +388,17 @@ export interface ComposedAnswer {
    */
   outOfBoundCandidates?: string[]
   /**
+   * Research-first candidate names that matched no Census data AND
+   * carry an explicit state suffix contradicting the question's
+   * state bound (Lane completion K3): "Tazewell, WA" on a
+   * Virginia-bound question. They are partitioned out of
+   * unresolvedCandidates at materialization so the card accounts
+   * them as outside-the-asked-state names rather than printing
+   * them as ordinary unmatched in-bound candidates. Absent when no
+   * name contradicts, or when the bound carries no state set.
+   */
+  outOfStateCandidates?: string[]
+  /**
    * Count of candidate-shaped tokens the extraction gate refused
    * as sentence fragments rather than names (Lane A10 FM-14):
    * capitalized prose tokens ("Initial", "January-April",
@@ -1727,8 +1738,25 @@ const SINGLE_WORD_STATE_NAME_BY_ABBR: ReadonlyMap<string, string> = new Map(
  * recording alike. Neither word opens a Census place name, which
  * is what makes the strip safe: there is no "Historic X" or
  * "Downtown X" in the shipped index to shadow.
+ *
+ * The discourse openers join the set (Lane completion K3, 2026-11-03):
+ * "Only Detroit has..." glues the sentence's opener to the name the
+ * same way, and the A11 sheet recorded "Only Detroit" unmatched.
+ * The safety basis is identical and was re-measured for the
+ * extension against the shipped payload (public/map/zcta-places.json,
+ * 19,829 name strings): no place name in the index opens with Only,
+ * Just, or Near either, so the unstripped form can never resolve
+ * and the strip can never shadow a real place. A single-word name
+ * is untouched — collapse requires two or more words, so a place
+ * actually named "Only" would keep its name.
  */
-const MODIFIER_PREFIX_WORDS: ReadonlySet<string> = new Set(['historic', 'downtown'])
+const MODIFIER_PREFIX_WORDS: ReadonlySet<string> = new Set([
+  'historic',
+  'downtown',
+  'only',
+  'just',
+  'near',
+])
 
 /**
  * Drop a leading descriptive modifier from a candidate name
@@ -2177,6 +2205,43 @@ export function extractBareCandidateNames(
     if (BARE_MENTION_OPENERS.has(words[0]!.toLowerCase())) continue
     if (seen.has(key) || covered.has(key)) continue
     seen.add(key)
+    // Matching-side collapse (Lane completion K3): when a modifier
+    // was stripped, the collapsed form gets the same matching
+    // chances a candidate gets — the take loop tested the glued
+    // form ("Only Detroit") and found nothing, but the place the
+    // prose means is the collapsed name, and when that remainder
+    // resolves uniquely against the bound the mention is that
+    // place, not an unmatched record of it. (The standard
+    // extraction path collapses before resolution by construction;
+    // this branch is where the bare path catches up.) An ambiguous
+    // collapsed remainder records as ambiguous under the collapsed
+    // form; a fragment-shaped one counts as a fragment.
+    if (mention !== wholeLead) {
+      if (boundIndex) {
+        const completion = completeAgainstBound(mention, boundIndex)
+        if (completion) {
+          if ('rowName' in completion) {
+            if (!names.includes(completion.rowName)) names.push(completion.rowName)
+          } else if (isFragmentShapedMention(mention, boundStateNames)) {
+            fragments++
+          } else {
+            ambiguous.push(mention)
+          }
+          continue
+        }
+      }
+      const collapsedHits = byBare.get(key)
+      if (collapsedHits) {
+        if (collapsedHits.length === 1) {
+          names.push(collapsedHits[0]!)
+        } else if (isFragmentShapedMention(mention, boundStateNames)) {
+          fragments++
+        } else {
+          ambiguous.push(mention)
+        }
+        continue
+      }
+    }
     if (
       isPlaceShapedMention(mention, componentWords) &&
       !isFragmentShapedMention(mention, boundStateNames)
@@ -2970,6 +3035,8 @@ export function composeAnswer(input: {
   researchCriteria?: readonly ResearchCriterion[]
   candidateCapApplied?: boolean
   unresolvedCandidates?: readonly string[]
+  /** Unmatched names whose stated state contradicts the bound (K3), recorded on the answer. */
+  outOfStateCandidates?: readonly string[]
   /** Resolved candidates refused by the geography binding (FM-15), recorded on the answer. */
   outOfBoundCandidates?: readonly string[]
   /** Candidate-shaped tokens the extraction gate counted as fragments, not names (FM-14). */
@@ -3225,6 +3292,9 @@ export function composeAnswer(input: {
     candidateCap: SCREENED_RESEARCH_CANDIDATE_CAP,
     candidateCapApplied: input.candidateCapApplied ?? false,
     unresolvedCandidates: [...(input.unresolvedCandidates ?? [])],
+    ...(input.outOfStateCandidates && input.outOfStateCandidates.length > 0
+      ? { outOfStateCandidates: [...input.outOfStateCandidates] }
+      : {}),
     ...(input.outOfBoundCandidates && input.outOfBoundCandidates.length > 0
       ? { outOfBoundCandidates: [...input.outOfBoundCandidates] }
       : {}),
@@ -3863,7 +3933,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       // returns the extracted name with its ZCTAs or it does not, and
       // a name it does not return is reported, never repaired.
       const resolvedNames = new Set(resolved.map((r) => r.name.toLowerCase()))
-      const unresolvedCandidates = [
+      const unresolvedRecord = [
         ...extracted.filter((name) => !resolvedNames.has(name.toLowerCase())),
         ...bare.ambiguous.filter((name) => !resolvedNames.has(name.toLowerCase())),
         ...bare.unresolved.filter(
@@ -3872,6 +3942,31 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
             !extracted.some((e) => e.toLowerCase() === name.toLowerCase()),
         ),
       ]
+      // State-contradiction partition (Lane completion K3, 2026-11-03):
+      // an unmatched name carrying an explicit state suffix that
+      // contradicts the run's state bound is not an in-bound
+      // candidate that merely failed to match — its own stated
+      // state is outside the asked geography (the A11 specimen:
+      // "Tazewell, WA" printed in a Virginia question's unmatched
+      // line). FM-15's binding handles this class for RESOLVED
+      // candidates; this is the unresolved side of the same
+      // discipline. The contradicting names are recorded separately
+      // (outOfStateCandidates) and the card accounts them under
+      // their own line; the flexible packet's record
+      // (researchNamedPlaces) is untouched — the completion may
+      // still name such a place with its stated state and its
+      // evidence label. Only a state bound can contradict: place
+      // and ZCTA bounds carry no state set and stay neutral.
+      const unresolvedCandidates: string[] = []
+      const outOfStateCandidates: string[] = []
+      for (const name of unresolvedRecord) {
+        const suffix = stateSuffixOf(name)
+        if (suffix && candidateBound.states && !candidateBound.states.has(suffix)) {
+          outOfStateCandidates.push(name)
+        } else {
+          unresolvedCandidates.push(name)
+        }
+      }
       // Geography binding (FM-15): the resolved set is tested
       // against the question's bound before any row is selected —
       // resolution itself is national (the index and the loaded rows
@@ -3917,7 +4012,15 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           })
         : candidateRows
       const cappedRows = rankedRows.slice(0, placeLimit)
-      return { extracted, bare, unresolvedCandidates, binding, candidateCapApplied, cappedRows }
+      return {
+        extracted,
+        bare,
+        unresolvedCandidates,
+        outOfStateCandidates,
+        binding,
+        candidateCapApplied,
+        cappedRows,
+      }
     }
     let research = firstResearch
     let m = await materialize(research)
@@ -3960,7 +4063,15 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         // The first yield stands, exactly as gathered.
       }
     }
-    const { extracted, bare, unresolvedCandidates, binding, candidateCapApplied, cappedRows } = m
+    const {
+      extracted,
+      bare,
+      unresolvedCandidates,
+      outOfStateCandidates,
+      binding,
+      candidateCapApplied,
+      cappedRows,
+    } = m
     const baseScreen = screenRows(input.intent, input.rows, input.geographyZctas)
     const pullScreen: ScreenResult = {
       criteria: [],
@@ -3977,6 +4088,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       researchCriteria,
       candidateCapApplied,
       unresolvedCandidates,
+      outOfStateCandidates,
       outOfBoundCandidates: binding.outOfBound,
       unmatchedFragmentCount: bare.fragments,
       geographyLevel,

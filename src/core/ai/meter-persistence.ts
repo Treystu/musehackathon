@@ -30,11 +30,16 @@ import {
 import {
   sanitizeUsageSnapshot,
   zeroHourglass,
+  zeroHourglassLastSettle,
   type UsageBucket,
   type UsageDetail,
   type UsageSnapshot,
 } from './usage'
-import type { BookendCounters } from './bookend-counters'
+import type {
+  BookendCounters,
+  BookendLastSettleMap,
+  BookendSettleClass,
+} from './bookend-counters'
 
 export const PERSISTED_METER_VERSION = 1
 
@@ -71,6 +76,13 @@ export interface PersistedMeterState {
   usageByRoute?: Record<string, UsageBucket>
   searches?: number
   hourglass?: BookendCounters
+  /**
+   * Item 2 cure (2026-11-03), additive under version 1 like the P7
+   * fields above: a record written before the cure carries no
+   * last-settle and loads as null/null; a present-but-malformed
+   * value fails closed in the loader, like every other field.
+   */
+  hourglassLastSettle?: BookendLastSettleMap
 }
 
 /** Single-record storage behind the adapter (one key in the DO). */
@@ -115,6 +127,7 @@ export function emptyPersistedState(): PersistedMeterState {
     usageByRoute: {},
     searches: 0,
     hourglass: zeroHourglass(),
+    hourglassLastSettle: zeroHourglassLastSettle(),
   }
 }
 
@@ -167,6 +180,12 @@ function isPersistedMeterState(raw: unknown): raw is PersistedMeterState {
   if (s.usageByRoute !== undefined && !isBucketRecord(s.usageByRoute)) return false
   if (s.searches !== undefined && !isFiniteNumber(s.searches)) return false
   if (s.hourglass !== undefined && !isHourglassRecord(s.hourglass)) return false
+  if (
+    s.hourglassLastSettle !== undefined &&
+    !isHourglassLastSettleRecord(s.hourglassLastSettle)
+  ) {
+    return false
+  }
   return true
 }
 
@@ -181,6 +200,29 @@ function isBucketRecord(v: unknown): boolean {
       isFiniteNumber(rec.tokensOut)
     )
   })
+}
+
+const SETTLE_CLASSES: readonly string[] = ['settled-ok', 'settled-error', 'skipped']
+
+function isHourglassLastSettleRecord(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const rec = v as Record<string, unknown>
+  const side = (x: unknown, outcomes: readonly string[]): boolean => {
+    if (x === null) return true
+    if (typeof x !== 'object') return false
+    const s = x as Record<string, unknown>
+    return (
+      typeof s.at === 'string' &&
+      typeof s.outcome === 'string' &&
+      outcomes.includes(s.outcome) &&
+      typeof s.settle === 'string' &&
+      SETTLE_CLASSES.includes(s.settle)
+    )
+  }
+  return (
+    side(rec.top, ['sound', 'unsound', 'degraded']) &&
+    side(rec.bottom, ['verified', 'concerns', 'notRun'])
+  )
 }
 
 function isHourglassRecord(v: unknown): boolean {
@@ -220,6 +262,7 @@ const LOADERS: Record<number, (raw: unknown) => PersistedMeterState> = {
       byRoute: raw.usageByRoute,
       searches: raw.searches,
       hourglass: raw.hourglass,
+      hourglassLastSettle: raw.hourglassLastSettle,
     })
     return {
       ...raw,
@@ -227,6 +270,7 @@ const LOADERS: Record<number, (raw: unknown) => PersistedMeterState> = {
       usageByRoute: usage.byRoute,
       searches: usage.searches,
       hourglass: usage.hourglass,
+      hourglassLastSettle: usage.hourglassLastSettle,
     }
   },
 }
@@ -301,6 +345,14 @@ function toMeterState(p: PersistedMeterState): MeterState {
     hourglass: p.hourglass
       ? { top: { ...p.hourglass.top }, bottom: { ...p.hourglass.bottom } }
       : zeroHourglass(),
+    hourglassLastSettle: p.hourglassLastSettle
+      ? {
+          top: p.hourglassLastSettle.top ? { ...p.hourglassLastSettle.top } : null,
+          bottom: p.hourglassLastSettle.bottom
+            ? { ...p.hourglassLastSettle.bottom }
+            : null,
+        }
+      : zeroHourglassLastSettle(),
   }
 }
 
@@ -344,6 +396,12 @@ function toPersistedState(
     hourglass: {
       top: { ...ms.hourglass.top },
       bottom: { ...ms.hourglass.bottom },
+    },
+    hourglassLastSettle: {
+      top: ms.hourglassLastSettle.top ? { ...ms.hourglassLastSettle.top } : null,
+      bottom: ms.hourglassLastSettle.bottom
+        ? { ...ms.hourglassLastSettle.bottom }
+        : null,
     },
   }
 }
@@ -440,6 +498,24 @@ export class PersistentMeter {
     })
   }
 
+  /**
+   * Item 2 cure: count a completed call with no reservation at
+   * all (Meter.countCall) -- the op the DurableMeterClient falls
+   * back to when its reserve hop returns null, so a reporting
+   * threshold cannot erase a call that already happened.
+   */
+  countCall(
+    clientId: string,
+    actualMicroUsd: number,
+    tin: number,
+    tout: number,
+    detail?: UsageDetail,
+  ): Promise<void> {
+    return this.apply((m) => {
+      m.countCall(clientId, actualMicroUsd, tin, tout, detail)
+    })
+  }
+
   /** P7: count completed web_search calls from one research reply. */
   recordSearches(count: number): Promise<void> {
     return this.apply((m) => {
@@ -447,17 +523,26 @@ export class PersistentMeter {
     })
   }
 
-  /** P7: mirror one top-bookend outcome into the durable record. */
-  recordTopBookend(outcome: keyof BookendCounters['top']): Promise<void> {
+  /** P7 + Item 2: mirror one top-bookend outcome and its settle class. */
+  recordTopBookend(
+    outcome: keyof BookendCounters['top'],
+    settle?: BookendSettleClass,
+  ): Promise<void> {
     return this.apply((m) => {
-      m.recordTopBookend(outcome)
+      // An absent settle passes undefined, which selects the
+      // Meter's default derivation -- the same class
+      // bookend-counters.ts records in-isolate for the outcome.
+      m.recordTopBookend(outcome, settle)
     })
   }
 
-  /** P7: mirror one bottom-bookend outcome into the durable record. */
-  recordBottomBookend(outcome: keyof BookendCounters['bottom']): Promise<void> {
+  /** P7 + Item 2: mirror one bottom-bookend outcome and its settle class. */
+  recordBottomBookend(
+    outcome: keyof BookendCounters['bottom'],
+    settle?: BookendSettleClass,
+  ): Promise<void> {
     return this.apply((m) => {
-      m.recordBottomBookend(outcome)
+      m.recordBottomBookend(outcome, settle)
     })
   }
 

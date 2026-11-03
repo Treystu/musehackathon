@@ -30,7 +30,11 @@
  * this module is consulted by a request path, so it cannot gate,
  * delay, or fail a request.
  */
-import type { BookendCounters } from './bookend-counters'
+import type {
+  BookendCounters,
+  BookendLastSettleMap,
+  BookendSettleClass,
+} from './bookend-counters'
 import { MUSE_SPARK_MODEL, MUSE_WONDER_MODEL } from './meta-client'
 
 export const USAGE_MODELS = [MUSE_SPARK_MODEL, MUSE_WONDER_MODEL] as const
@@ -66,6 +70,13 @@ export interface UsageSnapshot {
    * undercount across isolates).
    */
   hourglass: BookendCounters
+  /**
+   * The latest bookend settle per side, mirrored durably with the
+   * counts (Item 2 cure, 2026-11-03): diagnostics reads this copy
+   * when the meter view is readable, so last-settle attribution
+   * survives isolate churn the way the counts already did.
+   */
+  hourglassLastSettle: BookendLastSettleMap
 }
 
 /** Optional split detail a route attaches to its settle. */
@@ -109,6 +120,10 @@ export function zeroHourglass(): BookendCounters {
   }
 }
 
+export function zeroHourglassLastSettle(): BookendLastSettleMap {
+  return { top: null, bottom: null }
+}
+
 export function zeroUsageSnapshot(): UsageSnapshot {
   return {
     byModel: {
@@ -124,6 +139,7 @@ export function zeroUsageSnapshot(): UsageSnapshot {
     },
     searches: 0,
     hourglass: zeroHourglass(),
+    hourglassLastSettle: zeroHourglassLastSettle(),
   }
 }
 
@@ -161,6 +177,67 @@ function sanitizeHourglass(raw: unknown): BookendCounters {
   }
 }
 
+const BOOKEND_SETTLE_CLASSES: readonly BookendSettleClass[] = [
+  'settled-ok',
+  'settled-error',
+  'skipped',
+]
+const TOP_BOOKEND_OUTCOMES: readonly (keyof BookendCounters['top'])[] = [
+  'sound',
+  'unsound',
+  'degraded',
+]
+const BOTTOM_BOOKEND_OUTCOMES: readonly (keyof BookendCounters['bottom'])[] = [
+  'verified',
+  'concerns',
+  'notRun',
+]
+
+function sanitizeLastSettleSide<O extends string>(
+  raw: unknown,
+  outcomes: readonly O[],
+): { at: string; outcome: O; settle: BookendSettleClass } | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const rec = raw as Record<string, unknown>
+  if (typeof rec.at !== 'string') return null
+  if (
+    typeof rec.outcome !== 'string' ||
+    !(outcomes as readonly string[]).includes(rec.outcome)
+  ) {
+    return null
+  }
+  if (
+    typeof rec.settle !== 'string' ||
+    !(BOOKEND_SETTLE_CLASSES as readonly string[]).includes(rec.settle)
+  ) {
+    return null
+  }
+  return {
+    at: rec.at,
+    outcome: rec.outcome as O,
+    settle: rec.settle as BookendSettleClass,
+  }
+}
+
+/**
+ * Rebuild the durable last-settle record from known values only:
+ * a side survives only when its timestamp is a string, its outcome
+ * belongs to that side's closed outcome set, and its settle class
+ * is one of the three classes. Anything else reads as null for
+ * that side -- a malformed settle is absence, never a fabricated
+ * attribution.
+ */
+export function sanitizeHourglassLastSettle(raw: unknown): BookendLastSettleMap {
+  const rec = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  return {
+    top: sanitizeLastSettleSide(rec.top, TOP_BOOKEND_OUTCOMES) as BookendLastSettleMap['top'],
+    bottom: sanitizeLastSettleSide(
+      rec.bottom,
+      BOTTOM_BOOKEND_OUTCOMES,
+    ) as BookendLastSettleMap['bottom'],
+  }
+}
+
 /**
  * Rebuild a usage snapshot from known keys only -- the same allowlist
  * discipline as the diagnostics export: unknown model/route keys in a
@@ -176,6 +253,7 @@ export function sanitizeUsageSnapshot(raw: unknown): UsageSnapshot {
   for (const route of USAGE_ROUTES) out.byRoute[route] = sanitizeBucket(byRoute[route])
   out.searches = toCount(rec.searches)
   out.hourglass = sanitizeHourglass(rec.hourglass)
+  out.hourglassLastSettle = sanitizeHourglassLastSettle(rec.hourglassLastSettle)
   return out
 }
 

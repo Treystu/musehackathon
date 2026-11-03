@@ -19,8 +19,8 @@ import {
 import { recordBottomBookend } from '../../../src/core/ai/bookend-counters'
 import {
   preCallGate,
-  accountCall,
-  accountBottomBookend,
+  accountCallSettled,
+  accountBottomBookendSettled,
   accountError,
   err,
   type ProxyDeps,
@@ -79,17 +79,32 @@ export async function handleVerify(
   deps: ProxyDeps,
 ): Promise<ProxyReply> {
   const gate = await preCallGate(req, deps, ALLOWED_PATHS, req.path)
-  if (gate) return gate
+  if (gate) {
+    // Item 2 cure: a refused bookend call is attribution -- the
+    // invisible case this cure exists to close. An early refusal
+    // records in the notRun count with settle class 'skipped'
+    // (the bookend never ran), in-isolate and in the durable
+    // mirror, awaited so the record cannot ride a dropped
+    // deferral.
+    recordBottomBookend('notRun', 'skipped')
+    await accountBottomBookendSettled(deps, 'notRun', 'skipped')
+    return gate
+  }
   const body = req.body as Record<string, unknown>
   const input = parseInput(body)
-  if (!input) return err(400, 'shape_invalid', 'verify needs answerText, places, criteriaEvidence, sources, verifySummary')
+  if (!input) {
+    // Same early-refusal recording as the gate return above.
+    recordBottomBookend('notRun', 'skipped')
+    await accountBottomBookendSettled(deps, 'notRun', 'skipped')
+    return err(400, 'shape_invalid', 'verify needs answerText, places, criteriaEvidence, sources, verifySummary')
+  }
   const packet = buildVerifyPacket(input)
   const model = typeof body.model === 'string' ? body.model : MUSE_WONDER_MODEL
   const started = Date.now()
   if (!deps.stageProvider) {
     // K4: skipped, not an error — see plan.ts.
     recordBottomBookend('notRun', 'skipped')
-    accountBottomBookend(deps, 'notRun')
+    await accountBottomBookendSettled(deps, 'notRun', 'skipped')
     return {
       status: 200,
       body: { wonder: 'not-run', outcome: 'degraded', model, packetTokens: packet.tokens, trimmed: packet.trimmed },
@@ -100,7 +115,7 @@ export async function handleVerify(
       deps.stageProvider!.stageChat({ model, system: SYSTEM_PROMPT, user: packet.text }, signal),
     )
     // P7: bucket by the provider-reported model, as in plan.ts.
-    accountCall(deps, req.clientId, VERIFY_SETTLE_MICRO_USD, FLAT_TOKENS_IN, FLAT_TOKENS_OUT, {
+    await accountCallSettled(deps, req.clientId, VERIFY_SETTLE_MICRO_USD, FLAT_TOKENS_IN, FLAT_TOKENS_OUT, {
       model: result.model ?? model,
       route: 'verify',
     })
@@ -108,12 +123,12 @@ export async function handleVerify(
     const latencyMs = Date.now() - started
     if (verdict.kind === 'verified') {
       recordBottomBookend('verified')
-      accountBottomBookend(deps, 'verified')
+      await accountBottomBookendSettled(deps, 'verified', 'settled-ok')
       return { status: 200, body: { wonder: 'verified', outcome: 'verified', concerns: [], model: result.model, latencyMs, packetTokens: packet.tokens, trimmed: packet.trimmed } }
     }
     if (verdict.kind === 'concerns' || verdict.kind === 'not_verified') {
       recordBottomBookend('concerns')
-      accountBottomBookend(deps, 'concerns')
+      await accountBottomBookendSettled(deps, 'concerns', 'settled-ok')
       return {
         status: 200,
         body: {
@@ -128,12 +143,14 @@ export async function handleVerify(
       }
     }
     recordBottomBookend('notRun')
-    accountBottomBookend(deps, 'notRun')
+    await accountBottomBookendSettled(deps, 'notRun', 'settled-error')
+    // Deferred on purpose: the error class is not attribution-critical.
     accountError(deps, 'shape_invalid')
     return { status: 200, body: { wonder: 'not-run', outcome: 'degraded', model: result.model, latencyMs, packetTokens: packet.tokens, trimmed: packet.trimmed } }
   } catch {
     recordBottomBookend('notRun')
-    accountBottomBookend(deps, 'notRun')
+    await accountBottomBookendSettled(deps, 'notRun', 'settled-error')
+    // Deferred on purpose: the error class is not attribution-critical.
     accountError(deps, 'provider_down')
     return {
       status: 200,

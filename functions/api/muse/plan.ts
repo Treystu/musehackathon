@@ -18,8 +18,8 @@ import {
 import { recordTopBookend } from '../../../src/core/ai/bookend-counters'
 import {
   preCallGate,
-  accountCall,
-  accountTopBookend,
+  accountCallSettled,
+  accountTopBookendSettled,
   accountError,
   err,
   type ProxyDeps,
@@ -121,10 +121,25 @@ export async function handlePlan(
   deps: ProxyDeps,
 ): Promise<ProxyReply> {
   const gate = await preCallGate(req, deps, ALLOWED_PATHS, req.path)
-  if (gate) return gate
+  if (gate) {
+    // Item 2 cure: a refused bookend call is attribution -- the
+    // invisible case this cure exists to close. An early refusal
+    // records in the degraded count with settle class 'skipped'
+    // (the bookend never ran), in-isolate and in the durable
+    // mirror, awaited so the record cannot ride a dropped
+    // deferral.
+    recordTopBookend('degraded', 'skipped')
+    await accountTopBookendSettled(deps, 'degraded', 'skipped')
+    return gate
+  }
   const body = req.body as Record<string, unknown>
   const input = parseInput(body)
-  if (!input) return err(400, 'shape_invalid', 'plan needs question, intent, criteria, and subset')
+  if (!input) {
+    // Same early-refusal recording as the gate return above.
+    recordTopBookend('degraded', 'skipped')
+    await accountTopBookendSettled(deps, 'degraded', 'skipped')
+    return err(400, 'shape_invalid', 'plan needs question, intent, criteria, and subset')
+  }
   const packet = buildPlanPacket(input)
   const model = typeof body.model === 'string' ? body.model : MUSE_WONDER_MODEL
   const started = Date.now()
@@ -132,7 +147,7 @@ export async function handlePlan(
     // K4: the bookend never ran here — the settle class says so,
     // distinct from a call that ran and produced no verdict.
     recordTopBookend('degraded', 'skipped')
-    accountTopBookend(deps, 'degraded')
+    await accountTopBookendSettled(deps, 'degraded', 'skipped')
     return {
       status: 200,
       body: { outcome: 'degraded', model, packetTokens: packet.tokens, trimmed: packet.trimmed },
@@ -145,7 +160,7 @@ export async function handlePlan(
     // P7: bucket by the model the provider reports for the call (the
     // durable version of the packetTokens this reply already
     // carries), falling back to the requested stage model.
-    accountCall(deps, req.clientId, PLAN_SETTLE_MICRO_USD, FLAT_TOKENS_IN, FLAT_TOKENS_OUT, {
+    await accountCallSettled(deps, req.clientId, PLAN_SETTLE_MICRO_USD, FLAT_TOKENS_IN, FLAT_TOKENS_OUT, {
       model: result.model ?? model,
       route: 'plan',
     })
@@ -153,23 +168,25 @@ export async function handlePlan(
     const latencyMs = Date.now() - started
     if (verdict.kind === 'sound') {
       recordTopBookend('sound')
-      accountTopBookend(deps, 'sound')
+      await accountTopBookendSettled(deps, 'sound', 'settled-ok')
       return { status: 200, body: { outcome: 'sound', objections: [], model: result.model, latencyMs, packetTokens: packet.tokens, trimmed: packet.trimmed } }
     }
     if (verdict.kind === 'unsound') {
       recordTopBookend('unsound')
-      accountTopBookend(deps, 'unsound')
+      await accountTopBookendSettled(deps, 'unsound', 'settled-ok')
       return { status: 200, body: { outcome: 'unsound', objections: verdict.objections, model: result.model, latencyMs, packetTokens: packet.tokens, trimmed: packet.trimmed } }
     }
     recordTopBookend('degraded')
-    accountTopBookend(deps, 'degraded')
+    await accountTopBookendSettled(deps, 'degraded', 'settled-error')
+    // Deferred on purpose: the error class is not attribution-critical.
     accountError(deps, 'shape_invalid')
     return { status: 200, body: { outcome: 'degraded', model: result.model, latencyMs, packetTokens: packet.tokens, trimmed: packet.trimmed } }
   } catch {
     // Timeout, provider failure, or an unreachable Wonder id: the
     // bookend did not run, and the reply says exactly that.
     recordTopBookend('degraded')
-    accountTopBookend(deps, 'degraded')
+    await accountTopBookendSettled(deps, 'degraded', 'settled-error')
+    // Deferred on purpose: the error class is not attribution-critical.
     accountError(deps, 'provider_down')
     return {
       status: 200,

@@ -13,6 +13,18 @@ import {
 } from '../../src/core/ai/bookend-counters'
 import { handlePlan, withStageTimeout, PLAN_SETTLE_MICRO_USD } from '../../functions/api/muse/plan'
 import { handleVerify, VERIFY_SETTLE_MICRO_USD } from '../../functions/api/muse/verify'
+import { handleDiagnostics } from '../../functions/api/muse/diagnostics'
+import {
+  DurableMeterClient,
+  MeterDurableObject,
+  type DurableObjectNamespaceLike,
+  type DurableObjectStateLike,
+  type DurableObjectStorageLike,
+} from '../../functions/api/muse/meter-do'
+import {
+  resetMeterForTests,
+  type MuseEnv,
+} from '../../src/server/muse-adapter'
 import type { ProxyDeps } from '../../src/server/muse-proxy'
 
 /**
@@ -266,6 +278,140 @@ describe('K4 last-bookend attribution (harness H2, lane side)', () => {
     const last = bookendLastSettleSnapshot().bottom
     expect(last?.settle).toBe('settled-ok')
     expect(last?.outcome).toBe('verified')
+  })
+})
+
+/**
+ * Item 2 cure pins: the durable last-settle + awaited accounting.
+ * The fake namespace is the diagnostics-route.test.ts pattern --
+ * one in-memory Durable Object behind a namespace, so two
+ * DurableMeterClients over it honestly simulate two isolates over
+ * one store.
+ */
+function fakeMeterNamespace(): DurableObjectNamespaceLike {
+  const map = new Map<string, unknown>()
+  const storage: DurableObjectStorageLike = {
+    async get<T>(key: string): Promise<T | undefined> {
+      const v = map.get(key)
+      return v === undefined ? undefined : (structuredClone(v) as T)
+    },
+    async put(key: string, value: unknown): Promise<void> {
+      map.set(key, structuredClone(value))
+    },
+  }
+  const state: DurableObjectStateLike = { storage }
+  const doObj = new MeterDurableObject(state)
+  return {
+    idFromName: (name: string) => name,
+    get: () => ({
+      fetch: (input, init) => doObj.fetch(new Request(input, init)),
+    }),
+  }
+}
+
+function durableClient(namespace: DurableObjectNamespaceLike): DurableMeterClient {
+  return new DurableMeterClient(namespace.get(namespace.idFromName('judging-window-v1')), {
+    retryDelaysMs: [0, 0],
+  })
+}
+
+function diagnosticsContext(env: MuseEnv): Parameters<typeof handleDiagnostics>[0] {
+  return {
+    request: new Request('https://app.test/api/muse/diagnostics', { method: 'GET' }),
+    env,
+    params: {},
+    next: async () => new Response(null, { status: 404 }),
+    waitUntil: () => {},
+  }
+}
+
+describe('Item 2 cure: durable bookend attribution across isolates', () => {
+  it('A: a plan settle lands durably even when every deferral is dropped, and a different client reads it', async () => {
+    resetBookendCountersForTests()
+    resetMeterForTests()
+    const namespace = fakeMeterNamespace()
+    const d: ProxyDeps = {
+      meter: durableClient(namespace),
+      provider: createStubProvider(),
+      stageProvider: createStubStageProvider({
+        async stageChat() {
+          return { text: '{"verdict":"sound","objections":[]}', model: 'muse-wonder-1.0' }
+        },
+      }),
+      allowedModels: [...PROXY_ALLOWED_MODELS],
+      waitOut: { breakerWaitMs: 0, pollMs: 1, retryDelaysMs: [] },
+      // Total waitUntil loss: every deferred promise is dropped.
+      // The awaited bookend accounting must not need it.
+      defer: () => {},
+    }
+    const r = await handlePlan(
+      { method: 'POST', path: '/api/muse/plan', body: planBody, clientId: 'c1' },
+      d,
+    )
+    expect(r.status).toBe(200)
+    expect(r.body.outcome).toBe('sound')
+
+    // Wipe the in-isolate view: the read below can only be served
+    // by the durable store, through a different client (meterFor
+    // builds a fresh DurableMeterClient over the same namespace).
+    resetBookendCountersForTests()
+    resetMeterForTests()
+    const res = await handleDiagnostics(diagnosticsContext({ METER: namespace }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      requests: number
+      hourglass: { top: { sound: number } }
+      hourglassLastSettle: {
+        top: { outcome: string; settle: string; at: string } | null
+      }
+    }
+    expect(body.hourglass.top.sound).toBe(1)
+    expect(body.requests).toBe(1)
+    expect(body.hourglassLastSettle.top?.outcome).toBe('sound')
+    expect(body.hourglassLastSettle.top?.settle).toBe('settled-ok')
+    expect(Number.isNaN(Date.parse(body.hourglassLastSettle.top?.at ?? ''))).toBe(false)
+    resetMeterForTests()
+  })
+
+  it('B: a parse refusal records degraded/skipped durably, before the 400', async () => {
+    resetBookendCountersForTests()
+    resetMeterForTests()
+    const namespace = fakeMeterNamespace()
+    const d: ProxyDeps = {
+      meter: durableClient(namespace),
+      provider: createStubProvider(),
+      stageProvider: createStubStageProvider({
+        async stageChat(): Promise<never> {
+          throw new Error('must not be called')
+        },
+      }),
+      allowedModels: [...PROXY_ALLOWED_MODELS],
+      waitOut: { breakerWaitMs: 0, pollMs: 1, retryDelaysMs: [] },
+      defer: () => {},
+    }
+    const r = await handlePlan(
+      { method: 'POST', path: '/api/muse/plan', body: { question: 'x' }, clientId: 'c1' },
+      d,
+    )
+    expect(r.status).toBe(400)
+    expect(r.body.error).toBe('shape_invalid')
+
+    resetBookendCountersForTests()
+    resetMeterForTests()
+    const res = await handleDiagnostics(diagnosticsContext({ METER: namespace }))
+    const body = (await res.json()) as {
+      hourglass: { top: { degraded: number } }
+      hourglassLastSettle: {
+        top: { outcome: string; settle: string } | null
+      }
+    }
+    expect(body.hourglass.top.degraded).toBe(1)
+    expect(body.hourglassLastSettle.top).toEqual({
+      outcome: 'degraded',
+      settle: 'skipped',
+      at: expect.any(String),
+    })
+    resetMeterForTests()
   })
 })
 

@@ -69,10 +69,15 @@ describe('GET /api/muse/diagnostics', () => {
     const body = (await res.json()) as {
       hourglassLastSettle?: { top: unknown; bottom: unknown }
     }
-    // Before any settle on this isolate, both entries are null —
-    // the attribution signal itself (R21 F4).
+    // Before any settle, both entries are null — the attribution
+    // signal itself (R21 F4).
     expect(body.hourglassLastSettle).toEqual({ top: null, bottom: null })
     recordTopBookend('sound')
+    // Item 2 cure: diagnostics now reads the meter's durable
+    // mirror when it is readable (the in-isolate record above is
+    // the fallback), so the settle the routes mirror into the
+    // meter is the one this read must surface.
+    await meterFor({}).recordTopBookend('sound')
     const res2 = await handleDiagnostics(context({}))
     const body2 = (await res2.json()) as {
       hourglassLastSettle?: {

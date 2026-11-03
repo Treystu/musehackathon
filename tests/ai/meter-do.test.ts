@@ -144,6 +144,27 @@ describe('durable meter client', () => {
     expect(snap.tokensOut).toBe(256)
   })
 
+  it('recordCall still counts via countCall when reserve always returns null (Item 2 cure, pin C)', async () => {
+    // A zero budget cap is a reporting threshold that refuses every
+    // reservation; the completed call's count must survive it.
+    const { state } = fakeState()
+    const doObj = new MeterDurableObject(state, { METER_BUDGET_CAP_MICRO_USD: '0' })
+    const client = new DurableMeterClient(stubFor(doObj), { retryDelaysMs: [0, 0] })
+    expect(await client.reserve('c1', 800, 256)).toBeNull()
+
+    await client.recordCall('c1', 800, 128, 128, {
+      model: 'muse-spark-1.3',
+      route: 'intent',
+    })
+    const snap = await client.snapshot()
+    expect(snap.requests).toBe(1)
+    expect(snap.spentMicroUsd).toBe(800)
+    expect(snap.tokensIn).toBe(128)
+    expect(snap.tokensOut).toBe(128)
+    const usage = await client.usageSnapshot()
+    expect(usage.byRoute.intent).toEqual({ calls: 1, tokensIn: 128, tokensOut: 128 })
+  })
+
   it('fails closed when the stub answers non-200 or throws', async () => {
     const down: DurableObjectStubLike = {
       fetch: () => Promise.resolve(new Response('{}', { status: 503 })),

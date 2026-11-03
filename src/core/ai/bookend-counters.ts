@@ -12,9 +12,17 @@
  * accountBottomBookend in src/server/muse-proxy.ts), and
  * diagnostics reports the meter's copy when it is readable -- that
  * copy is durable and shared across isolates, which cures the
- * undercount this in-isolate view has across cold isolates. This
- * module remains as the fallback view for a deployment (or a read)
- * with no readable meter store, and as the hermetic test surface.
+ * undercount this in-isolate view has across cold isolates.
+ *
+ * Item 2 cure (2026-11-03): the meter mirror now carries the
+ * last-settle record durably too (BookendLastSettleMap below,
+ * threaded through meter.ts / usage.ts / meter-persistence.ts),
+ * so diagnostics no longer has to read last-settle from this
+ * isolate's memory -- a value production could never observe,
+ * because the isolate that settled last is rarely the isolate
+ * serving the diagnostics read. This module remains as the
+ * fallback view for a deployment (or a read) with no readable
+ * meter store, and as the hermetic test surface.
  */
 
 export interface BookendCounters {
@@ -39,17 +47,32 @@ const counters: BookendCounters = {
  * unsound/concerns); 'settled-error' means the call ran but
  * produced no verdict (unparseable reply, timeout, provider
  * failure); 'skipped' means the bookend never ran (no stage
- * provider configured). The record is per-isolate by nature, like
- * these counters; diagnostics exposes it beside the counts with
- * that posture stated, and a null entry means this isolate has
- * not settled that bookend yet — itself the attribution signal
- * when the counts and the app disagree.
+ * provider configured). This module's copy is per-isolate by
+ * nature, like these counters; since the Item 2 cure
+ * (2026-11-03) the meter mirror carries the same record durably
+ * (BookendLastSettleMap), and diagnostics exposes the durable
+ * copy beside the counts when the meter view is readable, with
+ * this in-isolate record as the fallback. A null entry means no
+ * settle has been recorded in the view being read — itself the
+ * attribution signal when the counts and the app disagree.
  */
 export type BookendSettleClass = 'settled-ok' | 'settled-error' | 'skipped'
 
 export interface BookendLastSettle {
   at: string
   settle: BookendSettleClass
+}
+
+/**
+ * The last-settle record for both bookends, shared by this
+ * module's in-isolate snapshot and the durable meter mirror
+ * (meter.ts state, usage.ts snapshot, meter-persistence.ts
+ * record): one shape, so diagnostics can swap sources without
+ * changing the payload.
+ */
+export interface BookendLastSettleMap {
+  top: (BookendLastSettle & { outcome: keyof BookendCounters['top'] }) | null
+  bottom: (BookendLastSettle & { outcome: keyof BookendCounters['bottom'] }) | null
 }
 
 let lastTopSettle: (BookendLastSettle & { outcome: keyof BookendCounters['top'] }) | null = null
@@ -80,10 +103,7 @@ export function bookendCountersSnapshot(): BookendCounters {
 }
 
 /** The latest settle per bookend (null until this isolate settles one). */
-export function bookendLastSettleSnapshot(): {
-  top: (BookendLastSettle & { outcome: string }) | null
-  bottom: (BookendLastSettle & { outcome: string }) | null
-} {
+export function bookendLastSettleSnapshot(): BookendLastSettleMap {
   return {
     top: lastTopSettle ? { ...lastTopSettle } : null,
     bottom: lastBottomSettle ? { ...lastBottomSettle } : null,

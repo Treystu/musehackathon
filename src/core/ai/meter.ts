@@ -25,11 +25,17 @@
  * splits are a separate view (usageSnapshot), so every existing
  * snapshot consumer keeps its exact shape.
  */
-import type { BookendCounters } from './bookend-counters'
+import type {
+  BookendCounters,
+  BookendLastSettleMap,
+  BookendSettleClass,
+} from './bookend-counters'
 import {
+  sanitizeHourglassLastSettle,
   sanitizeUsageModel,
   sanitizeUsageRoute,
   zeroHourglass,
+  zeroHourglassLastSettle,
   zeroUsageSnapshot,
   type UsageBucket,
   type UsageDetail,
@@ -111,6 +117,8 @@ export interface MeterState {
   usageByRoute: Record<string, UsageBucket>
   searches: number
   hourglass: BookendCounters
+  /** Item 2 cure: the durable last-settle record beside the counts. */
+  hourglassLastSettle: BookendLastSettleMap
 }
 
 export class Meter {
@@ -132,6 +140,7 @@ export class Meter {
   private readonly usageByRoute = new Map<string, UsageBucket>()
   private searches = 0
   private hourglass: BookendCounters = zeroHourglass()
+  private hourglassLastSettle: BookendLastSettleMap = zeroHourglassLastSettle()
 
   constructor(private readonly cfg: MeterConfig) {}
 
@@ -235,7 +244,16 @@ export class Meter {
     this.countCall(clientId, actualMicroUsd, tin, tout, detail)
   }
 
-  private countCall(
+  /**
+   * The shared accounting settle() and recordCall() both apply,
+   * factored once: totals, per-client spend, success bookkeeping,
+   * and the P7 splits, with no reservation touched and no admission
+   * consulted. Public because the Durable Object's 'countCall' op
+   * (Item 2 cure) applies exactly this accounting for a completed
+   * call whose reserve hop returned null -- a reporting threshold
+   * must not erase a call that already happened.
+   */
+  countCall(
     clientId: string,
     actualMicroUsd: number,
     tin: number,
@@ -269,17 +287,32 @@ export class Meter {
     this.searches += Math.trunc(count)
   }
 
-  /** Mirror one top-bookend outcome into the durable store (P7). */
-  recordTopBookend(outcome: keyof BookendCounters['top']): void {
+  /**
+   * Mirror one top-bookend outcome into the durable store (P7),
+   * with its settle class (Item 2 cure): the count alone could not
+   * say when or how the last bookend settled, which is the
+   * attribution diagnostics reads. The settle defaults match
+   * bookend-counters.ts exactly, so a caller that names only the
+   * outcome records the same class in both views.
+   */
+  recordTopBookend(
+    outcome: keyof BookendCounters['top'],
+    settle: BookendSettleClass = outcome === 'degraded' ? 'settled-error' : 'settled-ok',
+  ): void {
     if (outcome === 'sound' || outcome === 'unsound' || outcome === 'degraded') {
       this.hourglass.top[outcome] += 1
+      this.hourglassLastSettle.top = { at: new Date().toISOString(), outcome, settle }
     }
   }
 
-  /** Mirror one bottom-bookend outcome into the durable store (P7). */
-  recordBottomBookend(outcome: keyof BookendCounters['bottom']): void {
+  /** Mirror one bottom-bookend outcome into the durable store (P7 + Item 2). */
+  recordBottomBookend(
+    outcome: keyof BookendCounters['bottom'],
+    settle: BookendSettleClass = outcome === 'notRun' ? 'settled-error' : 'settled-ok',
+  ): void {
     if (outcome === 'verified' || outcome === 'concerns' || outcome === 'notRun') {
       this.hourglass.bottom[outcome] += 1
+      this.hourglassLastSettle.bottom = { at: new Date().toISOString(), outcome, settle }
     }
   }
 
@@ -303,6 +336,12 @@ export class Meter {
     out.hourglass = {
       top: { ...this.hourglass.top },
       bottom: { ...this.hourglass.bottom },
+    }
+    out.hourglassLastSettle = {
+      top: this.hourglassLastSettle.top ? { ...this.hourglassLastSettle.top } : null,
+      bottom: this.hourglassLastSettle.bottom
+        ? { ...this.hourglassLastSettle.bottom }
+        : null,
     }
     return out
   }
@@ -346,6 +385,12 @@ export class Meter {
         top: { ...this.hourglass.top },
         bottom: { ...this.hourglass.bottom },
       },
+      hourglassLastSettle: {
+        top: this.hourglassLastSettle.top ? { ...this.hourglassLastSettle.top } : null,
+        bottom: this.hourglassLastSettle.bottom
+          ? { ...this.hourglassLastSettle.bottom }
+          : null,
+      },
     }
   }
 
@@ -384,6 +429,12 @@ export class Meter {
     this.hourglass = hg
       ? { top: { ...hg.top }, bottom: { ...hg.bottom } }
       : zeroHourglass()
+    // Item 2 field, same tolerance: a state exported before the
+    // cure imports as null/null, and a present value passes the
+    // closed-vocabulary sanitize before it can reach diagnostics.
+    this.hourglassLastSettle = state.hourglassLastSettle
+      ? sanitizeHourglassLastSettle(state.hourglassLastSettle)
+      : zeroHourglassLastSettle()
   }
 }
 

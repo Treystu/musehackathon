@@ -31,7 +31,10 @@ import type {
   Meter,
   MeterSnapshot,
 } from '../core/ai/meter'
-import type { BookendCounters } from '../core/ai/bookend-counters'
+import type {
+  BookendCounters,
+  BookendSettleClass,
+} from '../core/ai/bookend-counters'
 import type { MuseProvider, StageChatProvider } from '../core/ai/provider'
 import type { ProxyError } from '../core/ai/proxy-errors'
 import type { UsageDetail, UsageSnapshot } from '../core/ai/usage'
@@ -57,9 +60,15 @@ export interface MeterContract {
   recordFailure(now?: number): void | Promise<void>
   /** P7: count completed web_search calls from one research reply. */
   recordSearches(count: number): void | Promise<void>
-  /** P7: mirror one hourglass bookend outcome into the meter store. */
-  recordTopBookend(outcome: keyof BookendCounters['top']): void | Promise<void>
-  recordBottomBookend(outcome: keyof BookendCounters['bottom']): void | Promise<void>
+  /** P7 + Item 2: mirror one hourglass bookend outcome and its settle class. */
+  recordTopBookend(
+    outcome: keyof BookendCounters['top'],
+    settle?: BookendSettleClass,
+  ): void | Promise<void>
+  recordBottomBookend(
+    outcome: keyof BookendCounters['bottom'],
+    settle?: BookendSettleClass,
+  ): void | Promise<void>
   snapshot(): MeterSnapshot | Promise<MeterSnapshot>
   /** P7 split view (usage.ts); diagnostics reads it on its read path. */
   usageSnapshot(): UsageSnapshot | Promise<UsageSnapshot>
@@ -143,6 +152,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  * Sync throws and async rejections are swallowed alike: a lost
  * accounting record must never surface to a user, and diagnostics
  * keeps reporting truthfully for the calls that did record.
+ *
+ * Which routes use which mode (Item 2 cure, 2026-11-03): the
+ * classic routes keep this deferred mode -- their replies are
+ * ready the moment the provider answers, and delaying one for a
+ * meter hop would tax the user for bookkeeping. The bookend
+ * routes (plan/verify) use accountAwaited() below for their call
+ * and bookend records instead: their handlers already await a
+ * multi-second stage call, so one DO hop is noise beside it, and
+ * bookend attribution must not ride a deferral the runtime is
+ * free to drop -- measured before this cure, dropped waitUntil
+ * promises were exactly how settled bookends vanished from the
+ * durable counts while the app visibly ran them.
  */
 export function account(deps: ProxyDeps, op: (meter: MeterContract) => void | Promise<void>): void {
   let result: void | Promise<void>
@@ -163,6 +184,57 @@ export function account(deps: ProxyDeps, op: (meter: MeterContract) => void | Pr
     }
   }
   void safe
+}
+
+/**
+ * Awaited meter accounting (Item 2 cure): the same error-swallowing
+ * as account() -- sync throws and async rejections are swallowed
+ * alike, so a lost record never surfaces -- but the caller awaits
+ * the write instead of deferring it, so the record has landed (or
+ * provably failed) before the handler replies. Used by the
+ * bookend routes; see the mode note on account().
+ */
+export async function accountAwaited(
+  deps: ProxyDeps,
+  op: (meter: MeterContract) => void | Promise<void>,
+): Promise<void> {
+  try {
+    await op(deps.meter)
+  } catch {
+    // Swallowed alike with account(): accounting only, never admission.
+  }
+}
+
+/** Awaited variant of accountCall, for the bookend routes. */
+export function accountCallSettled(
+  deps: ProxyDeps,
+  clientId: string,
+  actualMicroUsd: number,
+  tin: number,
+  tout: number,
+  detail?: UsageDetail,
+): Promise<void> {
+  return accountAwaited(deps, (meter) =>
+    meter.recordCall(clientId, actualMicroUsd, tin, tout, detail),
+  )
+}
+
+/** Awaited variant of accountTopBookend, for the plan route. */
+export function accountTopBookendSettled(
+  deps: ProxyDeps,
+  outcome: keyof BookendCounters['top'],
+  settle?: BookendSettleClass,
+): Promise<void> {
+  return accountAwaited(deps, (meter) => meter.recordTopBookend(outcome, settle))
+}
+
+/** Awaited variant of accountBottomBookend, for the verify route. */
+export function accountBottomBookendSettled(
+  deps: ProxyDeps,
+  outcome: keyof BookendCounters['bottom'],
+  settle?: BookendSettleClass,
+): Promise<void> {
+  return accountAwaited(deps, (meter) => meter.recordBottomBookend(outcome, settle))
 }
 
 /**
@@ -196,15 +268,17 @@ export function accountSearches(deps: ProxyDeps, count: number): void {
 export function accountTopBookend(
   deps: ProxyDeps,
   outcome: keyof BookendCounters['top'],
+  settle?: BookendSettleClass,
 ): void {
-  account(deps, (meter) => meter.recordTopBookend(outcome))
+  account(deps, (meter) => meter.recordTopBookend(outcome, settle))
 }
 
 export function accountBottomBookend(
   deps: ProxyDeps,
   outcome: keyof BookendCounters['bottom'],
+  settle?: BookendSettleClass,
 ): void {
-  account(deps, (meter) => meter.recordBottomBookend(outcome))
+  account(deps, (meter) => meter.recordBottomBookend(outcome, settle))
 }
 
 /** Count one failure by closed error class (counts only, Q1). */

@@ -34,6 +34,10 @@ import {
   type PersistedMeterState,
 } from '../../../src/core/ai/meter-persistence'
 import type { UsageDetail, UsageSnapshot } from '../../../src/core/ai/usage'
+import type {
+  BookendCounters,
+  BookendSettleClass,
+} from '../../../src/core/ai/bookend-counters'
 
 const STORAGE_KEY = 'meter/v1'
 export const METER_INSTANCE_NAME = 'judging-window-v1'
@@ -144,6 +148,18 @@ function asBottomOutcome(v: unknown): 'verified' | 'concerns' | 'notRun' {
   throw new ShapeError('expected bottom bookend outcome')
 }
 
+/**
+ * Item 2 cure: the trailing settle arg on the bookend ops. Absent
+ * or invalid reads as undefined, and the Meter then derives the
+ * class from the outcome by the same defaults bookend-counters.ts
+ * uses -- so a pre-cure client that sends only the outcome records
+ * exactly the class it always recorded.
+ */
+function asOptSettleClass(v: unknown): BookendSettleClass | undefined {
+  if (v === 'settled-ok' || v === 'settled-error' || v === 'skipped') return v
+  return undefined
+}
+
 function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -204,14 +220,30 @@ export class MeterDurableObject {
             asOptUsageDetail(args[4]),
           )
           return json(200, { result: null })
+        case 'countCall':
+          // Item 2 cure: the no-reservation counting op behind
+          // DurableMeterClient.recordCall's null-reserve fallback.
+          // Same args and accounting as recordCall's settle; the
+          // difference lives in the client composition, not here.
+          await this.meter.countCall(
+            asString(args[0]),
+            asNumber(args[1]),
+            asNumber(args[2]),
+            asNumber(args[3]),
+            asOptUsageDetail(args[4]),
+          )
+          return json(200, { result: null })
         case 'recordSearches':
           await this.meter.recordSearches(asNumber(args[0]))
           return json(200, { result: null })
         case 'recordTopBookend':
-          await this.meter.recordTopBookend(asTopOutcome(args[0]))
+          await this.meter.recordTopBookend(asTopOutcome(args[0]), asOptSettleClass(args[1]))
           return json(200, { result: null })
         case 'recordBottomBookend':
-          await this.meter.recordBottomBookend(asBottomOutcome(args[0]))
+          await this.meter.recordBottomBookend(
+            asBottomOutcome(args[0]),
+            asOptSettleClass(args[1]),
+          )
           return json(200, { result: null })
         case 'usageSnapshot':
           return json(200, { result: await this.meter.usageSnapshot() })
@@ -382,10 +414,11 @@ export class DurableMeterClient {
    * failed and the accounting wrapper swallowed it, exactly as
    * designed, invisibly. reserve + settle is the same bookkeeping in
    * the two ops every deployed class speaks. A null reservation (the
-   * old contract's cap refusal) loses that one call's count and
-   * nothing else — accounting only, never admission. Retire this
-   * composition when the meter worker is redeployed from a source
-   * whose dispatch includes 'recordCall'.
+   * old contract's cap refusal) used to lose that one call's count
+   * and nothing else — the Item 2 cure below replaces that loss
+   * with the 'countCall' fallback. Retire this composition when
+   * the meter worker is redeployed from a source whose dispatch
+   * includes 'recordCall'.
    */
   async recordCall(
     clientId: string,
@@ -395,8 +428,37 @@ export class DurableMeterClient {
     detail?: UsageDetail,
   ): Promise<void> {
     const id = await this.reserve(clientId, actualMicroUsd, tin + tout)
-    if (id === null) return
+    if (id === null) {
+      // Item 2 cure: a null reserve is a reporting threshold
+      // answering (budget cap reached, breaker open) -- it must
+      // not erase a completed call's count, which the pre-cure
+      // early return above did silently. Fall back to the
+      // no-reservation counting op with the same arguments.
+      // Against a pre-cure deployed worker the op is unknown and
+      // this throws MeterUnavailableError, which the accounting
+      // wrapper swallows exactly as it swallowed the pre-cure
+      // loss (no regression); the fallback becomes live when the
+      // standalone meter worker is redeployed from this source --
+      // that redeploy is the recorded deployment precondition.
+      const args: unknown[] = [clientId, actualMicroUsd, tin, tout]
+      if (detail !== undefined) args.push(detail)
+      await this.call<null>('countCall', args, false)
+      return
+    }
     await this.settle(id, clientId, actualMicroUsd, tin, tout, detail)
+  }
+
+  /** Item 2 cure: the 'countCall' op itself, for direct callers. */
+  countCall(
+    clientId: string,
+    actualMicroUsd: number,
+    tin: number,
+    tout: number,
+    detail?: UsageDetail,
+  ): Promise<void> {
+    const args: unknown[] = [clientId, actualMicroUsd, tin, tout]
+    if (detail !== undefined) args.push(detail)
+    return this.call<null>('countCall', args, false).then(() => undefined)
   }
 
   /**
@@ -412,12 +474,26 @@ export class DurableMeterClient {
     return this.call<null>('recordSearches', [count], false).then(() => undefined)
   }
 
-  recordTopBookend(outcome: 'sound' | 'unsound' | 'degraded'): Promise<void> {
-    return this.call<null>('recordTopBookend', [outcome], false).then(() => undefined)
+  recordTopBookend(
+    outcome: keyof BookendCounters['top'],
+    settle?: BookendSettleClass,
+  ): Promise<void> {
+    // The settle rides as a trailing arg, like settle's detail: an
+    // older deployed class reads args[0] and ignores it, so the
+    // count still lands there and only the durable last-settle
+    // waits for the redeploy.
+    const args: unknown[] = [outcome]
+    if (settle !== undefined) args.push(settle)
+    return this.call<null>('recordTopBookend', args, false).then(() => undefined)
   }
 
-  recordBottomBookend(outcome: 'verified' | 'concerns' | 'notRun'): Promise<void> {
-    return this.call<null>('recordBottomBookend', [outcome], false).then(() => undefined)
+  recordBottomBookend(
+    outcome: keyof BookendCounters['bottom'],
+    settle?: BookendSettleClass,
+  ): Promise<void> {
+    const args: unknown[] = [outcome]
+    if (settle !== undefined) args.push(settle)
+    return this.call<null>('recordBottomBookend', args, false).then(() => undefined)
   }
 
   usageSnapshot(): Promise<UsageSnapshot> {

@@ -190,15 +190,21 @@ export async function handleDiagnostics(context: PagesContext<MuseEnv>): Promise
       // for a deployment whose meter cannot report them.
       hourglass: usageReadable ? usage.hourglass : bookendCountersSnapshot(),
       // Last-bookend attribution (Lane completion K4, harness item
-      // H2's lane side): the latest settle per bookend on THIS
-      // isolate — timestamp, recorded outcome, and settle class
-      // (settled-ok / settled-error / skipped). Per-isolate by
-      // nature, like the fallback counters: a null entry means
-      // this isolate has not settled that bookend, which is the
-      // attribution signal when the aggregate counts and the app
-      // path disagree (R21 F4: bookends visibly executing while
-      // the counts read plan 0 / verify 2).
-      hourglassLastSettle: bookendLastSettleSnapshot(),
+      // H2's lane side): the latest settle per bookend — timestamp,
+      // recorded outcome, and settle class (settled-ok /
+      // settled-error / skipped). Item 2 cure (2026-11-03): read
+      // from the meter's durable mirror when the split view is
+      // readable, mirroring the hourglass ternary above, so any
+      // isolate's settles are visible to this read; the in-isolate
+      // record is the fallback when the meter view cannot be
+      // read. A null entry means no settle has been recorded in
+      // the view being read, which is the attribution signal when
+      // the aggregate counts and the app path disagree (R21 F4:
+      // bookends visibly executing while the counts read plan 0 /
+      // verify 2).
+      hourglassLastSettle: usageReadable
+        ? usage.hourglassLastSettle
+        : bookendLastSettleSnapshot(),
       errors,
       deployment: {
         pages: env.CF_PAGES === '1',

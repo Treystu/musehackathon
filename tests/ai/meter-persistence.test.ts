@@ -5,6 +5,7 @@ import {
   MeterUnavailableError,
   PersistentMeter,
   RESERVATION_TTL_MS,
+  emptyPersistedState,
   type MeterStorage,
   type PersistedMeterState,
 } from '../../src/core/ai/meter-persistence'
@@ -161,6 +162,38 @@ describe('persistent meter', () => {
     })
     const after = storage.peek() as unknown as Record<string, unknown>
     expect(after.requests).toBe('not-a-number')
+  })
+
+  it('hourglassLastSettle: a pre-cure record loads as null/null and a cured record round-trips (Item 2, pin E)', async () => {
+    const legacy = emptyPersistedState() as unknown as Record<string, unknown>
+    delete legacy.hourglassLastSettle
+    legacy.requests = 3
+    const legacyStorage = new MemoryMeterStorage(legacy as unknown as PersistedMeterState)
+    const legacyMeter = new PersistentMeter(legacyStorage, cfg())
+    expect((await legacyMeter.snapshot()).requests).toBe(3)
+    expect((await legacyMeter.usageSnapshot()).hourglassLastSettle).toEqual({
+      top: null,
+      bottom: null,
+    })
+
+    const storage = new MemoryMeterStorage()
+    const a = new PersistentMeter(storage, cfg())
+    await a.recordTopBookend('sound', 'settled-ok')
+    await a.recordBottomBookend('notRun', 'skipped')
+    // The raw record carries the field under version 1 (additive).
+    const raw = storage.peek()
+    expect(raw?.hourglassLastSettle?.top?.outcome).toBe('sound')
+    expect(raw?.hourglassLastSettle?.bottom?.settle).toBe('skipped')
+
+    const b = new PersistentMeter(storage, cfg())
+    const usage = await b.usageSnapshot()
+    expect(usage.hourglass.top.sound).toBe(1)
+    expect(usage.hourglass.bottom.notRun).toBe(1)
+    expect(usage.hourglassLastSettle.top?.outcome).toBe('sound')
+    expect(usage.hourglassLastSettle.top?.settle).toBe('settled-ok')
+    expect(Number.isNaN(Date.parse(usage.hourglassLastSettle.top?.at ?? ''))).toBe(false)
+    expect(usage.hourglassLastSettle.bottom?.outcome).toBe('notRun')
+    expect(usage.hourglassLastSettle.bottom?.settle).toBe('skipped')
   })
 
   it('operatorReset is the only path that overwrites an invalid record', async () => {

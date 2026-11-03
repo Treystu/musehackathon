@@ -132,14 +132,22 @@ describe('composeSpokenSummary', () => {
     expect(sentences.join(' ')).not.toMatch(/\d/)
   })
 
-  it('an empty answer produces no speech', () => {
+  it('an empty answer speaks its honest note verbatim (Lane A8 class 6)', () => {
+    // ADAPTED PIN (Lane A8, 2026-11-03): the C10 rule "an empty
+    // answer produces no speech" is superseded for this class by
+    // the voice-response contract — an 'empty' answer IS an honest
+    // note terminal (its summary is the note the card renders), and
+    // honest notes speak their own text verbatim through the
+    // guards. Withheld/blocked silence (next test) is unchanged.
     const empty = verifiedAnswer({
       status: 'empty',
       summary: 'No place in the loaded data meets all of the stated Census criteria.',
       places: [],
       criterionEvidence: [],
     })
-    expect(composeSpokenSummary(empty)).toEqual([])
+    expect(composeSpokenSummary(empty)).toEqual([
+      'No place in the loaded data meets all of the stated Census criteria.',
+    ])
   })
 
   it('a withheld or blocked answer produces no speech', () => {

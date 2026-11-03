@@ -47,11 +47,11 @@ import {
   type GeneralAnswerData,
 } from './ai/general-runner'
 import { createSpeechDriver, type SpeechDriver } from './ai/speech-driver'
-import { composeSpokenSummary, guardSpokenSentences } from './ai/spoken-answer'
+import { guardSpokenSentences, planTerminalSpeech } from './ai/spoken-answer'
 import { StagedStatus } from './ai/StagedStatus'
 import { runSummaryText } from '../core/ai/run-progress'
 import { ProgressivePlacesMap } from './map/ProgressivePlacesMap'
-import { AskSessionStore, type SessionAnswerRequest } from './ai/session-store'
+import { AskSessionStore, type AnswerRequestOrigin } from './ai/session-store'
 import { researchAck } from './ai/ack'
 import {
   canRefine,
@@ -332,19 +332,30 @@ export default function App() {
     getAnswerSnapshot,
   )
   const answerRequest = answerState.request
-  const setAnswerRequest = (value: SessionAnswerRequest | null) =>
-    sessionStore.setAnswerState({ request: value })
   const answer = answerState.answer
   const setAnswer = (value: ComposedAnswer | null) => sessionStore.setAnswerState({ answer: value })
   /**
    * Voice-out (plan C10, branch b — no Muse TTS exists on the Model
-   * API roster, re-verified 2026-11-02): when the conversation is in
-   * voice mode (the question arrived by mic, set by AskPanel's accept
-   * path), a verified answer is also spoken by the DEVICE's speech
-   * synthesis. The driver is created once; its sticky session mute is
-   * the Stop voice control's state, mirrored here only so the control
-   * re-renders. Spoken text comes solely from composeSpokenSummary —
-   * verified figures by reference, unverified numerals dropped.
+   * API roster, re-verified 2026-11-02): a landed answer terminal is
+   * also spoken by the DEVICE's speech synthesis — when the request
+   * that produced it was itself voice-originated (Lane A8). The fire
+   * condition is the request's ORIGIN STAMP in the session store
+   * (AnswerState.requestOrigin, written by handleAnswerRequest in
+   * the same store write that mints the request, from the origin
+   * fact AskPanel reports at ask start), never the ambient voiceMode
+   * flag: the previous wiring read the flag as the answer landed, so
+   * a voice run whose terminal landed after a later typed submit
+   * stayed silent, and a fresh voice submission re-spoke the
+   * previous still-standing answer. The driver is created once; its
+   * sticky session mute is the Stop voice control's state, mirrored
+   * here only so the control re-renders. The ambient flag keeps its
+   * remaining jobs: the driver's activation for the modal-question
+   * and general-inquiry speech acts (their own effects below) and
+   * the Stop control's rendering — and a typed submit still
+   * deactivates the driver through it, silencing speech in progress.
+   * Spoken text comes solely from the spoken-answer composer —
+   * verified figures by reference, unverified numerals dropped,
+   * every terminal class under its own honesty rules.
    */
   const [voiceMode, setVoiceMode] = useState(false)
   const [voiceMuted, setVoiceMuted] = useState(false)
@@ -352,17 +363,49 @@ export default function App() {
   if (speechDriverRef.current === null) {
     speechDriverRef.current = createSpeechDriver()
   }
+  // The origin fact of the ask currently being created, reported by
+  // AskPanel at ask start (handleAskStart) and consumed by
+  // handleAnswerRequest when it mints the request. A ref, not
+  // state: it is a creation fact for the minting write, and
+  // continuations of the ask (clarification picks, editor commits)
+  // mint from the same ask, so they inherit it untouched.
+  const askOriginRef = useRef<AnswerRequestOrigin>('typed')
   useEffect(() => {
-    const driver = speechDriverRef.current
-    if (!driver) return
-    driver.setVoiceModeActive(voiceMode)
-    if (voiceMode && answer?.status === 'verified') {
-      driver.speak(composeSpokenSummary(answer))
-    }
-  }, [answer, voiceMode])
+    speechDriverRef.current?.setVoiceModeActive(voiceMode)
+  }, [voiceMode])
   const answerNote = answerState.note
   const setAnswerNote = (value: { id: number; text: string } | null) =>
     sessionStore.setAnswerState({ note: value })
+  /**
+   * The terminals already spoken (or deliberately silenced by their
+   * class), by object identity — the speak-once set. A re-render, a
+   * mode toggle, or a new run's start never re-speaks a landed
+   * terminal; a superseding terminal is a new object and replaces
+   * the old utterance through the driver's stop-then-speak
+   * semantics. Generalizes the general lane's spokenGeneralRef.
+   */
+  const spokenTerminalsRef = useRef(new Set<object>())
+  useEffect(() => {
+    const driver = speechDriverRef.current
+    if (!driver) return
+    const plan = planTerminalSpeech({
+      answer,
+      note: answerNote,
+      request: answerRequest,
+      askEpoch: answerState.askEpoch,
+      origin: answerState.requestOrigin,
+    })
+    if (!plan || spokenTerminalsRef.current.has(plan.target)) return
+    spokenTerminalsRef.current.add(plan.target)
+    if (plan.sentences.length === 0) return
+    // The run's own stamp authorizes this speech (the gate reads
+    // the run, not the room): activate the driver for it even when
+    // the ambient flag has since moved on. Fire-and-forget — a
+    // muted or absent synthesis is silent and the visual terminal
+    // is never delayed.
+    driver.setVoiceModeActive(true)
+    driver.speak(plan.sentences)
+  }, [answer, answerNote, answerRequest, answerState.askEpoch, answerState.requestOrigin])
   /**
    * The session's stage and the panel's busy flag, read reactively
    * (indicator lifecycle cure): the answer area's working-state
@@ -476,23 +519,31 @@ export default function App() {
    * last answer's results (item 18) until the new request replaces
    * it at hand-off; only the Ask surface stops showing it.
    */
-  const handleAskStart = useCallback((_queryText: string) => {
-    const epoch = sessionStore.getSnapshot().answer.askEpoch + 1
-    generalSeq.current += 1
-    generalQueryRef.current = null
-    setGeneralInFlight(false)
-    answerRequestSeq.current += 1
-    setComposeInFlight(false)
-    sessionStore.setAnswerState({
-      askEpoch: epoch,
-      generalAnswer: null,
-      generalNote: null,
-      // The previous run's COMPLETE strip retires with its answer
-      // (Lane A7): a summary never stands beside a new run.
-      runSummary: null,
-    })
-    setModalState((state) => expireModalForNewQuestion(state))
-  }, [])
+  const handleAskStart = useCallback(
+    (_queryText: string, origin: AnswerRequestOrigin = 'typed') => {
+      // The ask's origin fact (Lane A8), held for the request this
+      // ask mints: handleAnswerRequest stamps it onto the request in
+      // the store. A later ask overwrites it at its own start, so a
+      // stamp can never be minted from a previous ask's fact.
+      askOriginRef.current = origin
+      const epoch = sessionStore.getSnapshot().answer.askEpoch + 1
+      generalSeq.current += 1
+      generalQueryRef.current = null
+      setGeneralInFlight(false)
+      answerRequestSeq.current += 1
+      setComposeInFlight(false)
+      sessionStore.setAnswerState({
+        askEpoch: epoch,
+        generalAnswer: null,
+        generalNote: null,
+        // The previous run's COMPLETE strip retires with its answer
+        // (Lane A7): a summary never stands beside a new run.
+        runSummary: null,
+      })
+      setModalState((state) => expireModalForNewQuestion(state))
+    },
+    [],
+  )
 
   const handleAnswerRequest = useCallback((intent: ValidatedIntent, queryText: string) => {
     const id = ++answerRequestSeq.current
@@ -517,11 +568,20 @@ export default function App() {
       setGeneralNote(null)
     }
     setModalState((state) => expireModalForNewQuestion(state))
-    setAnswerRequest({
-      id,
-      intent,
-      queryText,
-      epoch: sessionStore.getSnapshot().answer.askEpoch,
+    // The request and its origin stamp land in ONE store write
+    // (Lane A8): the stamp is this ask's origin fact, reported at
+    // ask start — a transcript-created ask stamps 'voice', every
+    // other ask 'typed', and an editor-committed re-run of the same
+    // ask inherits the fact untouched. The voice layer speaks the
+    // terminal this request lands iff the stamp says 'voice'.
+    sessionStore.setAnswerState({
+      request: {
+        id,
+        intent,
+        queryText,
+        epoch: sessionStore.getSnapshot().answer.askEpoch,
+      },
+      requestOrigin: { requestId: id, source: askOriginRef.current },
     })
   }, [])
 

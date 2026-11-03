@@ -43,7 +43,11 @@ import { IntentEditor } from './IntentEditor'
 import { ExplainOnAsk } from './ExplainOnAsk'
 import { MicInput, type MicRecognizer, type MicRecorder } from './MicInput'
 import { StagedStatus } from './StagedStatus'
-import { AskSessionStore, type PanelResearchState } from './session-store'
+import {
+  AskSessionStore,
+  type AnswerRequestOrigin,
+  type PanelResearchState,
+} from './session-store'
 import { pickAckOpener, researchAck } from './ack'
 import type { ExplanationState } from './ExplainBox'
 import type { FigureInput } from './FigureCard'
@@ -495,14 +499,27 @@ export function AskPanel({
    * column can clear the previous run's surface state at ask time —
    * not at hand-off time, which left the previous answer, its modal,
    * and its general card standing through the whole new parse. The
-   * inquiry wave-off is not an ask and never fires this.
+   * inquiry wave-off is not an ask and never fires this. The second
+   * argument is the ask's origin fact (Lane A8): 'voice' exactly
+   * when this runQuery carries an accepted mic transcript, 'typed'
+   * for every other vector (typed submit, example chips) — runQuery
+   * is the single funnel every run-start vector passes through, so
+   * the fact is exact here and nowhere else. App stamps it onto the
+   * answer request this ask mints; continuations of the ask
+   * (clarification picks, editor commits — committed picks on the
+   * SAME ask, below) inherit it untouched.
    */
-  onAskStart?: (queryText: string) => void
+  onAskStart?: (queryText: string, origin: AnswerRequestOrigin) => void
   /**
    * Voice-mode activation for spoken answers (plan C10): called with
    * true only when a mic transcript is ACCEPTED (the question arrived
    * by voice), and with false on a typed submit. A clarified
-   * transcript does not activate voice mode — no question ran.
+   * transcript does not activate voice mode — no question ran. This
+   * ambient signal keeps its remaining jobs (the speech driver's
+   * activation for the modal-question and general-inquiry speech
+   * acts, and the Stop voice control's rendering); since Lane A8 it
+   * no longer gates answer summaries — the request's origin stamp
+   * (onAskStart above) does.
    */
   onVoiceModeChange?: (active: boolean) => void
   proxyError?: ProxyError | null
@@ -887,8 +904,10 @@ export function AskPanel({
     // run's surface state clears. App clears the answer column
     // (previous answer, note, general card, live modal) through
     // onAskStart; this panel's own previous-run state clears with
-    // the setters below.
-    onAskStart?.(queryText)
+    // the setters below. The origin fact rides the same call
+    // (Lane A8): a spoken transcript is the only voice vector, and
+    // it is present exactly on the mic path's runQuery call.
+    onAskStart?.(queryText, spokenTranscript !== undefined ? 'voice' : 'typed')
     // The run's stage clock starts at the parse (item 17): the stage
     // state lives in the session store, so it — and the run it
     // describes — continues across any tab switch from here. The

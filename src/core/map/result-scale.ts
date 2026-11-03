@@ -411,6 +411,41 @@ export function resultMapRelevant(answer: ComposedAnswer): boolean {
   return drivingMetricKey(answer) !== null
 }
 
+/** One chart a terminal render mounts, as the spoken layer names it. */
+export interface TerminalChartKind {
+  kind: 'map'
+  /** The plain-words name speech uses for this chart ("the map"). */
+  spokenName: string
+  /**
+   * The chart's subject in the legend's own plain words: for the
+   * metric-colored result map, the driving metric's label,
+   * lowercased for mid-sentence use.
+   */
+  subject: string
+}
+
+/**
+ * The charts the terminal render mounts for an answer — the single
+ * derivation the card and the spoken layer both read (Lane A8), so
+ * the set speech references is the set the card renders BY
+ * CONSTRUCTION: a chart that did not render is never referenced,
+ * and a rendered chart is always referenced. The card mounts its
+ * result map on exactly `answer.status === 'verified' &&
+ * resultMapRelevant(answer)` (AnswerCard), and resultMapRelevant
+ * already requires the verified status, so this derivation is that
+ * mount condition restated as data. Today the map is the only chart
+ * kind any answer terminal renders; bar/line kinds slot into this
+ * list when a terminal render gains one, and speech picks them up
+ * without reshaping. The Map TAB is a view, not a chart the answer
+ * created, and is never in this set.
+ */
+export function terminalChartKinds(answer: ComposedAnswer): TerminalChartKind[] {
+  if (!resultMapRelevant(answer)) return []
+  const key = drivingMetricKey(answer)
+  if (!key) return []
+  return [{ kind: 'map', spokenName: 'the map', subject: metricLabel(key).toLowerCase() }]
+}
+
 /**
  * The radius for a national-mode area circle: area proportional to
  * value (radius scales with the square root), inside a fixed band so

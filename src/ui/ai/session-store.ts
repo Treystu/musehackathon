@@ -74,6 +74,19 @@ export interface PanelState {
   research: PanelResearchState
 }
 
+/**
+ * The input modality an answer request was created from (Lane A8):
+ * 'voice' exactly when the request's originating submission was an
+ * accepted mic transcript, 'typed' for every other creation path
+ * (typed submit, example chips, retries). A property of the
+ * REQUEST, stamped at creation — never of the session: the voice
+ * layer reads the landed terminal's own stamp to decide speech, so
+ * a later submission cannot silence a voice run's answer or make a
+ * typed run speak. Continuations (a clarification pick, a decision
+ * refinement) mint or refine the stamped request and inherit it.
+ */
+export type AnswerRequestOrigin = 'voice' | 'typed'
+
 /** One answer request, as App's answer layer consumes it. */
 export interface SessionAnswerRequest {
   id: number
@@ -116,6 +129,15 @@ export interface AnswerState {
    * or drift onto another's card.
    */
   runSummary: { requestId: number; text: string } | null
+  /**
+   * The landed request's origin stamp (Lane A8), written by App in
+   * the same store write that mints the request and keyed to it:
+   * the voice layer speaks a terminal only when the terminal's own
+   * request carries source 'voice' here. A stamp for a superseded
+   * request can never match a later request's id, so it needs no
+   * clearing — the same keyed discipline as runSummary.
+   */
+  requestOrigin: { requestId: number; source: AnswerRequestOrigin } | null
 }
 
 /**
@@ -237,6 +259,7 @@ export function initialAnswerState(): AnswerState {
     modal: initialModalState(),
     askEpoch: 0,
     runSummary: null,
+    requestOrigin: null,
   }
 }
 

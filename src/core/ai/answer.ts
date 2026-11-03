@@ -1207,9 +1207,40 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
   return []
 }
 
-/** Whether the question asks for a county-level answer. */
+/** An explicit county subject: the county itself is what is asked
+ * about ("which county...", "counties with..."). */
+const COUNTY_SUBJECT_RE = /\bwhich (?:county|counties)\b|\bcounties\b/i
+
+/** A place noun as the question's ranked subject: the reader asks
+ * for places, and a county in the text is their bound. */
+const PLACE_FRAME_RE =
+  /\b(?:places?|towns?|cities|city|areas?|villages?|communities|neighborhoods?|spots?)\b/i
+
+/** "Where in <...> county..." asks for a place inside the county. */
+const WHERE_COUNTY_RE = /\bwhere\b[^?]*\bcounty\b/i
+
+/**
+ * Whether the question asks for a county-level answer — the
+ * county AS SUBJECT (its aggregate figure, or counties ranked).
+ * The word "county" alone does not decide it (Lane A9 FM-10,
+ * finding F1): "What's the cheapest place to live in Hawaii
+ * County?" names the county as the BOUND of a place question, and
+ * aggregating it answered a question nobody asked — the county's
+ * own $1,473/mo aggregate in place of its cheapest places
+ * (measured, C1 battery). The shape rule: an explicit county
+ * subject always aggregates; a place noun (or a where-in-county
+ * frame) as the ranked subject composes the ordinary place-level
+ * screen over the county-bounded rows the runner already
+ * expanded; every other county mention keeps the aggregate —
+ * "What's the median household income in Boulder County?" is a
+ * county lookup, and it stays one.
+ */
 export function requestsCountyLevel(queryText: string | undefined, intent: ValidatedIntent): boolean {
-  if (queryText && /\bcounty\b|\bcounties\b/i.test(queryText)) return true
+  if (queryText && /\bcounty\b|\bcounties\b/i.test(queryText)) {
+    if (COUNTY_SUBJECT_RE.test(queryText)) return true
+    if (PLACE_FRAME_RE.test(queryText) || WHERE_COUNTY_RE.test(queryText)) return false
+    return true
+  }
   return intent.geographies.some((g) => /\bcounty\b/i.test(g))
 }
 

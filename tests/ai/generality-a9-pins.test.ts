@@ -615,3 +615,42 @@ describe('A9 pins — variance (FM-11: one bounded re-ask of an all-empty stage)
     expect(answer.researchFailures).toContain('Coffee nearby')
   })
 })
+
+describe('A9 pins — county shape (FM-10 / F1)', () => {
+  it('requestsCountyLevel reads the subject, not the word', async () => {
+    const { requestsCountyLevel } = await import('../../src/core/ai/answer')
+    const bare = intent({ geographies: [], metricKeys: ['median_gross_rent'] })
+    // County as subject: aggregates (the pinned shipped shapes).
+    expect(requestsCountyLevel('Which county in Colorado has the lowest median rent?', bare)).toBe(true)
+    expect(requestsCountyLevel("What's the median household income in Boulder County, Colorado?", bare)).toBe(true)
+    expect(requestsCountyLevel('Which counties in Texas have the lowest rent?', bare)).toBe(true)
+    expect(requestsCountyLevel('What is the cheapest county in Texas?', bare)).toBe(true)
+    // Places within a county: the county is the bound, not the subject.
+    expect(requestsCountyLevel("What's the cheapest place to live in Hawaii County?", bare)).toBe(false)
+    expect(requestsCountyLevel('What towns in Cook County have the best schools?', bare)).toBe(false)
+    expect(requestsCountyLevel('Where in Hawaii County is rent cheapest?', bare)).toBe(false)
+  })
+
+  it('the F1 shape composes places in the county, not the county aggregate', async () => {
+    const rows = [
+      row('96720', 'Hilo, HI', 1346),
+      row('96749', 'Keaau, HI', 1325),
+      row('96778', 'Pahoa, HI', 1750),
+    ]
+    const assignments = new Map(
+      rows.map((r) => [r.zcta, { name: 'Hawaii County', state: 'Hawaii' }]),
+    )
+    const answer = await runAnswerPipeline({
+      intent: intent({ geographies: ['Hawaii County'], metricKeys: ['median_gross_rent'] }),
+      rows,
+      geographyZctas: new Set(rows.map((r) => r.zcta)),
+      queryText: "What's the cheapest place to live in Hawaii County?",
+      countyAssignments: assignments,
+      provider: createStubProvider(),
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.countyMethod).toBeNull()
+    expect(answer.places.map((p) => p.name)).not.toContain('Hawaii County')
+    expect(answer.places[0]!.name).toBe('Keaau, HI')
+  })
+})

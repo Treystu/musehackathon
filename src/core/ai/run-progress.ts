@@ -70,10 +70,158 @@ export interface RunProgressSnapshot {
   criteriaFailed: string[]
   /** Candidate places known so far, with their interim verdicts. */
   places: InterimPlace[]
+  /**
+   * Breadth mode only: the run's breadth accounting (display-set
+   * denominator, assessed count, measured ETA) and the display
+   * set itself with per-place standings. Absent on every other
+   * shape — those runs have no display set and no honest
+   * place-based percent.
+   */
+  breadth?: BreadthProgress
+  breadthPlaces?: BreadthPlace[]
 }
 
 /** A place's aggregate standing over the criteria assessed so far. */
 export type InterimVerdictClass = 'meets' | 'does-not-meet' | 'mixed' | 'awaiting'
+
+/* ------------------------------------------------------------------ */
+/* Breadth mode (owner directive 2026-11-03 12:44 HST)                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One display place's standing on a breadth run's criterion,
+ * derived only from sourced claims attributed to that place (the
+ * pipeline injects the derivation, exactly as it injects the
+ * interim attribution above): 'positive' / 'negative' name the
+ * criterion's two poles as parsed, 'mixed' means sourced claims
+ * characterize the place both ways, and 'unassessed' means no
+ * sourced claim characterized it — an unassessed place is never
+ * colored by inference, on any surface.
+ */
+export type BreadthStanding = 'positive' | 'negative' | 'mixed' | 'unassessed'
+
+/** One place of a breadth run's display set, with its standing. */
+export interface BreadthPlace {
+  name: string
+  zcta: string
+  standing: BreadthStanding
+  /**
+   * The sourced claims behind the standing, carried on the
+   * TERMINAL answer only (the interim snapshot's places are
+   * verdict data, not prose — the run-progress discipline above).
+   * The terminal map's click detail renders exactly these, so a
+   * standing can always be traced to the claims that produced it.
+   */
+  claims?: ResearchedClaim[]
+}
+
+/** The legend labels for a breadth run's standing classes. */
+export interface BreadthLabels {
+  positive: string
+  negative: string
+  mixed: string
+  unassessed: string
+}
+
+/**
+ * A breadth run's progress accounting, carried on the snapshot
+ * beside the pass accounting: the denominator is the DISPLAY SET
+ * (every distinct place in the bound geography's loaded rows),
+ * the numerator is the places research has actually characterized
+ * — so this mode's percent is assessed places over display
+ * places, a different honest fraction from the pass fraction the
+ * other shapes report, and the two never mix on one snapshot's
+ * rendering (the text functions below branch on this block's
+ * presence).
+ */
+export interface BreadthProgress {
+  displayTotal: number
+  assessedCount: number
+  /** Milliseconds since the breadth phase began, at snapshot time. */
+  elapsedMs: number
+  /**
+   * Estimated milliseconds to full retrieval, from MEASURED
+   * throughput (estimateRemainingMs), or null before a rate
+   * exists. Always rendered labeled as an estimate — an estimate
+   * is a reading of the run's own pace, never a promise.
+   */
+  etaMs: number | null
+  geographyLabel: string
+  criterionLabel: string
+  labels: BreadthLabels
+}
+
+/**
+ * Estimated time to full retrieval from measured throughput:
+ * elapsed per assessed place, projected over the places still
+ * unassessed. Null before a rate exists — no places assessed yet,
+ * or too little elapsed time to measure a pace (under a second,
+ * a hermetic run's clock reads as no pace at all) — and 0 once
+ * the set is covered. The brief's contract: computed from the
+ * run's own measurements, recomputed as passes land, labeled an
+ * estimate wherever it renders, never a static number.
+ */
+export function estimateRemainingMs(
+  assessedCount: number,
+  displayTotal: number,
+  elapsedMs: number,
+): number | null {
+  if (assessedCount <= 0 || displayTotal <= 0) return null
+  if (assessedCount >= displayTotal) return 0
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 1000) return null
+  return Math.round((elapsedMs / assessedCount) * (displayTotal - assessedCount))
+}
+
+/**
+ * A duration in plain words, for the ETA clause and the terminal
+ * strip's elapsed stamp: seconds under a minute (a handful reads
+ * "a few seconds" — a false-precision "about 3 seconds" on an
+ * estimate helps no one), then whole minutes by numeral.
+ */
+export function durationText(ms: number): string {
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 10) return 'a few seconds'
+  if (seconds < 60) return `about ${seconds} seconds`
+  const minutes = Math.round(seconds / 60)
+  return minutes === 1 ? 'about a minute' : `about ${minutes} minutes`
+}
+
+/**
+ * Derive a breadth run's per-place standings over its display
+ * set: for each place, the claims that mention it (the injected
+ * attribution — compose's own claimMentionsPlace) classified by
+ * the injected standing derivation (the pipeline's pole test over
+ * the criterion as parsed). A pure function of (display set,
+ * claims, criterion): invariant under candidate order and claim
+ * order by construction — the same claims classify the same
+ * places the same way however they arrived.
+ */
+export function deriveBreadthPlaces(
+  input: {
+    displaySet: readonly { name: string; zcta: string }[]
+    claims: readonly ResearchedClaim[]
+    criterion: ResearchCriterion
+  },
+  attribution: {
+    mentionsPlace(claim: ResearchedClaim, place: { name: string; zcta: string }): boolean
+    standingForPlace(
+      claims: readonly ResearchedClaim[],
+      criterion: ResearchCriterion,
+    ): BreadthStanding
+  },
+): BreadthPlace[] {
+  return input.displaySet.map((place) => {
+    const claims = input.claims.filter(
+      (claim) => claim.sourceUrls.length > 0 && attribution.mentionsPlace(claim, place),
+    )
+    return {
+      name: place.name,
+      zcta: place.zcta,
+      standing: attribution.standingForPlace(claims, input.criterion),
+      claims,
+    }
+  })
+}
 
 /**
  * Percent complete over passes, or null when no honest percent
@@ -81,6 +229,18 @@ export type InterimVerdictClass = 'meets' | 'does-not-meet' | 'mixed' | 'awaitin
  * reaches 100 only when the final pass has terminated.
  */
 export function progressPercent(snapshot: RunProgressSnapshot): number | null {
+  // Breadth mode's percent is its own fraction — assessed places
+  // over the display set (the brief: percent beside the ETA, both
+  // reading the place accounting). The pass fraction below stays
+  // the only percent every other shape shows.
+  if (snapshot.breadth) {
+    if (snapshot.breadth.displayTotal <= 0) return null
+    const assessed = Math.max(
+      0,
+      Math.min(snapshot.breadth.assessedCount, snapshot.breadth.displayTotal),
+    )
+    return Math.floor((100 * assessed) / snapshot.breadth.displayTotal)
+  }
   if (snapshot.totalUnits === null || snapshot.totalUnits <= 0) return null
   const done = Math.max(0, Math.min(snapshot.doneUnits, snapshot.totalUnits))
   return Math.floor((100 * done) / snapshot.totalUnits)
@@ -220,6 +380,20 @@ function placesNamedPhrase(count: number): string {
  * of the snapshot.
  */
 export function progressStatusText(snapshot: RunProgressSnapshot): string {
+  // Breadth mode counts AREAS, not checks: the reader asked for
+  // the set, so the line reports the set's coverage in the
+  // geography's own name — assessed over the display total, with
+  // failed lookups still named when a pass failed.
+  if (snapshot.breadth) {
+    const { assessedCount, displayTotal, geographyLabel } = snapshot.breadth
+    const parts = [
+      `${assessedCount} of ${displayTotal} areas in ${geographyLabel} assessed`,
+    ]
+    if (snapshot.criteriaFailed.length > 0) {
+      parts.push(lookupPhrase(snapshot.criteriaFailed.length))
+    }
+    return parts.join(' · ')
+  }
   const total = snapshot.totalUnits ?? snapshot.criteriaTotal
   const parts = [
     `${snapshot.doneUnits} of ${total} checks done`,
@@ -247,6 +421,17 @@ export function situationalText(
   const bucket = elapsedBucketText(stageElapsedMs)
   if (snapshot) {
     const status = progressStatusText(snapshot)
+    // Breadth mode: the ETA clause supersedes the elapsed bucket
+    // (both read the same clock; the estimate is the useful one),
+    // and it renders only while a real estimate exists — before
+    // a rate exists the line is counts only, by the brief's own
+    // rule. The word "estimate" is part of the clause, always:
+    // the figure is the run's measured pace projected, and the
+    // copy never lets it read as a promise.
+    if (snapshot.breadth) {
+      const eta = snapshot.breadth.etaMs
+      return eta !== null && eta > 0 ? `${status} · ${durationText(eta)} left — estimate` : status
+    }
     return bucket ? `${status} · ${bucket}` : status
   }
   return bucket
@@ -288,7 +473,30 @@ export function terminalEntryCount(answer: ComposedAnswer): number {
 export function runSummaryText(
   snapshot: RunProgressSnapshot,
   terminalEntries?: number,
+  breadthTerminal?: {
+    assessedCount: number
+    displayTotal: number
+    geographyLabel: string
+    elapsedMs: number
+  },
 ): string {
+  // Breadth mode's strip (the FM-22 discipline, applied to the
+  // breadth counts): the numbers are the TERMINAL answer's own —
+  // its assessed count over its display total — never the
+  // snapshot's interim accounting, and the elapsed stamp is the
+  // run's actual measured retrieval time. The branch keys on the
+  // terminal override alone: a breadth run abandoned at zero
+  // assessed lands a non-breadth card, and its strip is the
+  // standard one below even though its snapshots carried breadth.
+  if (breadthTerminal) {
+    const parts = [
+      `Complete — ${breadthTerminal.assessedCount} of ${breadthTerminal.displayTotal} areas in ${breadthTerminal.geographyLabel} assessed`,
+    ]
+    if (breadthTerminal.elapsedMs >= 1000) {
+      parts.push(`took ${durationText(breadthTerminal.elapsedMs)}`)
+    }
+    return parts.join(' · ')
+  }
   const total = snapshot.totalUnits ?? snapshot.criteriaTotal
   const done = snapshot.doneUnits
   const failed = snapshot.criteriaFailed.length

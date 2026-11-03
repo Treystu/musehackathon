@@ -170,7 +170,13 @@ import {
   intentGate,
   type FigureForValidation,
 } from './validator'
-import { deriveInterimPlaces, type RunProgressSnapshot } from './run-progress'
+import {
+  deriveInterimPlaces,
+  type BreadthLabels,
+  type BreadthPlace,
+  type BreadthStanding,
+  type RunProgressSnapshot,
+} from './run-progress'
 
 /* ------------------------------------------------------------------ */
 /* Stage types                                                         */
@@ -268,6 +274,44 @@ export interface ResearchCriterion {
    * is read on the headline cost measure, median gross rent (A2/B3).
    */
   decomposedMetricKey?: string
+  /**
+   * The criterion's poles, as parsed (breadth mode, 2026-11-03):
+   * the characterization vocabulary a sourced claim must carry to
+   * characterize a place on this criterion, and the plain-words
+   * labels for the standing classes those characterizations
+   * produce. Attached by decomposition (polesForCriterionText /
+   * the catalog loop below) — never by a consumer — so every layer
+   * reads the same poles. Absent when decomposition cannot name
+   * the criterion's poles; such a criterion cannot carry a
+   * breadth standing, by the honesty rule that a standing exists
+   * only where the criterion as parsed names what would count.
+   */
+  poles?: CriterionPoles
+}
+
+/**
+ * A researched criterion's poles (breadth mode): how a sourced
+ * claim characterizes a place on the criterion. 'terms' mode — a
+ * characterization criterion (politics, a superlative residue):
+ * the claim must carry a pole term, because for this class a
+ * bare mention characterizes nothing ("Fort Worth hosts a stock
+ * show" says nothing about its politics). 'keywords' mode — a
+ * catalog criterion: the catalog keyword test itself
+ * (claimServesCriterion) is the characterization, and direction
+ * comes from the FM-4 against markers. Labels are reader-facing
+ * and composed here, from the criterion as parsed — the politics
+ * pair names its own leaning words; every other criterion reads
+ * its classes against its own label on the surface.
+ */
+export interface CriterionPoles {
+  mode: 'terms' | 'keywords'
+  positiveTerms: readonly string[]
+  negativeTerms: readonly string[]
+  positiveLabel: string
+  negativeLabel: string
+  mixedLabel: string
+  /** The dimension's plain title when the poles name one ('Political leaning'). */
+  title?: string
 }
 
 export type CriterionEvidenceStatus = 'met' | 'partially_measured' | 'not_measurable'
@@ -532,6 +576,36 @@ export interface ComposedAnswer {
    * stated. Absent when every pass returned (or no research ran).
    */
   researchFailures?: readonly string[]
+  /**
+   * The breadth record (breadth mode, 2026-11-03): present exactly
+   * when this answer terminated a breadth run — a set-shaped
+   * researched question over one state. The terminal breadth map
+   * and the assessed-counts line read it; it carries the FULL
+   * display set with per-place standings (assessed and unassessed
+   * alike), so the map's denominator and the strip's counts are
+   * the answer's own numbers, never a rendering's recount.
+   */
+  breadth?: BreadthAnswer
+}
+
+/**
+ * A breadth run's terminal record: the display set (every distinct
+ * place in the bound geography's loaded rows), each place's
+ * standing derived from sourced claims, and the run's measured
+ * retrieval time. Standings carry their claims so the map's click
+ * detail can show the evidence behind any place's color.
+ */
+export interface BreadthAnswer {
+  /** The bound geography's plain name ('Texas'). */
+  geographyLabel: string
+  /** The criterion the standings characterize (its title or label). */
+  criterionLabel: string
+  labels: BreadthLabels
+  displayTotal: number
+  assessedCount: number
+  /** Measured milliseconds from the breadth phase's start to its terminal. */
+  elapsedMs: number
+  standings: BreadthPlace[]
 }
 
 /**
@@ -588,6 +662,19 @@ export interface StateAggregateGeography {
  * in screen order and the answer discloses the cap. This number is also the research request's places ceiling (RESEARCH_PLACES_LIMIT in meta-client.ts, which the route validates against): when the two diverged — cap 10, route 8 — every full screen's research pass was refused as a shape error and recorded as a lookup that "did not return" (measured 2026-11-02); a test pins cap <= limit.
  */
 export const SCREENED_RESEARCH_CANDIDATE_CAP = 10
+
+/**
+ * How many display-set places one breadth assessment pass carries
+ * (breadth mode, 2026-11-03). The batch rides the research
+ * request's places roster, so this number must never exceed the
+ * route's roster ceiling (RESEARCH_PLACES_LIMIT in meta-client.ts,
+ * raised to 50 for these rosters in the same build): the
+ * research-places-shape tests pin batch <= limit, so the two
+ * cannot drift into the 2026-11-02 shape-refusal class. At 50,
+ * the largest display set in the shipped index (Texas, 1,282
+ * distinct places) takes 26 passes.
+ */
+export const BREADTH_BATCH_SIZE = 50
 
 /* ------------------------------------------------------------------ */
 /* Stage 2: screen                                                     */
@@ -1155,6 +1242,150 @@ export function hasUnclaimedCriterionContent(
   )
 }
 
+/* ------------------------------------------------------------------ */
+/* Criterion poles (breadth mode)                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Characterization dimensions whose poles decomposition names as
+ * a pair: when the criterion's own text carries one side's
+ * vocabulary, the other side is the negative pole — the pair is
+ * part of what the criterion AS PARSED means ("most liberal"
+ * parses against "conservative" whether or not the question
+ * prints both words; AskPanel's politics lexicon already reads
+ * the dimension with both vocabularies, for the coverage note).
+ * The mechanism is general — a dimension is a row here, and the
+ * standing derivation below reads only the poles, never the
+ * dimension — this table is where a dimension's vocabulary
+ * lives, the same place the criterion catalog keeps its own.
+ */
+const CHARACTERIZATION_POLE_PAIRS: readonly {
+  title: string
+  sides: readonly { head: string; terms: readonly string[] }[]
+}[] = [
+  {
+    title: 'Political leaning',
+    sides: [
+      {
+        head: 'liberal',
+        terms: ['liberal', 'liberals', 'democratic', 'democrat', 'democrats', 'progressive', 'progressives'],
+      },
+      {
+        head: 'conservative',
+        terms: ['conservative', 'conservatives', 'republican', 'republicans'],
+      },
+    ],
+  },
+]
+
+const SUPERLATIVE_WORDS: ReadonlySet<string> = new Set([
+  'best', 'worst', 'most', 'least', 'fewest', 'greatest', 'finest', 'largest',
+  'smallest', 'highest', 'lowest', 'quietest', 'prettiest', 'nicest', 'cheapest',
+  'safest', 'warmest', 'coldest', 'strongest',
+])
+
+function termIn(lowerText: string, term: string): boolean {
+  return new RegExp(`\\b${term.replace(/[.*+?^${'{}'}()|[\]\\]/g, '\\$&')}\\b`).test(lowerText)
+}
+
+/** The poles when the criterion's text names one side of a paired dimension. */
+function characterizationPairPoles(text: string): CriterionPoles | null {
+  const lower = text.toLowerCase()
+  for (const pair of CHARACTERIZATION_POLE_PAIRS) {
+    for (let side = 0; side < pair.sides.length; side++) {
+      const positive = pair.sides[side]!
+      if (!positive.terms.some((term) => termIn(lower, term))) continue
+      const negative = pair.sides[(side + 1) % pair.sides.length]!
+      const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+      return {
+        mode: 'terms',
+        positiveTerms: positive.terms,
+        negativeTerms: negative.terms,
+        positiveLabel: `${cap(positive.head)}-leaning`,
+        negativeLabel: `${cap(negative.head)}-leaning`,
+        mixedLabel: 'Mixed',
+        title: pair.title,
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * The characterization term of an unclaimed superlative phrase
+ * ("most charming" -> 'charming'): the phrase's head word, when
+ * the phrase is a criterion phrase at all (not a measure reading,
+ * not the ranking frame) — the same claimed test
+ * hasUnclaimedCriterionPhrase applies, minus the catalog arm.
+ */
+function superlativeCharacterizationTerm(text: string): string | null {
+  for (const match of text.matchAll(CRITERION_SUPERLATIVE_RE)) {
+    const words = (match[1] ?? '').toLowerCase().split(/\s+/).filter((w) => w.length > 0)
+    if (words.length === 0) continue
+    if (PLACE_FRAME_WORDS.has(words[0]!)) continue
+    if (words.some((w) => MEASURE_HEAD_WORDS.has(w))) continue
+    return words[0]!
+  }
+  return null
+}
+
+/**
+ * The poles of a combined-class criterion (a whole-question carry
+ * or a per-segment residue), from its own text: a paired
+ * dimension first; else the superlative characterization term;
+ * else — for a per-segment residue, whose LABEL is the segment's
+ * own characterization words — the label's content terms. The
+ * whole-question carry whose text names none of these gets no
+ * poles: its criterion is the ranking frame plus residue no
+ * layer can characterize, and a breadth standing derived from
+ * bare mentions would color places by proximity to prose, which
+ * is inference, not evidence.
+ */
+export function combinedCriterionPoles(text: string, label: string): CriterionPoles | undefined {
+  const pair = characterizationPairPoles(text)
+  if (pair) return pair
+  const head = superlativeCharacterizationTerm(text)
+  if (head) {
+    return {
+      mode: 'terms',
+      positiveTerms: [head],
+      negativeTerms: [],
+      positiveLabel: `Described as ${head}`,
+      negativeLabel: `Described as not ${head}`,
+      mixedLabel: 'Described both ways',
+    }
+  }
+  if (label !== 'Outside-Census criteria') {
+    const terms = label
+      .toLowerCase()
+      .split(/[^a-z'-]+/)
+      .filter(
+        (w) =>
+          w.length >= 4 &&
+          !SEGMENT_SCAFFOLD_WORDS.has(w) &&
+          !PLACE_FRAME_WORDS.has(w) &&
+          !SUPERLATIVE_WORDS.has(w),
+      )
+    if (terms.length > 0) {
+      return {
+        mode: 'terms',
+        positiveTerms: terms,
+        negativeTerms: [],
+        positiveLabel: `Described as ${label.toLowerCase()}`,
+        negativeLabel: `Described as not ${label.toLowerCase()}`,
+        mixedLabel: 'Described both ways',
+      }
+    }
+  }
+  return undefined
+}
+
+/** The spread field carrying a combined criterion's poles, when it has any. */
+function combinedPolesField(text: string, label: string): { poles: CriterionPoles } | {} {
+  const poles = combinedCriterionPoles(text, label)
+  return poles ? { poles } : {}
+}
+
 /**
  * Decompose a question's outside-Census criteria. Every catalog
  * criterion the words carry becomes its own criterion. Residue the
@@ -1189,6 +1420,16 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
       // when the reader's words seek a count ("fewest", "number of").
       quantitative: quantitative && (entry.id === 'fast_food' || entry.id === 'restaurants'),
       ...(entry.decomposedMetricKey ? { decomposedMetricKey: entry.decomposedMetricKey } : {}),
+      // Catalog poles (breadth mode): the keyword test is the
+      // characterization, so the poles ride in keywords mode.
+      poles: {
+        mode: 'keywords',
+        positiveTerms: entry.keywords,
+        negativeTerms: [],
+        positiveLabel: 'Meets the description',
+        negativeLabel: 'Does not meet the description',
+        mixedLabel: 'Described both ways',
+      },
     })
   }
   if (found.length > 0) {
@@ -1206,7 +1447,13 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
       residueSegments[0]!.text.replace(/[?.!]+$/, '').trim().toLowerCase() ===
         queryText.replace(/[?.!]+$/, '').trim().toLowerCase()
     if (wholeQuestion) {
-      found.push({ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative })
+      found.push({
+        id: 'combined',
+        label: 'Outside-Census criteria',
+        text: queryText,
+        quantitative,
+        ...combinedPolesField(queryText, 'Outside-Census criteria'),
+      })
     } else {
       for (const segment of residueSegments) {
         // Two residue segments can carry the same label (two
@@ -1220,13 +1467,22 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
           label: segment.label,
           text: segment.text,
           quantitative,
+          ...combinedPolesField(segment.text, segment.label),
         })
       }
     }
     return found
   }
   if (hasUnclaimedCriterionContent(queryText, found)) {
-    return [{ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative }]
+    return [
+      {
+        id: 'combined',
+        label: 'Outside-Census criteria',
+        text: queryText,
+        quantitative,
+        ...combinedPolesField(queryText, 'Outside-Census criteria'),
+      },
+    ]
   }
   // The total-miss fallback survives for a CRITERIA-LESS question
   // (the ranking frame alone: "cheapest place to live" — pinned by
@@ -1248,7 +1504,15 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
       .split(/[^a-z'-]+/)
       .some((w) => w !== 'commute' && MEASURE_HEAD_WORDS.has(w))
   if (!statesCensusContent) {
-    return [{ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative }]
+    return [
+      {
+        id: 'combined',
+        label: 'Outside-Census criteria',
+        text: queryText,
+        quantitative,
+        ...combinedPolesField(queryText, 'Outside-Census criteria'),
+      },
+    ]
   }
   return []
 }
@@ -1319,6 +1583,86 @@ export function requestedCountFromQuery(queryText: string | undefined): number |
   if (!token) return null
   const value = /^\d+$/.test(token) ? Number(token) : COUNT_WORDS[token.toLowerCase()]
   return value !== undefined && Number.isFinite(value) && value > 0 ? value : null
+}
+
+/** Plural place-frame nouns: the question's subject is a SET of places. */
+const SET_FRAME_PLURAL_RE =
+  /\b(?:areas|cities|towns|places|communities|neighborhoods|neighbourhoods|villages|spots|locations|regions)\b/i
+
+/**
+ * A singular-superlative subject: a superlative ranging over ONE
+ * place noun ("the most liberal city") — the winner-seeking shape,
+ * however the rest of the question is framed.
+ */
+const SINGULAR_SUPERLATIVE_SUBJECT_RE =
+  /\b(?:most|best|least|worst|fewest|greatest|finest|largest|smallest|highest|lowest|cheapest|safest|warmest|coldest|strongest|quietest|prettiest|nicest)\s+(?:[a-z]+\s+)?(city|town|place|area|community|neighborhood|neighbourhood|village|spot|location|region)\b/i
+
+/**
+ * Whether the question's shape asks for a SET of places rather
+ * than a winner (breadth mode's shape half, derived from the
+ * reader's words the same way the rest of decomposition reads
+ * them): a plural place-frame noun carries the subject, and no
+ * singular-superlative subject overrides it. "Which areas of
+ * Texas are the most liberal?" is a set question — its
+ * superlative ranges over the set's members. "What is the most
+ * liberal city in Texas?" is not, and keeps the shipped
+ * winner-seeking path exactly. A question with no plural frame
+ * ("Where in Texas is it most liberal?") is not a set question
+ * either: no set was asked for, so no set is assessed.
+ */
+export function questionSetForm(queryText: string | undefined): boolean {
+  if (!queryText) return false
+  if (SINGULAR_SUPERLATIVE_SUBJECT_RE.test(queryText)) return false
+  return SET_FRAME_PLURAL_RE.test(queryText)
+}
+
+/** A breadth run's shape: the bound geography and the criterion its standings characterize. */
+export interface BreadthShape {
+  /** The bound state's plain name ('Texas'). */
+  geographyLabel: string
+  stateAbbr: string
+  /** The lead researched criterion carrying parsed poles. */
+  criterion: ResearchCriterion
+}
+
+/**
+ * Whether this run is a breadth run, derived from decomposition
+ * output and the question's shape — never from a keyword trigger
+ * for any one question (the A9 engagement discipline: the layers
+ * derive from the same parsed material or they drift). The full
+ * shape: a set-form question (questionSetForm); exactly one
+ * geography, and it is a state (the display set is that state's
+ * places; a place bound's own rows are the shipped path's
+ * universe, and a multi-state set has no single display
+ * geography); no stated top-N count (the reader bounded the set
+ * themselves — the cap machinery already serves that ask); and
+ * at least one researched criterion whose poles decomposition
+ * could name (the standing derivation needs the criterion's
+ * poles as parsed — a criterion with no poles cannot characterize
+ * a set, and engaging without them would color by mention).
+ */
+export function breadthShapeFor(input: {
+  queryText?: string
+  intent: ValidatedIntent
+  researchCriteria: readonly ResearchCriterion[]
+}): BreadthShape | null {
+  const queryText = input.queryText
+  if (!queryText || !questionSetForm(queryText)) return null
+  if (requestedCountFromQuery(queryText) !== null) return null
+  if (input.intent.geographies.length !== 1) return null
+  const geography = input.intent.geographies[0]!
+  if (!isStateGeography(geography)) return null
+  const stateAbbr = stateAbbrOfGeography(geography)
+  if (!stateAbbr) return null
+  const criterion = input.researchCriteria.find(
+    (c) => !c.decomposedMetricKey && c.poles !== undefined && c.poles.positiveTerms.length > 0,
+  )
+  if (!criterion) return null
+  return {
+    geographyLabel: STATE_NAME_BY_CODE[stateAbbr] ?? geography,
+    stateAbbr,
+    criterion,
+  }
 }
 
 const STATE_NAME_SET: ReadonlySet<string> = new Set(
@@ -2675,6 +3019,128 @@ export function claimServesCriterion(claim: ResearchedClaim, criterion: Research
   if (!entry) return claim.sourceUrls.length > 0
   const lower = claim.text.toLowerCase()
   return entry.keywords.some((keyword) => lower.includes(keyword))
+}
+
+/* ------------------------------------------------------------------ */
+/* Breadth standing derivation (breadth mode)                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The poles a criterion falls back to when decomposition attached
+ * none (a caller-supplied criterion list reaches the pipeline
+ * without decomposition): keywords mode over no terms, which the
+ * standing derivation reads as "the serving test alone, with the
+ * FM-4 direction markers" — the weakest characterization the
+ * machinery ever applies, and breadth's shape gate refuses it
+ * (breadthShapeFor requires parsed poles), so it can only ever
+ * serve a direct placeStanding caller's fallback.
+ */
+const FALLBACK_POLES: CriterionPoles = {
+  mode: 'keywords',
+  positiveTerms: [],
+  negativeTerms: [],
+  positiveLabel: 'Meets the description',
+  negativeLabel: 'Does not meet the description',
+  mixedLabel: 'Described both ways',
+}
+
+/** Whether the text negates a pole term nearby ("not liberal",
+ * "least liberal", "not very liberal"): a negated positive is
+ * negative evidence, never positive. The window is two words —
+ * wide enough for the intensifier, narrow enough that a term
+ * across a clause boundary is not read as negated. */
+function negatedTermIn(lowerText: string, term: string): boolean {
+  const escaped = term.replace(/[.*+?^${'{}'}()|[\]\\]/g, '\\$&')
+  return new RegExp(
+    `\\b(?:not|never|hardly|least|no longer)\\s+(?:\\w+\\s+){0,2}?${escaped}\\b`,
+  ).test(lowerText)
+}
+
+/**
+ * How ONE sourced claim characterizes its place on the criterion,
+ * or null when it does not characterize it at all. The claim must
+ * serve the criterion first (claimServesCriterion — for the
+ * combined class that is every cited claim, which is exactly why
+ * terms mode then requires a pole term: serving is not
+ * characterizing for a characterization criterion). In terms
+ * mode a pole-negative term or an FM-4 against marker is
+ * negative evidence and a pole-positive term is positive, with
+ * negation flipping a positive term to negative. In keywords
+ * mode the keyword presence is the positive characterization
+ * and an against marker is the negative one — FM-4's own rule,
+ * read per claim.
+ */
+export function claimCharacterization(
+  claim: ResearchedClaim,
+  criterion: ResearchCriterion,
+): 'positive' | 'negative' | 'mixed' | null {
+  if (!claimServesCriterion(claim, criterion)) return null
+  const poles = criterion.poles ?? FALLBACK_POLES
+  if (poles.mode === 'keywords') {
+    return CLAIM_DIRECTION_AGAINST_RE.test(claim.text) ? 'negative' : 'positive'
+  }
+  const lower = claim.text.toLowerCase()
+  const positive =
+    poles.positiveTerms.some((term) => termIn(lower, term)) &&
+    !poles.positiveTerms.some((term) => negatedTermIn(lower, term))
+  const negative =
+    poles.negativeTerms.some((term) => termIn(lower, term)) ||
+    poles.positiveTerms.some((term) => negatedTermIn(lower, term)) ||
+    CLAIM_DIRECTION_AGAINST_RE.test(claim.text)
+  if (positive && negative) return 'mixed'
+  if (positive) return 'positive'
+  if (negative) return 'negative'
+  return null
+}
+
+/**
+ * A place's breadth standing from the sourced claims attributed
+ * to it: positive when a characterizing claim places it at the
+ * criterion's positive pole and none places it against, negative
+ * for the mirror, mixed when sourced claims characterize it both
+ * ways, and unassessed when no sourced claim characterizes it at
+ * all — the class that keeps an unmentioned place uncolored. A
+ * pure function of the claim SET: invariant under claim order
+ * and candidate order by construction.
+ */
+export function placeStanding(
+  claims: readonly ResearchedClaim[],
+  criterion: ResearchCriterion,
+): BreadthStanding {
+  let positive = false
+  let negative = false
+  for (const claim of claims) {
+    const characterization = claimCharacterization(claim, criterion)
+    if (characterization === 'positive') positive = true
+    else if (characterization === 'negative') negative = true
+    else if (characterization === 'mixed') {
+      positive = true
+      negative = true
+    }
+  }
+  if (positive && negative) return 'mixed'
+  if (positive) return 'positive'
+  if (negative) return 'negative'
+  return 'unassessed'
+}
+
+/** The legend labels for a criterion's standings, by render phase. */
+export function breadthLabelsFor(
+  criterion: ResearchCriterion,
+  phase: 'interim' | 'terminal',
+): BreadthLabels {
+  const poles = criterion.poles ?? FALLBACK_POLES
+  return {
+    positive: poles.positiveLabel,
+    negative: poles.negativeLabel,
+    mixed: poles.mixedLabel,
+    unassessed: phase === 'interim' ? 'Not yet assessed' : 'Not assessed',
+  }
+}
+
+/** The criterion name a breadth surface states: the poles' dimension title when parsed, else the criterion's label. */
+export function breadthCriterionLabel(criterion: ResearchCriterion): string {
+  return criterion.poles?.title ?? criterion.label
 }
 
 /**

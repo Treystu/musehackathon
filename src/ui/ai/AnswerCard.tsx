@@ -150,7 +150,9 @@ export function breadthCountsLine(answer: ComposedAnswer): string | null {
   const head = `${count.format(assessedCount)} of ${count.format(displayTotal)} areas in ${geographyLabel} were assessed from cited sources.`
   const rest = displayTotal - assessedCount
   if (rest <= 0) return head
-  return `${head} The other ${count.format(rest)} are shown on the map as not assessed — no cited source characterized them.`
+  return rest === 1
+    ? `${head} The other 1 area is shown on the map as not assessed — no cited source characterized it.`
+    : `${head} The other ${count.format(rest)} are shown on the map as not assessed — no cited source characterized them.`
 }
 
 /**

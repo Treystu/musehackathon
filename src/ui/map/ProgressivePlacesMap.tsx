@@ -548,8 +548,12 @@ function BreadthPlacesMap({ data }: { data: BreadthMapData }) {
       {unassessedCount > 0 && (
         <p role="note" className="mt-1 text-sm text-slate-500">
           {data.terminal
-            ? `${unassessedCount} areas were not assessed — no cited source characterized them.`
-            : `${unassessedCount} areas not yet assessed.`}
+            ? unassessedCount === 1
+              ? '1 area was not assessed — no cited source characterized it.'
+              : `${unassessedCount} areas were not assessed — no cited source characterized them.`
+            : unassessedCount === 1
+              ? '1 area not yet assessed.'
+              : `${unassessedCount} areas not yet assessed.`}
         </p>
       )}
       {load.kind === 'ready' && unmarkedCount > 0 && (

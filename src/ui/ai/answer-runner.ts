@@ -53,6 +53,7 @@ import {
   stateCodeForGeography,
 } from '../../core/ai/national-screen'
 import type { StateAggregateGeography } from '../../core/ai/answer'
+import type { RunProgressSnapshot } from '../../core/ai/run-progress'
 import { STATE_NAME_BY_CODE } from '../../core/sweep/states'
 import type { CountyIndex, CountyGroup } from '../../core/zcta-county-index'
 import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
@@ -874,6 +875,14 @@ export async function composeAnswerForRequest(input: {
    * actually called. Observation-only, like the pipeline's seam.
    */
   onStage?: (stage: StageId, subject?: string | null) => void
+  /**
+   * Run-progress observer (Lane A7): forwarded to the pipeline's
+   * onProgress seam on the FIRST pipeline run only. The Jev loop's
+   * patch re-run is a revision of the same run, not a new gathering —
+   * its passes do not re-emit, so the reader's progress record is
+   * the initial research's, never a restarted fraction.
+   */
+  onProgress?: (snapshot: RunProgressSnapshot) => void
 }): Promise<ComposedAnswer | null> {
   // Complete the resolution with the county crosswalk before the
   // unresolvable gate: the caller resolved with the place index
@@ -929,7 +938,7 @@ export async function composeAnswerForRequest(input: {
     }
   }
 
-  const runPipeline = (query: string) =>
+  const runPipeline = (query: string, forwardProgress: boolean) =>
     runAnswerPipeline({
       intent: input.intent,
       rows,
@@ -973,6 +982,8 @@ export async function composeAnswerForRequest(input: {
               subject ?? null,
             )
         : undefined,
+      onProgress:
+        forwardProgress && input.onProgress ? (snapshot) => input.onProgress!(snapshot) : undefined,
     })
 
   // Branch evaluation at the screen -> research boundary (plan C7):
@@ -1028,7 +1039,7 @@ export async function composeAnswerForRequest(input: {
   }
 
   const pipelineStarted = performance.now()
-  let answer = await runPipeline(researchQuery)
+  let answer = await runPipeline(researchQuery, true)
   timings.pipeline = performance.now() - pipelineStarted
   if (answer.status === 'blocked') return null
 
@@ -1143,7 +1154,7 @@ export async function composeAnswerForRequest(input: {
             `Address these gaps: ${gaps.join('; ')}`,
           ])
           if (composed.trimmed) researchQueryTrimmed = true
-          const patched = await runPipeline(composed.text)
+          const patched = await runPipeline(composed.text, false)
           return patched.status === 'blocked' ? null : patched
         },
         onTiming: (stage, ms) => {

@@ -102,7 +102,7 @@ function isPuertoRico(lon: number, lat: number): boolean {
   return lon >= PR_BOUNDS.west && lon <= PR_BOUNDS.east && lat >= PR_BOUNDS.south && lat <= PR_BOUNDS.north
 }
 
-interface ScopedFit {
+export interface ScopedFit {
   pathFor(feature: ResultGeometryFeature): string | null
   project(lon: number, lat: number): [number, number] | null
   boundsFor(feature: ResultGeometryFeature): [[number, number], [number, number]] | null
@@ -143,7 +143,7 @@ function fitProjectionToBounds(
   return projection
 }
 
-function scopedFit(features: readonly ResultGeometryFeature[]): ScopedFit {
+export function scopedFit(features: readonly ResultGeometryFeature[]): ScopedFit {
   const mainFeatures: ResultGeometryFeature[] = []
   const prFeatures: ResultGeometryFeature[] = []
   for (const feature of features) {

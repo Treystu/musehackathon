@@ -49,6 +49,8 @@ import {
 import { createSpeechDriver, type SpeechDriver } from './ai/speech-driver'
 import { composeSpokenSummary, guardSpokenSentences } from './ai/spoken-answer'
 import { StagedStatus } from './ai/StagedStatus'
+import { runSummaryText } from '../core/ai/run-progress'
+import { ProgressivePlacesMap } from './map/ProgressivePlacesMap'
 import { AskSessionStore, type SessionAnswerRequest } from './ai/session-store'
 import { researchAck } from './ai/ack'
 import {
@@ -370,6 +372,20 @@ export default function App() {
    */
   const getStageSnapshot = () => sessionStore.getSnapshot().stage
   const stage = useSyncExternalStore(sessionStore.subscribe, getStageSnapshot, getStageSnapshot)
+  /**
+   * The terminal run-summary strip (Lane A7): rendered above the
+   * answer card or note of the request it belongs to, and only
+   * that request's. role="status" so its single terminal
+   * announcement is the run's COMPLETE line — the one progress
+   * utterance the live-region discipline allows, at the one moment
+   * the run is actually complete.
+   */
+  const runSummaryStrip =
+    answerRequest && answerState.runSummary && answerState.runSummary.requestId === answerRequest.id ? (
+      <p role="status" data-testid="run-summary" className="mb-2 text-sm font-medium text-slate-700">
+        {answerState.runSummary.text}
+      </p>
+    ) : null
   const getPanelBusySnapshot = () => sessionStore.getSnapshot().panel.busy
   const panelBusy = useSyncExternalStore(
     sessionStore.subscribe,
@@ -471,6 +487,9 @@ export default function App() {
       askEpoch: epoch,
       generalAnswer: null,
       generalNote: null,
+      // The previous run's COMPLETE strip retires with its answer
+      // (Lane A7): a summary never stands beside a new run.
+      runSummary: null,
     })
     setModalState((state) => expireModalForNewQuestion(state))
   }, [])
@@ -848,6 +867,22 @@ export default function App() {
     }
     const runToken = stageToken
     sessionStore.setStage(runToken, 'screening')
+    // The terminal run summary (Lane A7): stamped from this run's
+    // own progress record — read off the stage while it still
+    // belongs to this run's token (the finally below clears it) —
+    // at the same moment the answer or note lands, so the strip and
+    // the card are one terminal state. A run that never researched
+    // has no progress record and no checks to summarize: no strip,
+    // rather than a fabricated count.
+    const stampRunSummary = () => {
+      const stageNow = sessionStore.getSnapshot().stage
+      const progress = stageNow && stageNow.runToken === runToken ? stageNow.progress : null
+      if (progress) {
+        sessionStore.setAnswerState({
+          runSummary: { requestId: id, text: runSummaryText(progress) },
+        })
+      }
+    }
     const composeRun = (async () => {
       try {
         const composed = await composeAnswerForRequest({
@@ -861,6 +896,7 @@ export default function App() {
           placeIndex: placeIndex ?? null,
           countyIndex: countyIndex ?? null,
           onStage: (stage, subject) => sessionStore.setStage(runToken, stage, subject ?? null),
+          onProgress: (snapshot) => sessionStore.setStageProgress(runToken, snapshot),
         })
         // Superseded while composing: the newer request owns the
         // surface and renders its own terminal state. Any other
@@ -871,6 +907,7 @@ export default function App() {
         // stranded the request with nothing rendered at all.
         if (answerRequestSeq.current !== id) return
         answerComposedIds.current.add(id)
+        stampRunSummary()
         if (composed) {
           setAnswerNote(null)
           setAnswer(composed)
@@ -903,6 +940,7 @@ export default function App() {
             ? code
             : 'unexpected',
         )
+        stampRunSummary()
         setAnswerNote({ id, text: ANSWER_COMPOSE_FAILED_NOTE })
       } finally {
         answerInFlightIds.current.delete(id)
@@ -1988,6 +2026,7 @@ export default function App() {
                     </button>
                   </div>
                 ) : null}
+                {runSummaryStrip}
                 <AnswerCard answer={answer} />
               </div>
             ) : answerNote &&
@@ -2000,6 +2039,7 @@ export default function App() {
                 data-answer-region
                 className="anim-rise mx-auto mt-6 max-w-3xl px-2"
               >
+                {runSummaryStrip}
                 <section
                   aria-label="Answer"
                   className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-[0_1px_6px_rgba(32,33,36,0.14)]"
@@ -2037,6 +2077,18 @@ export default function App() {
                     }
                   />
                 </p>
+                {/*
+                  The progressive map (Lane A7): while this run's
+                  research is in flight and the progress snapshot
+                  carries at least two interim places, they render
+                  here under the status line, filling as passes
+                  land. It unmounts with this in-flight branch at
+                  the terminal — the card above takes over, under
+                  A6's terminal-map decision.
+                */}
+                {stage?.progress && stage.progress.places.length >= 2 ? (
+                  <ProgressivePlacesMap places={stage.progress.places} />
+                ) : null}
               </div>
             ) : null}
             {refineInFlight && refineEpochRef.current === answerState.askEpoch && stage !== null && answer ? (

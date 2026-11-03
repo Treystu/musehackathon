@@ -1,4 +1,5 @@
 import type { ComposedAnswer } from '../../core/ai/answer'
+import type { RunProgressSnapshot } from '../../core/ai/run-progress'
 import {
   initialModalState,
   type ModalState,
@@ -106,6 +107,15 @@ export interface AnswerState {
    * landed answer itself, not this generation gate.
    */
   askEpoch: number
+  /**
+   * The terminal run summary ("Complete — N of N checks done · K
+   * places assessed", Lane A7), stamped by the view at the same
+   * terminal moment the answer lands and keyed to its request: it
+   * renders above that request's card or note and is dropped when
+   * a new ask begins, so a summary can never outlive its own run
+   * or drift onto another's card.
+   */
+  runSummary: { requestId: number; text: string } | null
 }
 
 /**
@@ -138,6 +148,26 @@ export interface StageState {
   subject: string | null
   /** When the RUN began (not the stage): the 1-second rule times the whole wait. */
   startedAt: number
+  /**
+   * When the CURRENT stage began: stamped at the run's start and on
+   * every real transition (including a subject change — that stage
+   * did begin then). The ~30s situational line (Lane A7) reads the
+   * current stage's age from here, distinct from startedAt: the
+   * update speaks about the stage the reader is looking at.
+   */
+  stageSince: number
+  /**
+   * The run's latest progress snapshot (Lane A7): typed verdict
+   * data only — passes done/planned, per-place interim standings —
+   * kept beside the stage rather than inside the AnswerState enum
+   * for the same reason the stage itself lives here: supersession
+   * is judged on the run token, atomically, so a late snapshot from
+   * a superseded run is dropped by the same guard as a late stage
+   * call. Survives stage transitions (the percent must not reset
+   * when research hands off to compose); dropped with the stage at
+   * clearStage.
+   */
+  progress: RunProgressSnapshot | null
 }
 
 export interface SessionSnapshot {
@@ -206,6 +236,7 @@ export function initialAnswerState(): AnswerState {
     generalNote: null,
     modal: initialModalState(),
     askEpoch: 0,
+    runSummary: null,
   }
 }
 
@@ -293,9 +324,10 @@ export class AskSessionStore {
   /** Begin a run's stage clock at 'understanding'; returns its token. */
   beginStageRun(first: StageId = 'understanding'): number {
     const runToken = ++this.stageTokenSeq
+    const now = this.nowFn()
     this.snapshot = {
       ...this.snapshot,
-      stage: { runToken, stage: first, subject: null, startedAt: this.nowFn() },
+      stage: { runToken, stage: first, subject: null, startedAt: now, stageSince: now, progress: null },
     }
     this.emit()
     return runToken
@@ -320,7 +352,24 @@ export class AskSessionStore {
     const current = this.snapshot.stage
     if (!current || current.runToken !== runToken) return
     if (current.stage === stage && current.subject === subject) return
-    this.snapshot = { ...this.snapshot, stage: { ...current, stage, subject } }
+    this.snapshot = {
+      ...this.snapshot,
+      stage: { ...current, stage, subject, stageSince: this.nowFn() },
+    }
+    this.emit()
+  }
+
+  /**
+   * Record the run's latest progress snapshot. Token-guarded like
+   * setStage: a superseded run's late snapshot is dropped, and the
+   * snapshot is kept across stage transitions (setStage spreads the
+   * stage record), so the reader's percent never restarts when the
+   * run moves on to composing.
+   */
+  setStageProgress(runToken: number, progress: RunProgressSnapshot): void {
+    const current = this.snapshot.stage
+    if (!current || current.runToken !== runToken) return
+    this.snapshot = { ...this.snapshot, stage: { ...current, progress } }
     this.emit()
   }
 

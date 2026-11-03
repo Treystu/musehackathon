@@ -5,6 +5,7 @@ import {
   stagedStatusVisible,
   type AskSessionStore,
 } from './session-store'
+import { progressPercent, situationalText } from '../../core/ai/run-progress'
 
 /**
  * The working state with staged status (drive item 17 part b,
@@ -40,6 +41,17 @@ import {
  * same-stage re-sets, and neither the clock tick nor the threshold
  * crossing ever rewrites it. A long stage does not re-announce
  * itself while it runs.
+ *
+ * Run progress (Lane A7, owner directive 2026-11-03 02:49 HST —
+ * long runs "seemed like they were hanging"): below the stage line,
+ * a situational line in plain words — what has been gathered so far
+ * plus, once the current stage is ~30s old, an elapsed clause —
+ * and, when the pipeline has reported a research snapshot with a
+ * known pass plan, a progress bar whose value is passes completed
+ * over passes planned and nothing else (run-progress.ts derives
+ * both; shapes with no honest percent show no bar). The block is
+ * visual only: it renders outside the aria-live region and the
+ * 200ms tick that refreshes it never rewrites the live text.
  */
 export function StagedStatus({
   session,
@@ -67,6 +79,14 @@ export function StagedStatus({
 
   const visible = stagedStatusVisible(stage, session.now())
   const label = stage ? stageLabel(stage.stage, stage.subject) : ''
+  // Progress reads (Lane A7): the snapshot's percent and the
+  // situational line, both pure functions of the store's progress
+  // and the current stage's age — refreshed by the same 200ms tick
+  // that gates the 1-second rule, and never written into the live
+  // region below.
+  const progress = stage?.progress ?? null
+  const percent = progress ? progressPercent(progress) : null
+  const situational = stage ? situationalText(progress, session.now() - stage.stageSince) : null
   return (
     <>
       <span>{ack}</span>
@@ -74,6 +94,24 @@ export function StagedStatus({
       {visible && (
         <span className="text-slate-500" data-testid="staged-status-line">
           {label}
+        </span>
+      )}
+      {visible && situational && (
+        <span className="text-slate-500" data-testid="staged-progress-line">
+          {situational}
+        </span>
+      )}
+      {visible && percent !== null && (
+        <span
+          role="progressbar"
+          aria-label="Research checks complete"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          data-testid="staged-progress-bar"
+          className="inline-block h-1.5 w-40 overflow-hidden rounded bg-slate-200 align-middle"
+        >
+          <span className="block h-full bg-slate-500" style={{ width: `${percent}%` }} />
         </span>
       )}
       <span aria-live="polite" className="sr-only" data-testid="staged-status-live">

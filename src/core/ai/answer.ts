@@ -170,6 +170,7 @@ import {
   intentGate,
   type FigureForValidation,
 } from './validator'
+import { deriveInterimPlaces, type RunProgressSnapshot } from './run-progress'
 
 /* ------------------------------------------------------------------ */
 /* Stage types                                                         */
@@ -1033,12 +1034,36 @@ export async function researchPerCriterion(
      * is tolerated under either posture.
      */
     tolerateTotalFailure?: boolean
+    /**
+     * Observation seam for run progress (Lane A7): fired after every
+     * pass that TERMINATES — a return, or a failure the tolerance
+     * posture records — with the accumulated stage result (a copy;
+     * the observer cannot mutate the run's material), the pass index,
+     * and the pass total. Awaited before the next pass starts, so
+     * progress events are strictly ordered by pass boundary. Never
+     * fired for the rethrowing failure: that pass ends the stage,
+     * and the caller's own failure handling owns what the reader is
+     * told about it. Observation-only, like onStage: it changes
+     * nothing the stage computes.
+     */
+    onPass?: (
+      accumulated: ResearchStageResult,
+      passIndex: number,
+      passTotal: number,
+    ) => void | Promise<void>
   },
 ): Promise<ResearchStageResult> {
   const sources: AnswerSource[] = []
   const claims: ResearchedClaim[] = []
   const proseParts: string[] = []
   const failedCriteria: string[] = []
+  /** The accumulated stage result as an observer may see it (copies). */
+  const accumulated = (): ResearchStageResult => ({
+    prose: proseParts.join('\n'),
+    sources: [...sources],
+    claims: [...claims],
+    ...(failedCriteria.length > 0 ? { failedCriteria: [...failedCriteria] } : {}),
+  })
   // One pass per criterion; the loop count is the contract, the
   // query is the reader's whole question for every pass. A criterion
   // decomposed onto a Census metric takes no pass — its figures are
@@ -1079,6 +1104,7 @@ export async function researchPerCriterion(
     } catch (err) {
       if (proseParts.length === 0 && !options?.tolerateTotalFailure) throw err
       failedCriteria.push(researched[pass]!.label)
+      await options?.onPass?.(accumulated(), pass, researched.length)
       continue
     }
     proseParts.push(result.prose)
@@ -1090,6 +1116,7 @@ export async function researchPerCriterion(
     for (const claim of claimsFromResearch(result)) {
       if (!claims.some((c) => c.text === claim.text)) claims.push(claim)
     }
+    await options?.onPass?.(accumulated(), pass, researched.length)
   }
   return {
     prose: proseParts.join('\n'),
@@ -1168,6 +1195,54 @@ export function resolveCandidatesAgainstRows(
     if (row) resolved.push({ name: row.name, zctas: [row.zcta] })
   }
   return resolved
+}
+
+/**
+ * One representative row per resolved candidate, in candidate
+ * order (the research order). Places count BY PLACE, not by ZIP
+ * (battery B3, measured 2026-11-02: research named three places;
+ * Corbin, KY resolved to both of its ZIP areas and both were
+ * listed and counted — "named 4" — including a split ZIP carrying
+ * no researched claim, presented under criteria it was never
+ * researched for). Each candidate therefore contributes the member
+ * ZIP a cited claim names outright when one does, otherwise its
+ * first ZIP that is actually among the loaded rows, otherwise its
+ * first ZIP in resolver order — the same one-ZIP-per-named-place
+ * rule lookup resolution applies. The loaded-rows preference
+ * matters: the sweep loads in chunks, so a place's first ZIP in
+ * index order may not be loaded while a later one is (the
+ * live-path fixture loads Corbin's 40771, not its 40701 — picking
+ * 40701 unconditionally would drop a researched place from the
+ * card entirely, a worse failure than the split it cures). Shared
+ * by the research-first compose and the run-progress derivation
+ * (Lane A7): the interim candidates are the same places the
+ * terminal card will carry — one selection, two renderings.
+ */
+export function representativeCandidateRows(
+  resolved: readonly ResolvedCandidate[],
+  claims: readonly ResearchedClaim[],
+  rows: readonly AreaRow[],
+): AreaRow[] {
+  const loadedZctas = new Set(rows.map((row) => row.zcta))
+  const representativeZctas: string[] = []
+  for (const candidate of resolved) {
+    const claimed = candidate.zctas.find(
+      (z) => loadedZctas.has(z) && claims.some((claim) => claim.text.includes(z)),
+    )
+    const representative =
+      claimed ?? candidate.zctas.find((z) => loadedZctas.has(z)) ?? candidate.zctas[0]
+    if (representative && !representativeZctas.includes(representative)) {
+      representativeZctas.push(representative)
+    }
+  }
+  const representativeSet = new Set(representativeZctas)
+  const candidateRows = rows.filter((row) => representativeSet.has(row.zcta))
+  // Extraction order is the research order; rows arrive in load
+  // order, so re-order by the resolved candidate sequence.
+  const order = new Map<string, number>()
+  representativeZctas.forEach((z, i) => order.set(z, i))
+  candidateRows.sort((a, b) => (order.get(a.zcta) ?? 0) - (order.get(b.zcta) ?? 0))
+  return candidateRows
 }
 
 /* ------------------------------------------------------------------ */
@@ -1346,7 +1421,7 @@ const NUMERAL_IN_CLAIM_RE =
 const SAFETY_DIRECTION_RE =
   /\b(?:low|lower|below|declin\w*|reduced?|rate of|per capita|safer|safest|few(?:er)? (?:crimes|incidents|offen[cs]es))\b/i
 
-function claimServesCriterion(claim: ResearchedClaim, criterion: ResearchCriterion): boolean {
+export function claimServesCriterion(claim: ResearchedClaim, criterion: ResearchCriterion): boolean {
   if (criterion.id === 'combined') return true
   const entry = RESEARCH_CRITERION_CATALOG.find((e) => e.id === criterion.id)
   if (!entry) return claim.sourceUrls.length > 0
@@ -1620,10 +1695,24 @@ export function criterionEvidenceFor(input: {
 /* Stage 4: compose                                                    */
 /* ------------------------------------------------------------------ */
 
-function claimPlace(claim: ResearchedClaim, places: readonly AreaRow[]): AreaRow | null {
+/**
+ * Whether a claim mentions a place, by ZIP or by name — the mention
+ * predicate claimPlace attributes with, exported so the run-progress
+ * derivation (run-progress.ts) reads claims through the same test
+ * compose does: one attribution, scored once, rendered by code in
+ * both the interim verdicts and the terminal evidence.
+ */
+export function claimMentionsPlace(
+  claim: ResearchedClaim,
+  place: { name: string; zcta: string },
+): boolean {
   const lower = claim.text.toLowerCase()
+  return lower.includes(place.zcta) || lower.includes(place.name.toLowerCase())
+}
+
+function claimPlace(claim: ResearchedClaim, places: readonly AreaRow[]): AreaRow | null {
   for (const row of places) {
-    if (lower.includes(row.zcta) || lower.includes(row.name.toLowerCase())) return row
+    if (claimMentionsPlace(claim, row)) return row
   }
   return null
 }
@@ -2039,6 +2128,17 @@ export interface AnswerPipelineInput {
    * the pipeline computes.
    */
   onStage?: (stage: 'screen' | 'research' | 'compose' | 'verify', subject?: string) => void
+  /**
+   * Run-progress observer (Lane A7): receives a RunProgressSnapshot
+   * when a research stage begins and at every pass boundary, built
+   * by the pipeline from the accumulated research material through
+   * run-progress.ts (typed verdict data only — no prose, no figures,
+   * no conclusion). Observation-only, like onStage: it changes
+   * nothing the pipeline computes, and a run with no researched
+   * criteria emits nothing — those shapes have no honest percent
+   * and the stage line carries them.
+   */
+  onProgress?: (snapshot: RunProgressSnapshot) => void
 }
 
 function emptyAnswerFields(): Pick<
@@ -2197,6 +2297,50 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     researchCriteria[0]?.label ??
     input.intent.geographies[0]
 
+  // Run progress (Lane A7): the criteria that take a research pass
+  // (a criterion decomposed onto a Census metric takes none — its
+  // figures are the service), and the snapshot builder both research
+  // call sites emit through. The pass count is fixed here, before
+  // research starts, which is what makes the percent an honest
+  // fraction. Verdicts derive from the accumulated claims through
+  // compose's own attribution (claimServesCriterion /
+  // claimMentionsPlace, injected into run-progress's derivation):
+  // the interim standing is the terminal evidence's judgment,
+  // rendered early — never a second, divergent scoring.
+  const researchPassCriteria = researchCriteria.filter((c) => !c.decomposedMetricKey)
+  const buildProgress = (
+    doneUnits: number,
+    assessedLabels: readonly string[],
+    failedLabels: readonly string[],
+    candidates: readonly { name: string; zcta: string }[],
+    claims: readonly ResearchedClaim[],
+  ): RunProgressSnapshot => ({
+    doneUnits,
+    totalUnits: researchPassCriteria.length,
+    criteriaTotal: researchPassCriteria.length,
+    criteriaDone: researchPassCriteria
+      .filter((c) => assessedLabels.includes(c.label) && !failedLabels.includes(c.label))
+      .map((c) => c.label),
+    criteriaFailed: [...failedLabels],
+    places: deriveInterimPlaces(
+      {
+        claims,
+        criteria: researchPassCriteria,
+        assessedLabels,
+        failedLabels,
+        candidates,
+      },
+      { servesCriterion: claimServesCriterion, mentionsPlace: claimMentionsPlace },
+    ),
+  })
+  /** The all-lookups-failed snapshot a total research failure ends with. */
+  const totalFailureProgress = (
+    candidates: readonly { name: string; zcta: string }[],
+  ): RunProgressSnapshot => {
+    const allLabels = researchPassCriteria.map((c) => c.label)
+    return buildProgress(researchPassCriteria.length, allLabels, allLabels, candidates, [])
+  }
+
   // The widened arm, identified structurally: state bound + a named
   // researched criterion + retained measures. This identification
   // gates the intersection RANKING below (candidates ranked by the
@@ -2238,6 +2382,13 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   let firstResearchFailed = false
   if (researchFirst) {
     input.onStage?.('research', researchSubject)
+    if (input.onProgress && researchPassCriteria.length > 0) {
+      // Research begins: the progress bar appears now — never
+      // during the screen phase before it — at 0 of the planned
+      // passes, with no candidates yet: on this path the candidate
+      // set is extracted from the accumulated prose per pass.
+      input.onProgress(buildProgress(0, [], [], [], []))
+    }
     try {
       firstResearch = await researchPerCriterion(
         input.provider!,
@@ -2245,6 +2396,42 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         researchCriteria,
         input.researchQuery!,
         signal,
+        input.onProgress
+          ? {
+              onPass: async (accumulated, passIndex) => {
+                // The provisional candidate set: extraction +
+                // resolution over the prose accumulated so far,
+                // through the same seams the terminal path uses,
+                // so the interim places are the terminal places,
+                // arriving early.
+                const extractor =
+                  input.candidateExtractor ??
+                  (({ prose }) => extractCandidateNamesFromProse(prose))
+                const extractedNow = await extractor({
+                  prose: accumulated.prose,
+                  sources: accumulated.sources,
+                })
+                const resolver =
+                  input.candidateResolver ??
+                  ((names) => resolveCandidatesAgainstRows(names, input.rows))
+                const resolvedNow = await resolver(extractedNow)
+                const candidates = representativeCandidateRows(
+                  resolvedNow,
+                  accumulated.claims,
+                  input.rows,
+                )
+                input.onProgress!(
+                  buildProgress(
+                    passIndex + 1,
+                    researchPassCriteria.slice(0, passIndex + 1).map((c) => c.label),
+                    accumulated.failedCriteria ?? [],
+                    candidates,
+                    accumulated.claims,
+                  ),
+                )
+              },
+            }
+          : undefined,
       )
     } catch {
       if (stateBounded) {
@@ -2258,6 +2445,13 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           failedCriteria: researchCriteria
             .filter((c) => !c.decomposedMetricKey)
             .map((c) => c.label),
+        }
+        // The research stage is over and every lookup failed: the
+        // progress record says so before the honest note composes,
+        // so the run's summary names the failure instead of the
+        // stage simply vanishing.
+        if (input.onProgress && researchPassCriteria.length > 0) {
+          input.onProgress(totalFailureProgress([]))
         }
       }
     }
@@ -2276,44 +2470,12 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     const unresolvedCandidates = extracted.filter(
       (name) => !resolvedNames.has(name.toLowerCase()),
     )
-    // Places count BY PLACE, not by ZIP (battery B3, measured
-    // 2026-11-02: research named three places; Corbin, KY resolved
-    // to both of its ZIP areas and both were listed and counted —
-    // "named 4" — including a split ZIP carrying no researched
-    // claim, presented under criteria it was never researched for).
-    // Each resolved candidate therefore contributes ONE
-    // representative row: the member ZIP a cited claim names
-    // outright when one does, otherwise the candidate's first ZIP
-    // that is actually among the loaded rows, otherwise its first
-    // ZIP in resolver order — the same one-ZIP-per-named-place rule
-    // lookup resolution applies. The loaded-rows preference matters:
-    // the sweep loads in chunks, so a place's first ZIP in index
-    // order may not be loaded while a later one is (the live-path
-    // fixture loads Corbin's 40771, not its 40701 — picking 40701
-    // unconditionally would drop a researched place from the card
-    // entirely, a worse failure than the split it cures). The claim
-    // that names the place still attributes to the representative
-    // by name mention in compose, so no researched claim is lost
-    // with the split ZIP.
-    const loadedZctas = new Set(input.rows.map((row) => row.zcta))
-    const representativeZctas: string[] = []
-    for (const candidate of resolved) {
-      const claimed = candidate.zctas.find(
-        (z) => loadedZctas.has(z) && research.claims.some((claim) => claim.text.includes(z)),
-      )
-      const representative =
-        claimed ?? candidate.zctas.find((z) => loadedZctas.has(z)) ?? candidate.zctas[0]
-      if (representative && !representativeZctas.includes(representative)) {
-        representativeZctas.push(representative)
-      }
-    }
-    const representativeSet = new Set(representativeZctas)
-    const candidateRows = input.rows.filter((row) => representativeSet.has(row.zcta))
-    // Extraction order is the research order; rows arrive in load
-    // order, so re-order by the resolved candidate sequence.
-    const order = new Map<string, number>()
-    representativeZctas.forEach((z, i) => order.set(z, i))
-    candidateRows.sort((a, b) => (order.get(a.zcta) ?? 0) - (order.get(b.zcta) ?? 0))
+    // One representative row per resolved candidate, in research
+    // order (representativeCandidateRows — the battery B3 rule:
+    // places count by place, not by ZIP). The claim that names the
+    // place still attributes to the representative by name mention
+    // in compose, so no researched claim is lost with a split ZIP.
+    const candidateRows = representativeCandidateRows(resolved, research.claims, input.rows)
     // A top-N ask bounds the composed places at the asked count
     // (never above the candidate cap): "top five" answered with ten
     // places has not answered the question that was asked. The
@@ -2583,12 +2745,26 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         .filter((c) => !c.decomposedMetricKey)
         .map((c) => c.label),
     }
+    // The run's progress record closes with the failure stated:
+    // every researched lookup failed, over the screen's candidate
+    // set the card is about to carry.
+    if (input.onProgress && researchPassCriteria.length > 0) {
+      input.onProgress(
+        totalFailureProgress(effectiveScreen.rows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)),
+      )
+    }
   } else if (input.researchQuery && input.provider && effectiveScreen.rows.length > 0) {
     // Inside the condition, so the stage is named only when a
     // research call really follows (item 17: never name a stage
     // that did not run).
     input.onStage?.('research', researchSubject)
     const capped = effectiveScreen.rows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
+    if (input.onProgress && researchPassCriteria.length > 0) {
+      // Research begins over a candidate set the screen has already
+      // fixed: the initial snapshot carries those places with every
+      // verdict still pending.
+      input.onProgress(buildProgress(0, [], [], capped, []))
+    }
     // This stage runs only over a non-empty screen, so Census
     // material exists that can carry the card on its own: a total
     // research failure degrades onto the card as recorded lookup
@@ -2607,7 +2783,24 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
             researchCriteria,
             input.researchQuery,
             signal,
-            { tolerateTotalFailure: true },
+            {
+              tolerateTotalFailure: true,
+              ...(input.onProgress
+                ? {
+                    onPass: (accumulated: ResearchStageResult, passIndex: number) => {
+                      input.onProgress!(
+                        buildProgress(
+                          passIndex + 1,
+                          researchPassCriteria.slice(0, passIndex + 1).map((c) => c.label),
+                          accumulated.failedCriteria ?? [],
+                          capped,
+                          accumulated.claims,
+                        ),
+                      )
+                    },
+                  }
+                : {}),
+            },
           )
         : await researchScreened(input.provider, capped, input.researchQuery, signal).catch(
             (): ResearchStageResult => ({ prose: '', sources: [], claims: [] }),

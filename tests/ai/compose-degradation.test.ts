@@ -199,7 +199,16 @@ describe('pipeline: research-first, total research failure', () => {
         throw new Error('provider_down')
       },
     })
-    const text = 'best schools and the quietest streets'
+    // ADAPTED (Lane A9 FM-3b): the shipped control paired schools
+    // with the combined criterion and failed the SECOND call. The
+    // pass plan gives the combined class no pass of its own beside
+    // a named criterion — every pass queries the whole question, so
+    // the gathering is one call and there is no second call to
+    // fail. The control's invariant (a partial failure keeps the
+    // surviving material and records the failed criterion) is now
+    // exercised on two NAMED criteria, and the combined pairing is
+    // asserted separately below on the new plan's own terms.
+    const text = 'best schools and the most coffee shops'
     const answer = await runAnswerPipeline({
       intent: intent({ geographies: [], metricKeys: [] }),
       rows: CO_ROWS,
@@ -210,8 +219,35 @@ describe('pipeline: research-first, total research failure', () => {
     })
     expect(answer.status).toBe('verified')
     expect(answer.places.map((p) => p.name)).toContain('Durango, CO')
-    expect(answer.researchFailures).toContain('Outside-Census criteria')
+    expect(answer.researchFailures).toContain('Coffee nearby')
     expectEveryCriterionAccounted(answer)
+
+    // The combined pairing on the pass plan: one call total, the
+    // combined criterion accounted from the gathered material, no
+    // failure recorded for a call that does not exist.
+    let combinedCalls = 0
+    const combinedProvider = createStubProvider({
+      async research() {
+        combinedCalls++
+        return {
+          prose: 'Durango, CO schools are rated above the state average in the cited directory.',
+          sources: [{ title: 'School directory', url: 'https://example.org/schools' }],
+        }
+      },
+    })
+    const combinedText = 'best schools and the quietest streets'
+    const combinedAnswer = await runAnswerPipeline({
+      intent: intent({ geographies: [], metricKeys: [] }),
+      rows: CO_ROWS,
+      researchQuery: combinedText,
+      researchCriteria: [combinedText],
+      queryText: combinedText,
+      provider: combinedProvider,
+    })
+    expect(combinedCalls).toBe(1)
+    expect(combinedAnswer.status).toBe('verified')
+    expect(combinedAnswer.researchFailures).toBeUndefined()
+    expectEveryCriterionAccounted(combinedAnswer)
   })
 })
 

@@ -374,10 +374,43 @@ describe('A9 pins — decomposition accounting (FM-2 / FM-3)', () => {
     expect(health.evidence).toEqual(['Amenities=met'])
   })
 
+describe('A9 pins — candidate direction (FM-4)', () => {
+  // Each fixture's contrast sentence describes one place as NOT
+  // meeting the criterion; phase 1 measured all of them entering
+  // the ranked entries. The positive and middling places (Florence's
+  // "moderate flood risk", Newport's "mixed flood exposure",
+  // Savannah's "moderately liberal", Macon's "politically mixed")
+  // stay ranked — the marker set is the measured genre, both ways.
+  const cases: [keyof typeof SCENARIOS, string[], string[]][] = [
+    ['climate_weather', ['Key West, FL', 'Naples, FL'], ['Jacksonville, FL']],
+    ['food_drink_beer', ['Burlington, VT', 'Brattleboro, VT'], ['Rutland, VT']],
+    ['safety', ['Plano, TX', 'Frisco, TX', 'Carrollton, TX'], ['Mesquite, TX']],
+    ['schools_family', ['Naperville, IL', 'Evanston, IL', 'Arlington Heights, IL'], ['Oak Lawn, IL']],
+    ['outdoors_nature', ['Whitefish, MT', 'Livingston, MT', 'Red Lodge, MT'], ['Butte, MT']],
+    ['work_income', ['Columbus, OH', 'Minneapolis, MN', 'Indianapolis, IN'], ['Milwaukee, WI']],
+    ['health_access', ['Portland, ME', 'Bangor, ME', 'Brunswick, ME'], ['Presque Isle, ME']],
+    ['transport_walkable', ['Boston, MA', 'San Francisco, CA', 'New York, NY'], ['Denver, CO']],
+    ['recreation_fun', ['Traverse City, MI', 'Ann Arbor, MI', 'Grand Rapids, MI'], ['Saginaw, MI']],
+    ['environment_flood', ['Bandon, OR', 'Florence, OR', 'Newport, OR'], ['Astoria, OR']],
+    ['abstract_charming', ['Jacksonville, OR', 'Ashland, OR', 'Hood River, OR'], ['Eugene, OR']],
+    ['probe_healthcare_wording', ['Charlottesville, VA', 'Roanoke, VA', 'Harrisonburg, VA'], ['Bedford, VA']],
+    ['culture_politics', ['Athens, GA', 'Decatur, GA', 'Savannah, GA', 'Macon, GA'], []],
+  ]
+  for (const [id, ranked, notMeeting] of cases) {
+    it(`${id}: negated-only places leave the ranked entries, named as considered-and-not-meeting`, async () => {
+      const r = await runScenario(SCENARIOS[id]!)
+      expect(r.places).toEqual(ranked)
+      expect(r.answer.consideredNotMeeting ?? []).toEqual(notMeeting)
+    })
+  }
+})
+
+describe('A9 pins — decomposition accounting (FM-2 / FM-3)', () => {
   it('decomposition: criteria-less total-miss keeps the combined fallback', () => {
     expect(
       decomposeResearchCriteria('What is the cheapest place to live in the United States?').map((c) => c.id),
     ).toEqual(['combined'])
     expect(decomposeResearchCriteria('Which area near Hilo has the shortest commute?').map((c) => c.id)).toEqual(['combined'])
   })
+})
 })

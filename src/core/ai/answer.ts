@@ -352,6 +352,16 @@ export interface ComposedAnswer {
   candidateCapApplied: boolean
   /** Research-first candidate names that resolved to no ZCTA, dropped and counted here. */
   unresolvedCandidates: string[]
+  /**
+   * Research-first candidates the cited research itself describes
+   * as NOT meeting the stated criteria (Lane A9 FM-4): resolved and
+   * figured, but every claim serving a criterion carries a
+   * direction-against marker, so they are excluded from the ranked
+   * places and named here as considered-and-not-meeting. Absent on
+   * screen-first answers (their places are the screen's, and
+   * research decorates them; it does not un-elect them).
+   */
+  consideredNotMeeting?: string[]
   geographyLevel: AnswerGeographyLevel
   /** A requested geography level the shipped data cannot serve ('county'), or null. */
   unsupportedGeography: string | null
@@ -862,6 +872,14 @@ const SEGMENT_SCAFFOLD_WORDS: ReadonlySet<string> = new Set([
   'and', 'or', 'than', 'then', 'so', 'with', 'without', 'about', 'into', 'over', 'under',
   'near', 'nearby', 'around', 'per', 'that', 'this', 'any', 'some', 'all', 'get', 'find',
   'show', 'give', 'list', 'tell', 'please', 'look', 'looking', 'want', 'need', 'like',
+  // "Compare" and the number words are scaffolding too: "compare
+  // two places" states no criterion at all (it clarifies), and
+  // counting its verb or its count as residue would engage
+  // research on a question with nothing to research (measured:
+  // the indicator-lifecycle clarification pin, Lane A9 FM-2).
+  'compare', 'comparing',
+  'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight',
+  'nine', 'ten', 'eleven', 'twelve', 'first', 'second', 'third',
 ])
 
 /** Whether one superlative phrase is claimed (measure head, ranking
@@ -898,6 +916,16 @@ const SEGMENT_FRAME_WORDS: ReadonlySet<string> = new Set([
 export interface CriterionSegment {
   /** The segment as written, trimmed of outer punctuation. */
   text: string
+  /**
+   * The criterion's reader-facing label. Residue a superlative
+   * phrase carries ("the quietest streets" beside schools) keeps
+   * the classic combined label — that is A4's accounting contract,
+   * and the failure/evidence lines name it. Residue carried by its
+   * content words alone ("a thriving arts scene") is labelled with
+   * the segment's own words, so the line names the criterion the
+   * reader stated.
+   */
+  label: string
 }
 
 /**
@@ -1020,11 +1048,11 @@ export function unclaimedCriterionSegments(
       // ("best access to hiking | and wilderness": one nature
       // criterion across the conjunction), not a second criterion.
       if (record.phraseContentFree && record.residueBeyond.length <= 1 && adjacentClaimed) return
-      segments.push({ text: record.text })
+      segments.push({ text: record.text, label: 'Outside-Census criteria' })
       return
     }
     if (record.residue.length >= 2) {
-      segments.push({ text: record.text })
+      segments.push({ text: record.text, label: segmentCriterionLabel(record.text) })
       return
     }
     if (record.residue.length === 1) {
@@ -1035,7 +1063,7 @@ export function unclaimedCriterionSegments(
       // one-word residue standing first ("towns that are liberal")
       // is a stated criterion in one word and stays unclaimed.
       if (i === 0 && only.length >= 5 && !only.includes('-')) {
-        segments.push({ text: record.text })
+        segments.push({ text: record.text, label: segmentCriterionLabel(record.text) })
       }
     }
   })
@@ -1135,9 +1163,15 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
       found.push({ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative })
     } else {
       for (const segment of residueSegments) {
+        // Two residue segments can carry the same label (two
+        // superlative residues both read as the combined class):
+        // their accounting is one line, so the criterion is added
+        // once — a duplicate would print the same evidence line
+        // twice for one class of content.
+        if (found.some((c) => c.id === 'combined' && c.label === segment.label)) continue
         found.push({
           id: 'combined',
-          label: segmentCriterionLabel(segment.text),
+          label: segment.label,
           text: segment.text,
           quantitative,
         })
@@ -1765,6 +1799,46 @@ const NUMERAL_IN_CLAIM_RE =
 const SAFETY_DIRECTION_RE =
   /\b(?:low|lower|below|declin\w*|reduced?|rate of|per capita|safer|safest|few(?:er)? (?:crimes|incidents|offen[cs]es))\b/i
 
+/**
+ * Markers that a claim describes its place as NOT meeting the
+ * criterion it serves (Lane A9 FM-4 — candidate-direction
+ * blindness, measured across nine phase-1 battery runs: places the
+ * research itself describes with "fewer", "thinner", "higher
+ * reported crime", "limited access", "only moderately", "less
+ * often described as", "significant flood risk", or "the most
+ * seasonal variation" entered the ranked entries as ordinary
+ * places, because place inclusion had no direction rule at all —
+ * the safety criterion had one for evidence STATUS only). The set
+ * is deliberately conservative and auditable: explicit inferiority
+ * comparisons ("than the leaders / the safest"), scarcity words
+ * (fewer / thinner / limited / scarce), qualified middling states
+ * ("only moderately" — bare "moderately" and bare "mixed" are NOT
+ * markers: Savannah's "moderately liberal", Newport's "mixed flood
+ * exposure", and Macon's "politically mixed" all stayed ranked in
+ * the measured readings, correctly), bad-pole assertions for risk
+ * criteria, and the weather genre's bad pole ("most seasonal
+ * variation"). A place is direction-negative only when EVERY claim
+ * serving a criterion carries a marker — one positive or neutral
+ * serving claim keeps it ranked.
+ */
+export const CLAIM_DIRECTION_AGAINST_RE =
+  /\bfewer\b|\bthinner\b|\blimited\b|\bscarce\b|\bthan the (?:leaders|best|safest|top)\b|\bonly moderately\b|\bless often\b|\bmost\s+\w*\s*variation\b|\b(?:significant|highest|severe|elevated|high)\s+(?:flood\s+)?risk\b|\bhigher reported crime\b/i
+
+/** Whether every claim serving any researched criterion, among a
+ * place's claims, carries a direction-against marker. A place with
+ * no serving claim at all is not negative — absence of a claim is
+ * not a negation. */
+export function placeDirectionNegative(
+  claims: readonly ResearchedClaim[],
+  criteria: readonly ResearchCriterion[],
+): boolean {
+  const serving = claims.filter((claim) =>
+    criteria.some((criterion) => claimServesCriterion(claim, criterion)),
+  )
+  if (serving.length === 0) return false
+  return serving.every((claim) => CLAIM_DIRECTION_AGAINST_RE.test(claim.text))
+}
+
 export function claimServesCriterion(claim: ResearchedClaim, criterion: ResearchCriterion): boolean {
   if (criterion.id === 'combined') return true
   const entry = RESEARCH_CRITERION_CATALOG.find((e) => e.id === criterion.id)
@@ -2274,6 +2348,31 @@ export function composeAnswer(input: {
           : accountingComplete
             ? 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.'
             : `The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`)
+  // Candidate direction (Lane A9 FM-4): on the research-first path
+  // (pullMode — the places ARE the research's candidates), a place
+  // whose serving claims all describe it as not meeting the stated
+  // criteria leaves the ranked entries and is named as considered-
+  // and-not-meeting. Screen-first answers keep every screened
+  // place: their places are the Census screen's answer, and
+  // research decorates them — it does not un-elect them (the
+  // Nashville contract). The partition runs after evidence and
+  // summary composition, so the criterion accounting reads the
+  // full candidate set exactly as before; only the ranked listing
+  // narrows.
+  let rankedPlaces = places
+  let consideredNotMeeting: string[] | undefined
+  if (input.pullMode) {
+    const kept: AnswerPlace[] = []
+    const notMeeting: string[] = []
+    for (const place of places) {
+      if (placeDirectionNegative(place.claims, researchCriteria)) notMeeting.push(place.name)
+      else kept.push(place)
+    }
+    if (notMeeting.length > 0) {
+      rankedPlaces = kept
+      consideredNotMeeting = notMeeting
+    }
+  }
   return {
     status,
     stage: 'compose',
@@ -2281,7 +2380,8 @@ export function composeAnswer(input: {
     droppedCriteria: screen.droppedCriteria,
     unresolvedGeographies: screen.unresolvedGeographies,
     screenedCount: screen.inScopeCount,
-    places,
+    places: rankedPlaces,
+    ...(consideredNotMeeting ? { consideredNotMeeting } : {}),
     generalClaims,
     sources,
     summary,

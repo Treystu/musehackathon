@@ -153,6 +153,22 @@ export function unresolvedCandidatesLine(answer: ComposedAnswer): string | null 
     : `Research named ${list}, which could not be matched to Census data, so they were not used.`
 }
 
+/**
+ * One quiet line naming research-first candidates the cited
+ * research itself describes as not meeting the stated criteria
+ * (Lane A9 FM-4): they were considered — named, resolved, figured —
+ * and are not ranked, with the reason stated, rather than either
+ * ranked as if they met the criteria or dropped without a trace.
+ */
+export function consideredNotMeetingLine(answer: ComposedAnswer): string | null {
+  const names = answer.consideredNotMeeting ?? []
+  if (names.length === 0) return null
+  const list = names.join(', ')
+  return names.length === 1
+    ? `${list} was named in the research but is not ranked here, because the cited sources describe it as not meeting the stated criteria.`
+    : `${list} were named in the research but are not ranked here, because the cited sources describe them as not meeting the stated criteria.`
+}
+
 /** One quiet line for a requested geography level the shipped data cannot serve. */
 export function unsupportedGeographyLine(answer: ComposedAnswer): string | null {
   if (!answer.unsupportedGeography) return null
@@ -381,6 +397,7 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
   const capLine = candidateCapLine(answer)
   const shortfallLine = requestedCountLine(answer)
   const unresolvedCandidates = unresolvedCandidatesLine(answer)
+  const notMeetingLine = consideredNotMeetingLine(answer)
   const unsupportedLine = unsupportedGeographyLine(answer)
   const countyLine = countyMethodLine(answer)
   const notMeasurableLine = notMeasurableCountiesLine(answer)
@@ -502,6 +519,11 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
       {unresolvedCandidates && (
         <p role="note" className="mt-1 text-sm text-slate-500">
           {unresolvedCandidates}
+        </p>
+      )}
+      {notMeetingLine && (
+        <p role="note" className="mt-1 text-sm text-slate-500">
+          {notMeetingLine}
         </p>
       )}
       {unsupportedLine && (

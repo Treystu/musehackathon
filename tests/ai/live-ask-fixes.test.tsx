@@ -273,11 +273,11 @@ describe('live ask: clarification candidates belong to the current question', ()
         new MouseEvent('click', { bubbles: true }),
       )
     })
-    await act(async () => {
-      buttonIn(section!, 'Use these choices').dispatchEvent(
-        new MouseEvent('click', { bubbles: true }),
-      )
-    })
+    // REVISED PIN (item-16 cure C2, 2026-11-02): the flow used to
+    // end with a separate "Use these choices" click confirming the
+    // measure pick. That confirm step is removed — the pick that
+    // completes the set runs it — so the execution below follows
+    // the measure toggle directly.
     expect(onExecute).toHaveBeenCalledTimes(1)
     expect(onExecute.mock.calls[0]?.[0]).toMatchObject({
       geographies: ['Springfield, IL', 'Springfield, MO'],
@@ -370,6 +370,13 @@ describe('live ask: no research status line while blocked in clarification', () 
         provider={provider}
         onExecute={() => ''}
         onAnswerRequest={() => {}}
+        // Production wiring (App passes the full measure list): a
+        // measure pick stays on offer, so the panel remains in
+        // clarification for this test's subject. Without candidates
+        // the panel would have nothing left to offer and — since
+        // item-16 cure C2 — would run the held places on the F-C
+        // default measure at mount instead of staying blocked.
+        clarificationCandidates={{ geographies: [], metricKeys: ['median_gross_rent'] }}
         parseRetryDelaysMs={[]}
       />,
     )

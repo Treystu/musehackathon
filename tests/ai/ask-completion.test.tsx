@@ -266,12 +266,14 @@ describe('Ask surface completion', () => {
       />,
     )
     expect(html).toContain('Hilo')
-    expect(html).toContain('Use these choices')
-    // The intent already carries a screen measure and no place, so the
-    // current choices complete as the national screen and the button is
-    // enabled; the pre-screen contract started it disabled until a
-    // place was picked.
-    expect(html).not.toContain('disabled')
+    // REVISED PIN (item-16 cure C2, 2026-11-02): the panel used to
+    // render a "Use these choices" confirm button here — enabled in
+    // this state, because the intent already carries a screen
+    // measure and the current choices complete as the national
+    // screen. The confirm button is removed; the completing pick
+    // runs the request, so the static render carries the candidates
+    // and no confirm control at all.
+    expect(html).not.toContain('Use these choices')
   })
 
   it('offers BYO only on shutoff/error, not the happy path', () => {

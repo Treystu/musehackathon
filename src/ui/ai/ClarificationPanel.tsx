@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   canResolveClarification,
   resolveClarification,
@@ -34,25 +34,45 @@ const ERROR_COPY: Record<string, string> = {
   shape_invalid: 'That choice is not valid.',
 }
 
-/** Candidate picker. Nothing executes until the clarification is resolved. */
+/**
+ * Candidate picker. The picks ARE the decision (item-16 cure C2):
+ * the toggle that makes the merged set runnable runs it, and picks
+ * already complete at mount run on their own when nothing is left
+ * on offer — there is no separate confirm step re-asking for a
+ * decision the reader just made. The hint line below remains as
+ * the not-runnable state's carrier: it says what is still missing,
+ * and, on the F-C path, discloses the default measure before
+ * anything runs.
+ */
 export function ClarificationPanel({
   intent,
   candidates,
   onResolve,
+  onRemovePlace,
 }: {
   intent: ValidatedIntent
   candidates: ClarificationCandidates
   onResolve: (next: ValidatedIntent) => void
+  /**
+   * Removes a parse-held place from inside the panel (item-16 cure
+   * C3). Optional: hosts that do not wire it keep the held places
+   * as plain labels.
+   */
+  onRemovePlace?: (place: string) => void
 }) {
   const [geographies, setGeographies] = useState<string[]>([])
   const [metricKeys, setMetricKeys] = useState<string[]>([])
   const [error, setError] = useState('')
+  // Latched once this panel has resolved: the parent unmounts the
+  // panel on resolve, but a still-mounted instance (a test harness,
+  // a slow parent) must never fire a second run for the same picks.
+  const resolvedRef = useRef(false)
 
   const places = candidates.geographies.filter((g) => !intent.geographies.includes(g))
   const metrics = candidates.metricKeys.filter((k) => !intent.metricKeys.includes(k))
   const mergedGeographies = [...intent.geographies, ...geographies]
   const mergedMetricKeys = [...intent.metricKeys, ...metricKeys]
-  // One answer: the button enables exactly when the merged picks would run.
+  // One answer: the merged picks run exactly when this predicate holds.
   const coreCanResolve = canResolveClarification({
     mode: intent.mode,
     geographies: mergedGeographies,
@@ -67,7 +87,7 @@ export function ClarificationPanel({
    * anywhere, the domain default measure completes the request and
    * it RUNS; the default is disclosed in the hint line below, never
    * applied silently. canRun is the arbiter, so a mode the default
-   * cannot complete (a one-place comparison) stays disabled.
+   * cannot complete (a one-place comparison) stays unrun.
    */
   const runsWithDefault =
     !coreCanResolve &&
@@ -83,7 +103,8 @@ export function ClarificationPanel({
   const canResolve = coreCanResolve || runsWithDefault
   // The one-line honest hint for the states that cannot run: what is
   // still missing, in plain words. A disabled button with no hint was
-  // half of the F-C defect — the reader could not tell why.
+  // half of the F-C defect — the reader could not tell why. Under C2
+  // the hint is also the F-C disclosure line in the runnable state.
   const incompleteHint = canResolve
     ? runsWithDefault
       ? `No measure chosen, so this runs on ${measureLabel(DOMAIN_DEFAULT_MEASURE).toLowerCase()} — the cost measure this tool uses when none is named.`
@@ -94,44 +115,81 @@ export function ClarificationPanel({
         ? 'Comparing needs two places — pick one more place to run these choices.'
         : 'These choices cannot run yet — a place and a measure that can screen are both needed.'
 
-  function togglePlace(value: string) {
-    setGeographies((current) =>
-      current.includes(value) ? current.filter((x) => x !== value) : [...current, value],
-    )
-  }
-
-  function toggleMetric(value: string) {
-    setMetricKeys((current) =>
-      current.includes(value) ? current.filter((x) => x !== value) : [...current, value],
-    )
-  }
-
-  // The empty-Places copy is one quiet honest line (2026-11-02): the
-  // old text told the reader to "add a place above", pointing at a
-  // control this panel does not contain. The panel's own forward
-  // paths are the measure picks below and the choices already made,
-  // so the empty state names only those.
-  function resolve() {
-    // Defence in depth for F-C: the button is disabled whenever this
-    // cannot run, so a silent no-op is unreachable from the UI; if
-    // resolve is ever invoked in that state anyway, it answers with
-    // the hint rather than doing nothing.
-    if (!canResolve) {
-      setError(incompleteHint ?? 'That choice is not valid.')
-      return
-    }
+  /**
+   * Runs the merged picks if — and only if — they are runnable,
+   * exactly once per panel instance. Called on mount (picks the
+   * parse already completed need no click) and from every toggle
+   * with the toggle's own resulting picks, so the deciding toggle
+   * is the run.
+   */
+  function tryResolve(nextGeographies: string[], nextMetricKeys: string[]) {
+    if (resolvedRef.current) return
+    const mergedGeos = [...intent.geographies, ...nextGeographies]
+    const mergedMets = [...intent.metricKeys, ...nextMetricKeys]
+    const core = canResolveClarification({
+      mode: intent.mode,
+      geographies: mergedGeos,
+      metricKeys: mergedMets,
+      filters: intent.filters,
+    })
+    const withDefault =
+      !core &&
+      mergedGeos.length > 0 &&
+      mergedMets.length === 0 &&
+      canRun({
+        mode: intent.mode,
+        geographies: mergedGeos,
+        metricKeys: [DOMAIN_DEFAULT_MEASURE],
+        filters: intent.filters,
+        clarificationNeeded: false,
+      })
+    if (!core && !withDefault) return
     const result = resolveClarification(
       intent,
-      runsWithDefault
-        ? { geographies, metricKeys: [...metricKeys, DOMAIN_DEFAULT_MEASURE] }
-        : { geographies, metricKeys },
+      withDefault
+        ? { geographies: nextGeographies, metricKeys: [...nextMetricKeys, DOMAIN_DEFAULT_MEASURE] }
+        : { geographies: nextGeographies, metricKeys: nextMetricKeys },
     )
     if (result.ok) {
+      resolvedRef.current = true
       setError('')
       onResolve(result.intent)
       return
     }
     setError(ERROR_COPY[result.error] ?? 'That choice is not valid.')
+  }
+
+  // Picks already complete at mount run on mount — but only when
+  // nothing is left on offer. If candidate places or measures
+  // remain unpicked, the reader's pick is still pending and firing
+  // now would pre-empt it with the F-C default (the Springfield
+  // shape: two held cities, a measure still to choose). When no
+  // candidates remain, the panel exists only because the parse
+  // flagged clarification, not because anything is choosable, and
+  // making the reader click to confirm picks the parse already
+  // holds was the double confirmation C2 removes.
+  useEffect(() => {
+    if (places.length === 0 && metrics.length === 0) {
+      tryResolve(geographies, metricKeys)
+    }
+    // Mount-only by design: later changes flow through the toggles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function togglePlace(value: string) {
+    const next = geographies.includes(value)
+      ? geographies.filter((x) => x !== value)
+      : [...geographies, value]
+    setGeographies(next)
+    tryResolve(next, metricKeys)
+  }
+
+  function toggleMetric(value: string) {
+    const next = metricKeys.includes(value)
+      ? metricKeys.filter((x) => x !== value)
+      : [...metricKeys, value]
+    setMetricKeys(next)
+    tryResolve(geographies, next)
   }
 
   return (
@@ -149,19 +207,34 @@ export function ClarificationPanel({
         under a parse carrying geographies (["Hilo, HI"] in E6) — the
         copy contradicted the state it sat under. The no-candidates
         line now renders only when the parse holds no places at all.
+        Since C3 the held places are removable here when the host
+        wires onRemovePlace — they used to be inert labels whose
+        only removal path was the editor mounted above the panel.
       */}
       {intent.geographies.length > 0 && (
         <div className="mt-2">
           <span className="text-sm font-medium text-slate-900">Choices already made</span>
           <div className="mt-1 flex flex-wrap gap-2">
-            {intent.geographies.map((place) => (
-              <span
-                key={place}
-                className="inline-flex min-h-[44px] items-center rounded-full border border-slate-900 bg-slate-100 px-3 py-2 text-sm text-slate-900"
-              >
-                {place}
-              </span>
-            ))}
+            {intent.geographies.map((place) =>
+              onRemovePlace ? (
+                <button
+                  key={place}
+                  type="button"
+                  aria-label={`Remove place ${place}`}
+                  onClick={() => onRemovePlace(place)}
+                  className="inline-flex min-h-[44px] items-center rounded-full border border-slate-900 bg-slate-100 px-3 py-2 text-sm text-slate-900 hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+                >
+                  {place} ×
+                </button>
+              ) : (
+                <span
+                  key={place}
+                  className="inline-flex min-h-[44px] items-center rounded-full border border-slate-900 bg-slate-100 px-3 py-2 text-sm text-slate-900"
+                >
+                  {place}
+                </span>
+              ),
+            )}
           </div>
         </div>
       )}
@@ -217,9 +290,6 @@ export function ClarificationPanel({
           </div>
         </div>
       ) : null}
-      <button type="button" disabled={!canResolve} onClick={resolve} className="btn-primary mt-3">
-        Use these choices
-      </button>
       {incompleteHint ? (
         <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">
           {incompleteHint}

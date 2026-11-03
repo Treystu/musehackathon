@@ -168,6 +168,17 @@ describe('F-B string hygiene: no internal keys in rendered labels', () => {
         onChange={() => {}}
       />,
     )
+    // REVISED PIN (item-16 cure C9, 2026-11-02): the measure options
+    // used to render unconditionally inside their own add-form. The
+    // collapsed add row renders them only once "measure" is the
+    // chosen field type, so the pin selects that type first; the
+    // plain-label assertions themselves are unchanged.
+    const kind = container.querySelector('#intent-add-kind') as HTMLSelectElement
+    expect(kind).not.toBeNull()
+    act(() => {
+      kind.value = 'measure'
+      kind.dispatchEvent(new Event('change', { bubbles: true }))
+    })
     const text = renderedLabels()
     expectNoInternalLabels(text)
     expect(text).toContain('Median gross rent')
@@ -263,12 +274,24 @@ describe('F-D no default areas', () => {
 })
 
 describe('F-C run-with-default', () => {
-  function useTheseChoicesButton(): HTMLButtonElement {
-    const btn = [...container.querySelectorAll('button')].find(
+  // REVISED PINS (item-16 cure C2, 2026-11-02): these tests used to
+  // drive the panel through its "Use these choices" button — enabled
+  // on the default, clicked to run. C2 removed that confirm step:
+  // the F-C outcome is unchanged (a geography with no measure runs
+  // on the disclosed domain default), but it now happens on the
+  // completing pick itself, or at mount when no pick is on offer.
+  // The blocked cases keep their one-line hints, asserted below
+  // alongside the absence of any confirm button.
+  function confirmButton() {
+    return [...container.querySelectorAll('button')].find(
       (b) => b.textContent === 'Use these choices',
     )
-    if (!btn) throw new Error('Use these choices button not found')
-    return btn as HTMLButtonElement
+  }
+
+  function clickChip(text: string) {
+    const chip = [...container.querySelectorAll('button')].find((b) => b.textContent === text)
+    if (!chip) throw new Error(`chip "${text}" not found`)
+    act(() => chip.click())
   }
 
   it('a geography with no measure runs on the domain default measure', async () => {
@@ -276,7 +299,7 @@ describe('F-C run-with-default', () => {
     render(
       <ClarificationPanel
         intent={{ ...clarifying, geographies: ['Anchorage, AK'] }}
-        candidates={{ geographies: [], metricKeys: [...DISPLAYABLE_KEYS] }}
+        candidates={{ geographies: [], metricKeys: [] }}
         onResolve={onResolve}
       />,
     )
@@ -284,9 +307,9 @@ describe('F-C run-with-default', () => {
     const text = renderedLabels()
     // The default is disclosed before anything runs, in plain words.
     expect(text).toContain('median gross rent')
-    const btn = useTheseChoicesButton()
-    expect(btn.disabled).toBe(false)
-    act(() => btn.click())
+    expect(confirmButton()).toBeUndefined()
+    // No measure is on offer, so nothing is left to pick: the
+    // default completes the set at mount, with no click at all.
     expect(onResolve).toHaveBeenCalledTimes(1)
     const resolved = onResolve.mock.calls[0]![0] as ValidatedIntent
     expect(resolved.geographies).toEqual(['Anchorage, AK'])
@@ -304,39 +327,46 @@ describe('F-C run-with-default', () => {
       />,
     )
     await flush()
-    const btn = useTheseChoicesButton()
-    expect(btn.disabled).toBe(false)
-    act(() => btn.click())
+    expect(confirmButton()).toBeUndefined()
+    // Measures are on offer here, so the mount does not pre-empt the
+    // pick; choosing the default measure itself is the completing
+    // pick and runs the sweep on it.
+    expect(onResolve).not.toHaveBeenCalled()
+    clickChip('Median gross rent')
     expect(onResolve).toHaveBeenCalledTimes(1)
     const resolved = onResolve.mock.calls[0]![0] as ValidatedIntent
     expect(resolved.metricKeys).toEqual(['median_gross_rent'])
   })
 
-  it('no place and no measure disables the button with a one-line hint', async () => {
+  it('no place and no measure runs nothing and carries the one-line hint', async () => {
+    const onResolve = vi.fn()
     render(
       <ClarificationPanel
         intent={clarifying}
         candidates={{ geographies: [], metricKeys: [...DISPLAYABLE_KEYS] }}
-        onResolve={() => {}}
+        onResolve={onResolve}
       />,
     )
     await flush()
-    expect(useTheseChoicesButton().disabled).toBe(true)
+    expect(confirmButton()).toBeUndefined()
+    expect(onResolve).not.toHaveBeenCalled()
     expect(renderedLabels()).toContain(
       'Pick a place and a measure, or a measure on its own to screen the whole country.',
     )
   })
 
-  it('a one-place comparison stays disabled with its hint, default notwithstanding', async () => {
+  it('a one-place comparison stays unrun with its hint, default notwithstanding', async () => {
+    const onResolve = vi.fn()
     render(
       <ClarificationPanel
         intent={{ ...clarifying, mode: 'compare', geographies: ['Anchorage, AK'] }}
         candidates={{ geographies: [], metricKeys: [...DISPLAYABLE_KEYS] }}
-        onResolve={() => {}}
+        onResolve={onResolve}
       />,
     )
     await flush()
-    expect(useTheseChoicesButton().disabled).toBe(true)
+    expect(confirmButton()).toBeUndefined()
+    expect(onResolve).not.toHaveBeenCalled()
     expect(renderedLabels()).toContain('Comparing needs two places')
   })
 })

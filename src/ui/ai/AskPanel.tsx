@@ -33,6 +33,7 @@ import {
   completeParsedBoundedScreen,
   rescueNationalScreen,
 } from '../../core/ai/national-screen'
+import { removeGeography } from '../../core/ai/intent-edit'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../core/ai/proxy-errors'
 import { censusLoadSentence } from '../GuidedTour'
@@ -795,6 +796,18 @@ export function AskPanel({
     if (canRun(next)) executeNow(next)
   }
 
+  /**
+   * A parse-held place removed from inside the clarification panel
+   * (item-16 cure C3): the panel's choices-already-made are
+   * removable there, so correcting the parse never means leaving
+   * the panel for the editor above it.
+   */
+  function handleClarificationRemovePlace(place: string) {
+    if (!intent) return
+    const result = removeGeography(intent, place)
+    if (result.ok) handleIntentChange(result.intent)
+  }
+
   async function runQuery(queryText: string, spokenTranscript?: string) {
     // The inquiry wave-off (plan C13 beat 2, battery E9): after the
     // session's one inquiry, a short wave-off reply closes it
@@ -1216,7 +1229,14 @@ export function AskPanel({
           lives on the Methodology view only. */}
       {intent && (
         <>
-          <IntentEditor intent={intent} onChange={handleIntentChange} />
+          {/* One editing surface during clarification (item-16 cure
+              C3): while the panel is mounted it owns additions, and
+              the editor above it keeps only its removal chips. */}
+          <IntentEditor
+            intent={intent}
+            onChange={handleIntentChange}
+            suppressAddForms={!canRun(intent) && !isResearchFirstHandoff(intent)}
+          />
           {!canRun(intent) && !isResearchFirstHandoff(intent) ? (
             <ClarificationPanel
               intent={intent}
@@ -1225,6 +1245,7 @@ export function AskPanel({
                 clarificationCandidates?.metricKeys ?? [],
               )}
               onResolve={handleIntentChange}
+              onRemovePlace={handleClarificationRemovePlace}
             />
           ) : (
             <>

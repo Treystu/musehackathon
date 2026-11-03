@@ -204,7 +204,17 @@ describe('canRun mode minimums (single owner)', () => {
     }
   })
 
-  it('panel enables resolve exactly when the merged picks would run', () => {
+  it('panel carries no confirm button; the hint alone marks the states that cannot run', () => {
+    // REVISED PIN (item-16 cure C2, 2026-11-02): this test used to
+    // assert the "Use these choices" button's enabled/disabled state
+    // as the runnability signal. C2 removed that button — the toggle
+    // that completes the set IS the run — so runnability now shows
+    // only in the hint line: the runnable-with-default state carries
+    // the F-C disclosure, the blocked state carries what is missing,
+    // and no state renders a confirm control. The F-C history below
+    // stands: a geography with no measure completes on the domain
+    // default measure (median gross rent); a request with neither
+    // place nor measure is the blocked case no default can complete.
     const runnableSweep: ValidatedIntent = {
       ...sweepOne,
       geographies: ['HI'],
@@ -217,16 +227,7 @@ describe('canRun mode minimums (single owner)', () => {
         onResolve={() => {}}
       />,
     )
-    expect(enabled).toContain('Use these choices')
-    expect(enabled).not.toContain('disabled')
-    // REVISED PIN (owner ruling F-C, 2026-11-02): this test's blocked
-    // case used to be a placed sweep with a geography and no measure,
-    // asserted disabled because "there is no figure to sort by". F-C
-    // ruled that exact shape a dead click: with a geography and no
-    // measure, the panel applies the domain default measure
-    // (median gross rent) and RUNS — so that shape now enables, and
-    // the blocked case is a request with neither place nor measure,
-    // which no default can complete.
+    expect(enabled).not.toContain('Use these choices')
     const withDefault = renderToStaticMarkup(
       <ClarificationPanel
         intent={{ ...runnableSweep, metricKeys: [] }}
@@ -234,7 +235,8 @@ describe('canRun mode minimums (single owner)', () => {
         onResolve={() => {}}
       />,
     )
-    expect(withDefault).not.toContain('disabled')
+    expect(withDefault).not.toContain('Use these choices')
+    expect(withDefault).toContain('median gross rent')
     const blocked = renderToStaticMarkup(
       <ClarificationPanel
         intent={{ ...runnableSweep, geographies: [], metricKeys: [], filters: [] }}
@@ -242,10 +244,11 @@ describe('canRun mode minimums (single owner)', () => {
         onResolve={() => {}}
       />,
     )
-    expect(blocked).toContain('disabled')
+    expect(blocked).not.toContain('Use these choices')
+    expect(blocked).toContain('Pick a place and a measure')
   })
 
-  it('panel click: empty picks disabled -> toggle place enables -> click resolves with filter', () => {
+  it('panel toggle: the place toggle that completes the set resolves with the filter intact', () => {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -271,27 +274,19 @@ describe('canRun mode minimums (single owner)', () => {
           }}
         />,
       )
-      const findResolve = () =>
-        Array.from(container.querySelectorAll('button')).find(
-          (b) => b.textContent === 'Use these choices',
-        ) as HTMLButtonElement
-      // Empty picks: the intent is a placeless bounded sweep, which runs
-      // as a national bound application since the 2026-11-01 national
-      // screen landed (canRun's placeless exception) — so the button
-      // starts ENABLED, where the pre-screen contract required a place
-      // first and started it disabled.
-      expect(findResolve().disabled).toBe(false)
-      // Toggle the place chip: merged picks now run, so the button enables.
+      // REVISED PIN (item-16 cure C2, 2026-11-02): the old flow was
+      // toggle -> button enables -> click resolve. The confirm click
+      // is removed: the place toggle itself resolves, once, with the
+      // intent's filter intact. (At mount nothing fires: a candidate
+      // place is still on offer, so the reader's pick is pending —
+      // the placeless bounded sweep's national-screen run waits for
+      // the toggle that chooses its bound.)
+      expect(resolved).toBeNull()
       const placeChip = Array.from(container.querySelectorAll('button')).find(
         (b) => b.textContent === 'HI',
       ) as HTMLButtonElement
       act(() => {
         placeChip.click()
-      })
-      expect(findResolve().disabled).toBe(false)
-      // Click resolve: onResolve fires once with the intent filter intact.
-      act(() => {
-        findResolve().click()
       })
       expect(resolved).not.toBeNull()
       expect(resolved!.geographies).toEqual(['HI'])

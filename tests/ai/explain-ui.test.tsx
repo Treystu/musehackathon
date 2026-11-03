@@ -36,11 +36,16 @@ describe('ExplainBox', () => {
 })
 
 describe('ExplainOnAsk', () => {
-  it('shows the explain action after clarification', () => {
-    const html = renderToStaticMarkup(
-      <ExplainOnAsk intent={base} onExplain={() => {}} />,
-    )
-    expect(html).toContain('Explain these figures')
+  it('offers no manual explain action — the Ask surface is automatic or nothing', () => {
+    // REVISED PIN (item-16 cure C7, 2026-11-02): this test used to
+    // pin the manual "Explain these figures" button that appeared
+    // when a host wired onExplain. C7 removed that variant so the
+    // Ask surface behaves identically regardless of wiring; with no
+    // provider, figures, or supplied explanation there is nothing
+    // to render and no button to click.
+    const html = renderToStaticMarkup(<ExplainOnAsk intent={base} />)
+    expect(html).toBe('')
+    expect(html).not.toContain('Explain these figures')
   })
 
   it('renders the explanation result on the Ask surface', () => {
@@ -56,10 +61,7 @@ describe('ExplainOnAsk', () => {
 
   it('withholds the action until clarification is resolved', () => {
     const html = renderToStaticMarkup(
-      <ExplainOnAsk
-        intent={{ ...base, clarificationNeeded: true }}
-        onExplain={() => {}}
-      />,
+      <ExplainOnAsk intent={{ ...base, clarificationNeeded: true }} />,
     )
     expect(html).toBe('')
   })

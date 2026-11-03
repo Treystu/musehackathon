@@ -267,18 +267,13 @@ describe('spec-gap surfaces', () => {
     expect(text).not.toContain('withheld')
   })
 
-  it('clicking Explain then withholding shows figures, provenance, and the note', () => {
-    const onExplain = vi.fn()
-    render(
-      <ExplainOnAsk intent={base} figures={[figure]} onExplain={onExplain} />,
-    )
-
-    const button = container.querySelector('button') as HTMLButtonElement
-    act(() => button.click())
-    expect(onExplain).toHaveBeenCalledTimes(1)
-    expect(onExplain).toHaveBeenCalledWith(base)
-    expect(container.textContent).not.toContain('Explanation withheld')
-
+  it('a withheld explanation shows figures, provenance, and the note', () => {
+    // REVISED PIN (item-16 cure C7, 2026-11-02): this test used to
+    // open by clicking the manual "Explain these figures" button
+    // through an onExplain wiring. C7 removed that variant — the
+    // Ask surface explains automatically or not at all — so the
+    // click half is gone; the withholding render it led into is
+    // unchanged and stays pinned below.
     render(
       <ExplainOnAsk
         intent={base}

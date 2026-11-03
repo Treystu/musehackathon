@@ -101,18 +101,27 @@ function AutoExplain({
   )
 }
 
-/** Explanation on the Ask surface: automatic after a run; the prop-driven path stays for hosts that own it. */
+/**
+ * Explanation on the Ask surface: one contract (item-16 cure C7) —
+ * automatic after a run, always. This surface used to render a
+ * manual "Explain these figures" button whenever a host wired an
+ * onExplain callback, so the same act cost 0 clicks on one mount
+ * and 1 on another; the audit's minimum cure is that the Ask
+ * surface behaves identically regardless of wiring. The manual
+ * variant is removed: with a provider and figures the explanation
+ * fires on its own, and a host-supplied explanation (the
+ * prop-driven result path) still renders as before. Data views
+ * keep their own manual ExplainAction button, unchanged.
+ */
 export function ExplainOnAsk({
   intent,
   figures,
   explanation,
-  onExplain,
   provider,
 }: {
   intent: ValidatedIntent
   figures?: readonly FigureInput[]
   explanation?: ExplanationState
-  onExplain?: (intent: ValidatedIntent) => void
   provider?: MuseProvider
 }) {
   if (intent.clarificationNeeded) return null
@@ -122,17 +131,11 @@ export function ExplainOnAsk({
       (figure.geographies?.length === 0 ||
         figure.geographies?.some((geography) => intent.geographies.includes(geography))),
   )
-  if (!onExplain && !explanation && !(provider && intentFigures.length > 0)) return null
+  if (!explanation && !(provider && intentFigures.length > 0)) return null
   return (
     <>
-      {provider && intentFigures.length > 0 && !explanation && !onExplain ? (
+      {provider && intentFigures.length > 0 && !explanation ? (
         <AutoExplain figures={intentFigures} provider={provider} />
-      ) : onExplain ? (
-        <section aria-label="Explain these figures" className="mt-3">
-          <button type="button" onClick={() => onExplain(intent)} className="btn-secondary">
-            Explain these figures
-          </button>
-        </section>
       ) : null}
       {explanation && figures && figures.length > 0 ? (
         <section aria-label="Figures behind this explanation">

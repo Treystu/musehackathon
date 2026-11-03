@@ -430,7 +430,6 @@ export function AskPanel({
   clarificationCandidates,
   figures,
   explanation,
-  onExplain,
   micRecorder,
   micRecognizer,
   micStorage,
@@ -499,7 +498,6 @@ export function AskPanel({
   clarificationCandidates?: ClarificationCandidates
   figures?: readonly FigureInput[]
   explanation?: ExplanationState
-  onExplain?: (intent: ValidatedIntent) => void
   /** Test/port injection for the mic recorder; defaults to the browser recorder. */
   micRecorder?: MicRecorder | null
   /** Test/port injection for the mic recognizer; takes precedence over micRecorder. */
@@ -1239,7 +1237,6 @@ export function AskPanel({
                 intent={intent}
                 figures={figures}
                 explanation={explanation}
-                onExplain={onExplain}
                 provider={provider}
               />
             </>

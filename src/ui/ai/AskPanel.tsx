@@ -33,7 +33,9 @@ import {
   NATIONAL_SCREEN_LABELS,
   completeParsedBoundedScreen,
   rescueNationalScreen,
+  stateCodeForGeography,
 } from '../../core/ai/national-screen'
+import { STATE_NAME_BY_CODE } from '../../core/sweep/states'
 import { removeGeography } from '../../core/ai/intent-edit'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
 import type { ProxyError } from '../../core/ai/proxy-errors'
@@ -245,6 +247,60 @@ export function hasAmbiguousPlaceCandidates(geographies: readonly string[]): boo
     if (variants.size > 1) return true
   }
   return false
+}
+
+/**
+ * Parse grounding (Lane completion K1b, 2026-11-03): a clarifying
+ * intent's geographies must be places the reader's own question
+ * names. The parse chain is stateless by construction — the panel
+ * sends empty geography hints, the route and provider pass the
+ * question text only, runQuery clears the panel intent at ask
+ * time, and clarification candidates derive from the current parse
+ * alone — so no client state can carry a prior run's place into a
+ * new question. What CAN arrive is a model reply that carries one
+ * anyway (the specimen, on production 6027031 under recorded
+ * contention: "What is the most liberal city in Texas?" asked after
+ * a Hilo comparison clarified as a comparison holding "Hilo, HI",
+ * a place the question never names, presented as the reader's own
+ * choice already made). The intent prompt's own contract is "keep
+ * every place or state the question names in geographies", so a
+ * geography the question does not ground is outside the reply's
+ * contract by definition. This guard enforces the contract at the
+ * seam where a reply settles into the understood request, reading
+ * only the reader's words — the same posture as the national-screen
+ * rescue beside it. It applies only to intents that still need
+ * clarification (a runnable parse is the model's settled reading
+ * and runs untouched), and a dropped geography costs at most a
+ * re-pick in the panel; a kept foreign geography would run, or
+ * stand as the reader's choice, on words they never wrote.
+ */
+export function geographyGroundedInQuestion(geography: string, queryText: string): boolean {
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const text = ` ${normalize(queryText)} `
+  const contains = (phrase: string) => phrase !== '' && text.includes(` ${phrase} `)
+  if (contains(normalize(geography))) return true
+  if (contains(normalize(geography.split(',')[0]!))) return true
+  // State equivalence: a geography that names a state, by code or
+  // by full name, is grounded when the question names that state in
+  // either form ("TX" in the words grounds "Texas" in the reply).
+  const code = stateCodeForGeography(geography)
+  if (code) {
+    if (contains(code.toLowerCase())) return true
+    const name = STATE_NAME_BY_CODE[code]
+    if (name && contains(normalize(name))) return true
+  }
+  return false
+}
+
+/** The intent with every ungrounded geography removed (see above). */
+export function dropUngroundedGeographies(
+  intent: ValidatedIntent,
+  queryText: string | undefined,
+): ValidatedIntent {
+  if (!queryText || !intent.clarificationNeeded || intent.geographies.length === 0) return intent
+  const kept = intent.geographies.filter((g) => geographyGroundedInQuestion(g, queryText))
+  if (kept.length === intent.geographies.length) return intent
+  return withRunnability({ ...intent, geographies: kept })
 }
 
 /**
@@ -799,6 +855,11 @@ export function AskPanel({
       // One answer: the flag is stamped by its single owner, so the gate
       // below and ExplainOnAsk read the same runnability.
       parsed = withRunnability(check.intent)
+      // Parse grounding (K1b): a clarifying reply's geographies are
+      // the reader's own named places or they do not settle — see
+      // dropUngroundedGeographies. Runs before the rescue and the
+      // handoff so no downstream path can carry a foreign place.
+      parsed = dropUngroundedGeographies(parsed, queryText)
       rescued = rescueNationalScreen(parsed, queryText)
       if (rescued) parsed = rescued
     }

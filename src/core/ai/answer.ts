@@ -35,11 +35,15 @@
  * THE TYPE CONTRACT (what the UI consumes; UI work is a later stage):
  *
  *   ComposedAnswer {
- *     status: 'verified' | 'withheld' | 'blocked' | 'empty'
+ *     status: 'verified' | 'withheld' | 'blocked' | 'empty' | 'flexible'
  *       verified — passed verify; safe to render as an answer.
  *       withheld — composed but failed verify; `failures` names why.
  *       blocked  — parse gate refused the intent; `failures` names why.
  *       empty    — the screen found no place meeting the criteria.
+ *       flexible — the research-mismatch terminal (noCensusMatch),
+ *         completed by the UI runner's flexible lane under the
+ *         evidence-class validator (core/ai/flexible.ts); the
+ *         completion rides on `flexible`, never on `places`.
  *     stage: the last stage reached ('parse' | 'screen' | 'research'
  *            | 'compose' | 'verify').
  *     criteria: the Census criteria the screen applied, verbatim from
@@ -155,6 +159,7 @@ import {
   classifyMetricKey,
   type CountyAssignment,
 } from '../county-aggregate'
+import type { FlexibleAnswer } from './flexible'
 import { METRIC_DEFS_BY_KEY } from '../civicscope-registry'
 import type { AreaRow } from '../plugins/acs'
 import type { MuseProvider, ResearchResult, ValidatedIntent } from './provider'
@@ -171,7 +176,7 @@ import {
 
 export type AnswerStage = 'parse' | 'screen' | 'research' | 'compose' | 'verify'
 
-export type AnswerStatus = 'verified' | 'withheld' | 'blocked' | 'empty'
+export type AnswerStatus = 'verified' | 'withheld' | 'blocked' | 'empty' | 'flexible'
 
 /** One Census criterion the screen applied, derived from an intent filter. */
 export interface ScreenCriterion {
@@ -423,6 +428,42 @@ export interface ComposedAnswer {
     options: { id: string; label: string }[]
     dismissLabel: string
   }
+  /**
+   * The research-mismatch marker (flexible completion lane,
+   * 2026-11-02): true exactly when this answer is the research-first
+   * terminal where the research stage succeeded and named places
+   * for the stated criteria but no named place resolved to a Census
+   * place in the loaded data — status 'empty', the summary carrying
+   * the not-matched note, no card. The UI runner reads this marker
+   * (never the summary text) to decide the fall-through: the
+   * flexible lane completes the request from the research and the
+   * model's knowledge under machine-checked evidence labels
+   * (core/ai/flexible.ts). A screen-first 'empty' — the Census
+   * screen itself found no matching place — never carries the
+   * marker: that is a data answer, not a mismatch.
+   */
+  noCensusMatch?: boolean
+  /**
+   * The flexible completion itself, stamped by the UI runner when
+   * the fall-through ran and its draft passed the extended
+   * validator (core/ai/flexible.ts verifyFlexibleAnswer). Present
+   * exactly when status is 'flexible'. Core compose never sets it —
+   * the completion is a model answer on the runner's hourglass
+   * seams, not a pipeline stage.
+   */
+  flexible?: FlexibleAnswer
+  /**
+   * Research-first only: every candidate name the extraction stage
+   * pulled from the research findings, in mention order — resolved
+   * and unresolved alike. unresolvedCandidates above is the subset
+   * that resolved to nothing; a name can also resolve through the
+   * caller's index yet contribute no place because none of its
+   * ZCTAs is among the loaded rows, and such a name is still a
+   * place the research named. The flexible lane's provenance check
+   * reads this full set: a draft place may claim research_named
+   * exactly when its name is here.
+   */
+  researchNamedPlaces?: string[]
 }
 
 /**
@@ -1885,9 +1926,14 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           ? 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
           : undefined,
     })
+    const composedWithMarker = {
+      ...composedRaw,
+      researchNamedPlaces: [...extracted],
+      ...(cappedRows.length === 0 ? { noCensusMatch: true } : {}),
+    }
     const composed = input.unresolvedGeographies
-      ? { ...composedRaw, unresolvedGeographies: [...input.unresolvedGeographies] }
-      : composedRaw
+      ? { ...composedWithMarker, unresolvedGeographies: [...input.unresolvedGeographies] }
+      : composedWithMarker
     if (composed.status === 'empty') return { ...composed, stage: 'verify' }
     input.onStage?.('verify')
     const verdict = verifyAnswer(composed, cappedRows)

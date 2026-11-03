@@ -7,6 +7,7 @@ import type {
 import { METRIC_DEFS_BY_KEY } from '../../core/civicscope-registry'
 import { formatMetricNumber } from '../metric-format'
 import { ResultMap } from '../map/ResultMap'
+import { FlexibleAnswer } from './FlexibleAnswer'
 import { HelpTip } from './HelpTip'
 import { measureLabel } from './plain-labels'
 
@@ -140,6 +141,10 @@ export function requestedCountLine(answer: ComposedAnswer): string | null {
 
 /** One quiet line for research-first candidates that resolved to no ZCTA. */
 export function unresolvedCandidatesLine(answer: ComposedAnswer): string | null {
+  // A flexible completion DID use the named places — as
+  // research-labelled content, not Census matches — so this line's
+  // "was not used" wording would contradict the card it sits on.
+  if (answer.status === 'flexible') return null
   if (answer.unresolvedCandidates.length === 0) return null
   const list = answer.unresolvedCandidates.join(', ')
   return answer.unresolvedCandidates.length === 1
@@ -359,6 +364,20 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
         <p role="note" className="mt-2 text-sm text-slate-600">
           {answer.summary}
         </p>
+      )}
+      {answer.status === 'flexible' && answer.flexible && (
+        <>
+          {/*
+            The flexible completion (2026-11-02): the deterministic
+            framing line (the summary — it states the match outcome
+            and the labelling rule), the per-criterion evidence, then
+            the completion itself, whose every place and figure
+            carries its evidence class in plain words.
+          */}
+          <p className="mt-2 text-base leading-relaxed text-slate-800">{answer.summary}</p>
+          <CriterionEvidenceList answer={answer} />
+          <FlexibleAnswer flexible={answer.flexible} sources={answer.sources} />
+        </>
       )}
 
       {answer.status === 'verified' && (

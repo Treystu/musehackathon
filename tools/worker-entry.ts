@@ -31,6 +31,7 @@
 import * as briefingRoute from '../functions/api/muse/briefing'
 import * as diagnosticsRoute from '../functions/api/muse/diagnostics'
 import * as explainRoute from '../functions/api/muse/explain'
+import * as flexibleRoute from '../functions/api/muse/flexible'
 import * as generalRoute from '../functions/api/muse/general'
 import * as intentRoute from '../functions/api/muse/intent'
 import * as jevRoute from '../functions/api/muse/jev'
@@ -70,6 +71,7 @@ const ROUTES: ReadonlyMap<string, RouteModule> = new Map<string, RouteModule>([
   ['/api/muse/briefing', briefingRoute],
   ['/api/muse/diagnostics', diagnosticsRoute],
   ['/api/muse/explain', explainRoute],
+  ['/api/muse/flexible', flexibleRoute],
   ['/api/muse/general', generalRoute],
   ['/api/muse/intent', intentRoute],
   ['/api/muse/jev', jevRoute],

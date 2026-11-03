@@ -44,6 +44,11 @@ import {
   proximityFocus,
 } from '../../core/ai/nearby'
 import {
+  createHttpFlexibleTransport,
+  type FlexibleTransport,
+} from '../../core/ai/flexible'
+import { composeFlexibleCompletion } from './flexible-runner'
+import {
   stateCodeForGeography,
 } from '../../core/ai/national-screen'
 import type { StateAggregateGeography } from '../../core/ai/answer'
@@ -570,6 +575,8 @@ export interface ConversationalStackDeps {
   jevTransport?: JevTransport
   planTransport?: PlanTransport
   verifyTransport?: VerifyTransport
+  /** The flexible completion lane's draft transport; defaults to the HTTP route transport. */
+  flexibleTransport?: FlexibleTransport
   /** Landed decisions for this run; defaults to the session record. */
   decisions?: DecisionsRecord
   /** Branches already closed this session (never re-proposed). */
@@ -577,13 +584,14 @@ export interface ConversationalStackDeps {
 }
 
 function defaultStack(deps: ConversationalStackDeps | undefined): Required<
-  Pick<ConversationalStackDeps, 'jevTransport' | 'planTransport' | 'verifyTransport'>
+  Pick<ConversationalStackDeps, 'jevTransport' | 'planTransport' | 'verifyTransport' | 'flexibleTransport'>
 > & { decisions: DecisionsRecord; closedBranches: ReadonlySet<string> } {
   const bookends = createHttpBookendTransports()
   return {
     jevTransport: deps?.jevTransport ?? createHttpJevTransport(),
     planTransport: deps?.planTransport ?? bookends.plan,
     verifyTransport: deps?.verifyTransport ?? bookends.verify,
+    flexibleTransport: deps?.flexibleTransport ?? createHttpFlexibleTransport(),
     decisions: deps?.decisions ?? readSessionDecisions(),
     closedBranches: deps?.closedBranches ?? new Set(),
   }
@@ -926,9 +934,58 @@ export async function composeAnswerForRequest(input: {
   timings.pipeline = performance.now() - pipelineStarted
   if (answer.status === 'blocked') return null
 
+  // Flexible completion fall-through (2026-11-02, owner directive;
+  // core/ai/flexible.ts): the pipeline's research-mismatch marker
+  // is the ONLY trigger — research succeeded and named places, but
+  // none matched Census data, so the strict answer is the bare
+  // not-matched note. The completion drafts on the hourglass seams
+  // and must pass the extended validator before it replaces the
+  // note; any failure along the way returns null here and the
+  // strict terminal stands, unchanged. Provider failures never
+  // reach this branch (they throw out of the pipeline to the
+  // caller's note), and neither do safety refusals ('blocked'
+  // returned null above) or a genuine Census screen with no match
+  // (status 'empty' without the marker).
+  let flexibleVerification: {
+    wonder: 'verified' | 'concerns' | 'not-run'
+    wonderConcerns?: string[]
+    jev: { roundsUsed: number; passed: boolean } | 'not-run'
+  } | null = null
+  if (stack && answer.status === 'empty' && answer.noCensusMatch) {
+    const completion = await composeFlexibleCompletion({
+      queryText: input.queryText,
+      strictAnswer: answer,
+      rows,
+      criteria: loopCriteriaFor(input.intent, input.research, input.queryText),
+      deps: {
+        flexibleTransport: stack.flexibleTransport,
+        jevTransport: stack.jevTransport,
+        verifyTransport: stack.verifyTransport,
+      },
+      onStage: input.onStage ? (stage) => input.onStage!(stage) : undefined,
+    })
+    if (completion) {
+      answer = {
+        ...answer,
+        status: 'flexible',
+        flexible: completion.flexible,
+        summary:
+          'The cited research named places for the stated criteria, but none could be ' +
+          'matched to Census data. This answer is completed from the research and the ' +
+          'model’s own knowledge, with every place and figure labelled by the evidence ' +
+          'behind it.',
+      }
+      flexibleVerification = completion.verification
+      Object.assign(timings, completion.timings)
+    }
+  }
+
   const verification: NonNullable<ComposedAnswer['verification']> = {
-    wonder: 'not-run',
-    jev: 'not-run',
+    wonder: flexibleVerification?.wonder ?? 'not-run',
+    jev: flexibleVerification?.jev ?? 'not-run',
+    ...(flexibleVerification?.wonderConcerns
+      ? { wonderConcerns: flexibleVerification.wonderConcerns }
+      : {}),
     ...(planObjections ? { planObjections } : {}),
   }
 

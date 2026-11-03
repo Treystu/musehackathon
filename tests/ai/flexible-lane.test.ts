@@ -1,0 +1,417 @@
+import { describe, expect, it } from 'vitest'
+import type { AreaRow } from '../../src/core/plugins/acs'
+import {
+  runAnswerPipeline,
+  type ComposedAnswer,
+} from '../../src/core/ai/answer'
+import {
+  parseFlexibleDraft,
+  verifyFlexibleAnswer,
+  type FlexibleAnswer,
+} from '../../src/core/ai/flexible'
+import { createStubProvider, type ValidatedIntent } from '../../src/core/ai/provider'
+import type { JevAnswer, JevTransport } from '../../src/core/ai/jev-judgments'
+import {
+  composeAnswerForRequest,
+  resolveAnswerGeographies,
+} from '../../src/ui/ai/answer-runner'
+
+/**
+ * The flexible completion lane's hermetic pins (2026-11-02, owner
+ * directive; Jev gate PROCEED-with-note with structural safeguards).
+ *
+ * The lane completes exactly one strict terminal: research-first
+ * research mismatch — research succeeded and named places, none
+ * matched Census data, and the strict answer is the bare
+ * not-matched note (the owner's schools + fast-food question, live
+ * twice on 2026-11-02). Everything else keeps its terminal:
+ * provider failures throw, safety refusals stay blocked, a genuine
+ * Census screen with no match stays a data answer, and a strict
+ * card is never touched.
+ *
+ * The honesty pins are the gate's condition: a completion renders
+ * only through the typed shape, every place and figure carries an
+ * evidence class, and the extended validator rejects an unlabeled
+ * figure or a Census claim with no screened row behind it — so a
+ * rejected completion leaves the strict note standing, fail-closed.
+ */
+
+const ROWS: AreaRow[] = [
+  { zcta: '96720', name: 'Hilo, HI', metrics: { median_gross_rent: 1450 }, moes: { median_gross_rent: 85 } },
+  { zcta: '96749', name: 'Keaau, HI', metrics: { median_gross_rent: 1325 }, moes: { median_gross_rent: 120 } },
+  { zcta: '96778', name: 'Pahoa, HI', metrics: { median_gross_rent: 1750 }, moes: { median_gross_rent: 150 } },
+]
+
+const SENTENCE_1 = 'Where can I find the best schools but also the fewest fast food restaurants?'
+const NOT_MATCHED_NOTE =
+  'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
+
+const EXTERNAL_ONLY: ValidatedIntent = {
+  mode: 'lookup',
+  geographies: [],
+  metricKeys: [],
+  filters: [],
+  clarificationNeeded: true,
+}
+
+const UNMATCHED_RESEARCH = {
+  prose:
+    'Stone Mountain, GA schools are rated above the state average in the cited directory. ' +
+    'Kingwood, TX has few fast-food outlets along its main roads.',
+  sources: [{ title: 'State school directory', url: 'https://example.org/schools' }],
+}
+
+const DRAFT = {
+  prose:
+    'Stone Mountain, GA and Kingwood, TX are the places the cited research named for the ' +
+    'stated criteria. The research describes Stone Mountain schools as rated above the ' +
+    'state average, and Kingwood as having few fast-food outlets along its main roads.',
+  places: [
+    {
+      name: 'Stone Mountain, GA',
+      basis: 'research',
+      note: 'Named by the cited research for school quality.',
+      figures: [],
+    },
+    {
+      name: 'Kingwood, TX',
+      basis: 'research',
+      note: 'Named by the cited research for few fast-food outlets.',
+      figures: [
+        { label: 'Fast-food outlets named in the findings', value: 6, basis: 'research' },
+      ],
+    },
+  ],
+  figures: [
+    {
+      label: 'Share of Kingwood outlets that are fast food',
+      value: 40,
+      unit: '%',
+      basis: 'model',
+      working: '6 fast-food outlets of 15 food outlets the directory lists for the area: 6 / 15 = 40%.',
+    },
+  ],
+}
+
+/** A J-LOOP reply builder over whatever criteria the loop state carries. */
+function loopAnswersFromState(
+  state: Record<string, unknown>,
+  noul: number,
+): Record<string, JevAnswer> {
+  const answers: Record<string, JevAnswer> = {
+    relevance: { type: 'score', expected: 2, distribution: { '0': 0, '1': 0, '2': 1 } },
+    completeness: { type: 'score', expected: 2, distribution: { '0': 0, '1': 0, '2': 1 } },
+  }
+  const criteria = (state.criteria ?? []) as { id: string }[]
+  for (const criterion of criteria) {
+    answers[`criterion:${criterion.id}`] = { type: 'noul', probability: noul }
+  }
+  return answers
+}
+
+const NO_BRANCH: Record<string, JevAnswer> = {
+  'branch-exists': { type: 'noul', probability: 0.1 },
+  'branch-which': {
+    type: 'choice',
+    selected: 'none-of-these',
+    distribution: { transport: 0, 'school-level': 0, 'budget-anchor': 0, 'none-of-these': 1 },
+  },
+}
+
+function jevTransportWith(loopNoul: number | ((call: number) => number)): JevTransport {
+  let loopCalls = 0
+  return async ({ set, state }) => {
+    if (set === 'J-BRANCH') return { answers: NO_BRANCH }
+    loopCalls += 1
+    const noul = typeof loopNoul === 'function' ? loopNoul(loopCalls) : loopNoul
+    return { answers: loopAnswersFromState(state, noul) }
+  }
+}
+
+const NO_PLAN = { planTransport: async () => null }
+const VERIFIED_BOOKEND = {
+  verifyTransport: async () => ({ verdict: 'verified' as const, concerns: [] }),
+}
+
+/* ------------------------------------------------------------------ */
+/* Parser: the closed schema                                           */
+/* ------------------------------------------------------------------ */
+
+describe('flexible draft parser', () => {
+  it('maps the draft bases onto the evidence classes', () => {
+    const parsed = parseFlexibleDraft(DRAFT)
+    expect(parsed).not.toBeNull()
+    expect(parsed!.places.map((p) => [p.name, p.evidenceClass])).toEqual([
+      ['Stone Mountain, GA', 'research_named'],
+      ['Kingwood, TX', 'research_named'],
+    ])
+    expect(parsed!.figures[0]!.evidenceClass).toBe('model_knowledge')
+    expect(parsed!.figures[0]!.working).toContain('6 / 15')
+  })
+
+  it('refuses off-schema drafts whole: missing basis, census place, empty prose', () => {
+    expect(
+      parseFlexibleDraft({ prose: 'x', places: [], figures: [{ label: 'N', value: 1 }] }),
+    ).toBeNull()
+    expect(
+      parseFlexibleDraft({
+        prose: 'x',
+        places: [{ name: 'Hilo, HI', basis: 'census', figures: [] }],
+        figures: [],
+      }),
+    ).toBeNull()
+    expect(parseFlexibleDraft({ prose: '  ', places: [], figures: [] })).toBeNull()
+    expect(parseFlexibleDraft(null)).toBeNull()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* Validator extension: the structural honesty gate                    */
+/* ------------------------------------------------------------------ */
+
+describe('verifyFlexibleAnswer', () => {
+  const context = { rows: ROWS, researchNamedPlaces: ['Stone Mountain, GA', 'Kingwood, TX'] }
+  const valid = (): FlexibleAnswer => parseFlexibleDraft(DRAFT)!
+
+  it('passes a fully labelled completion', () => {
+    expect(verifyFlexibleAnswer(valid(), context)).toEqual({ ok: true, failures: [] })
+  })
+
+  it('rejects a figure whose evidence label was stripped', () => {
+    const stripped = valid()
+    delete (stripped.figures[0] as { evidenceClass?: unknown }).evidenceClass
+    const verdict = verifyFlexibleAnswer(stripped, context)
+    expect(verdict.ok).toBe(false)
+    expect(verdict.failures.join(' ')).toContain('without a valid evidence class')
+  })
+
+  it('rejects a census figure with no screened row behind it (wrong value)', () => {
+    const answer = valid()
+    answer.figures.push({
+      label: 'Median gross rent',
+      value: 9999,
+      evidenceClass: 'census_measured',
+      censusKey: 'median_gross_rent',
+      zcta: '96720',
+    })
+    const verdict = verifyFlexibleAnswer(answer, context)
+    expect(verdict.ok).toBe(false)
+    expect(verdict.failures.join(' ')).toContain('census figure mismatch')
+  })
+
+  it('rejects a census figure for a ZCTA the screen never loaded, and one with no key', () => {
+    const unknownZcta = valid()
+    unknownZcta.figures.push({
+      label: 'Median gross rent',
+      value: 1450,
+      evidenceClass: 'census_measured',
+      censusKey: 'median_gross_rent',
+      zcta: '60601',
+    })
+    expect(verifyFlexibleAnswer(unknownZcta, context).failures.join(' ')).toContain(
+      'no screened row behind it',
+    )
+    const noKey = valid()
+    noKey.figures.push({ label: 'Median gross rent', value: 1450, evidenceClass: 'census_measured' })
+    expect(verifyFlexibleAnswer(noKey, context).failures.join(' ')).toContain(
+      'without its metric key or ZCTA',
+    )
+  })
+
+  it('accepts a census figure the screened row backs exactly, margin included', () => {
+    const answer = valid()
+    answer.figures.push({
+      label: 'Median gross rent',
+      value: 1450,
+      marginOfError: 85,
+      evidenceClass: 'census_measured',
+      censusKey: 'median_gross_rent',
+      zcta: '96720',
+    })
+    expect(verifyFlexibleAnswer(answer, context).ok).toBe(true)
+  })
+
+  it('rejects a place claiming research provenance the research did not name', () => {
+    const answer = valid()
+    answer.places.push({ name: 'Portland, OR', evidenceClass: 'research_named', figures: [] })
+    const verdict = verifyFlexibleAnswer(answer, context)
+    expect(verdict.ok).toBe(false)
+    expect(verdict.failures.join(' ')).toContain('research provenance')
+    // The same place under the model's own label is welcome.
+    answer.places[answer.places.length - 1]!.evidenceClass = 'model_knowledge'
+    expect(verifyFlexibleAnswer(answer, context).ok).toBe(true)
+  })
+
+  it('rejects steering prose even in criteria-grounded context', () => {
+    const answer = valid()
+    answer.prose = 'You should move to Stone Mountain, GA for its schools.'
+    const verdict = verifyFlexibleAnswer(answer, context)
+    expect(verdict.ok).toBe(false)
+    expect(verdict.failures.join(' ')).toContain('banned construction')
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* Pipeline: the marker is the fall-through's only trigger             */
+/* ------------------------------------------------------------------ */
+
+describe('pipeline research-mismatch marker', () => {
+  it('marks the research-first mismatch terminal and records every extracted name', async () => {
+    const provider = createStubProvider({ research: async () => UNMATCHED_RESEARCH })
+    const answer = await runAnswerPipeline({
+      intent: EXTERNAL_ONLY,
+      rows: ROWS,
+      researchQuery: SENTENCE_1,
+      queryText: SENTENCE_1,
+      provider,
+    })
+    expect(answer.status).toBe('empty')
+    expect(answer.summary).toBe(NOT_MATCHED_NOTE)
+    expect(answer.noCensusMatch).toBe(true)
+    expect(answer.researchNamedPlaces).toEqual(['Stone Mountain, GA', 'Kingwood, TX'])
+    expect(answer.unresolvedCandidates).toEqual(['Stone Mountain, GA', 'Kingwood, TX'])
+  })
+
+  it('a genuine Census screen with no match is a data answer: no marker', async () => {
+    const answer = await runAnswerPipeline({
+      intent: {
+        mode: 'sweep_filter',
+        geographies: [],
+        metricKeys: ['median_gross_rent'],
+        filters: [{ metricKey: 'median_gross_rent', op: 'lt', value: 100 }],
+        clarificationNeeded: false,
+      },
+      rows: ROWS,
+    })
+    expect(answer.status).toBe('empty')
+    expect(answer.noCensusMatch).toBeUndefined()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* Runner: the fall-through, its gate, and its degradations            */
+/* ------------------------------------------------------------------ */
+
+describe('flexible completion at the runner', () => {
+  function baseInput(flexibleTransport: (req: unknown) => Promise<unknown>, jev: JevTransport) {
+    return {
+      intent: EXTERNAL_ONLY,
+      queryText: SENTENCE_1,
+      rows: ROWS,
+      resolved: resolveAnswerGeographies(EXTERNAL_ONLY, null),
+      provider: createStubProvider({ research: async () => UNMATCHED_RESEARCH }),
+      research: true,
+      stack: {
+        decisions: {},
+        ...NO_PLAN,
+        ...VERIFIED_BOOKEND,
+        jevTransport: jev,
+        flexibleTransport: flexibleTransport as never,
+      },
+    }
+  }
+
+  it('sentence 1 with unmatched research places completes with labelled places', async () => {
+    let flexibleCalls = 0
+    const answer = await composeAnswerForRequest(
+      baseInput(async () => {
+        flexibleCalls += 1
+        return DRAFT
+      }, jevTransportWith(0.95)),
+    )
+    expect(flexibleCalls).toBe(1)
+    expect(answer?.status).toBe('flexible')
+    expect(answer?.flexible?.places.map((p) => [p.name, p.evidenceClass])).toEqual([
+      ['Stone Mountain, GA', 'research_named'],
+      ['Kingwood, TX', 'research_named'],
+    ])
+    expect(answer?.summary).toContain('none could be matched to Census data')
+    expect(answer?.verification?.wonder).toBe('verified')
+    expect(answer?.verification?.jev).toEqual({ roundsUsed: 0, passed: true })
+    expect(typeof answer?.timings?.['flexible-draft']).toBe('number')
+  })
+
+  it('a draft the validator rejects leaves the strict note standing (fail-closed)', async () => {
+    const badDraft = {
+      ...DRAFT,
+      figures: [
+        {
+          label: 'Median gross rent',
+          value: 9999,
+          basis: 'census',
+          censusKey: 'median_gross_rent',
+          zcta: '96720',
+        },
+      ],
+    }
+    const answer = await composeAnswerForRequest(
+      baseInput(async () => badDraft, jevTransportWith(0.95)),
+    )
+    expect(answer?.status).toBe('empty')
+    expect(answer?.summary).toBe(NOT_MATCHED_NOTE)
+    expect(answer?.flexible).toBeUndefined()
+  })
+
+  it('an unlabeled draft (parse failure) leaves the strict note standing', async () => {
+    const answer = await composeAnswerForRequest(
+      baseInput(
+        async () => ({ prose: 'Some prose.', places: [], figures: [{ label: 'Outlets', value: 6 }] }),
+        jevTransportWith(0.95),
+      ),
+    )
+    expect(answer?.status).toBe('empty')
+    expect(answer?.summary).toBe(NOT_MATCHED_NOTE)
+  })
+
+  it('the Jev loop patches the completion: the revised draft ships, gaps carried verbatim', async () => {
+    const revisionGaps: string[][] = []
+    let drafts = 0
+    const answer = await composeAnswerForRequest(
+      baseInput(async (req) => {
+        drafts += 1
+        const request = req as { revision?: { gaps: string[] } }
+        if (request.revision) {
+          revisionGaps.push([...request.revision.gaps])
+          return { ...DRAFT, prose: `${DRAFT.prose} Revised: the school findings are stated per place.` }
+        }
+        return DRAFT
+      }, jevTransportWith((call) => (call === 1 ? 0.3 : 0.95))),
+    )
+    expect(drafts).toBe(2)
+    expect(revisionGaps).toHaveLength(1)
+    expect(revisionGaps[0]!.join(' ')).toContain('School quality')
+    expect(answer?.status).toBe('flexible')
+    expect(answer?.flexible?.prose).toContain('Revised:')
+    expect(answer?.verification?.jev).toEqual({ roundsUsed: 1, passed: true })
+  })
+
+  it('a strict card is never touched: matched research composes verified, no draft call', async () => {
+    let flexibleCalls = 0
+    const answer = await composeAnswerForRequest({
+      intent: EXTERNAL_ONLY,
+      queryText: SENTENCE_1,
+      rows: ROWS,
+      resolved: resolveAnswerGeographies(EXTERNAL_ONLY, null),
+      provider: createStubProvider({
+        research: async () => ({
+          prose: 'Hilo, HI schools are rated above the state average in the cited directory.',
+          sources: [{ title: 'State school directory', url: 'https://example.org/schools' }],
+        }),
+      }),
+      research: true,
+      stack: {
+        decisions: {},
+        ...NO_PLAN,
+        ...VERIFIED_BOOKEND,
+        jevTransport: jevTransportWith(0.95),
+        flexibleTransport: async () => {
+          flexibleCalls += 1
+          return DRAFT
+        },
+      },
+    })
+    expect(answer?.status).toBe('verified')
+    expect(answer?.places.map((p) => p.name)).toEqual(['Hilo, HI'])
+    expect(flexibleCalls).toBe(0)
+  })
+})

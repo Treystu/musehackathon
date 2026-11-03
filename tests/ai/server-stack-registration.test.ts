@@ -55,8 +55,17 @@ describe('server stack route registration', () => {
     })
   })
 
+  it('POST /api/muse/flexible reaches the flexible handler: keyless provider_down shape', async () => {
+    const res = await dispatchFetch(post('/api/muse/flexible', {}), fakeEnv(), exec)
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({
+      error: 'provider_down',
+      detail: 'no shared key configured',
+    })
+  })
+
   it('GET on the new POST routes is the 405 not_allowlisted shape', async () => {
-    for (const path of ['/api/muse/jev', '/api/muse/plan', '/api/muse/verify']) {
+    for (const path of ['/api/muse/jev', '/api/muse/plan', '/api/muse/verify', '/api/muse/flexible']) {
       const res = await dispatchFetch(
         new Request(`https://portal.example${path}`),
         fakeEnv(),

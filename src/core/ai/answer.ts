@@ -2636,8 +2636,42 @@ export function claimMentionsPlace(
   place: { name: string; zcta: string },
 ): boolean {
   const lower = claim.text.toLowerCase()
-  return lower.includes(place.zcta) || lower.includes(place.name.toLowerCase())
+  return zctaMentioned(lower, place.zcta) || lower.includes(place.name.toLowerCase())
 }
+
+/**
+ * Whether a claim's text carries a ZCTA as a standalone token
+ * (Lane A10 FM-19): the digit-boundary test, not a substring
+ * test. The shipped substring test attributed any claim whose
+ * text contained the digit sequence anywhere — measured
+ * hermetically on the sheet-B specimen's shape: "Austin is home
+ * to 768021 registered voters" attributed to Early, TX, because
+ * 76802 sits inside the longer figure, while the claim's own
+ * place (named bare) matched nothing. A ZIP mentioned as itself
+ * ("in 76802", "(76802)") still matches; a longer number that
+ * merely contains the digits does not.
+ */
+function zctaMentioned(lowerText: string, zcta: string): boolean {
+  return new RegExp(`(?<!\\d)${zcta}(?!\\d)`).test(lowerText)
+}
+
+/**
+ * Why there is no materialization partition beside this cure
+ * (FM-19 investigation record): a candidate whose claims all
+ * failed compose's form refusals still cards — by design.
+ * Compose refuses ranking-FORM claims ("X has the best beer
+ * selection") while extraction elects their places, so claim
+ * survival cannot testify that a finding described the place
+ * (measured in this cure's first pin run: the A9 battery's five
+ * lead places — Burlington, Plano, Naperville, Portland,
+ * Burlington again on the re-ask — all card on refused-form
+ * claims). And a prose-mention test cannot add evidence either:
+ * FM-14's hygiene already gates what extraction reads, so every
+ * extracted candidate is prose-mentioned by construction. The
+ * specimen's harm was never the carding — it was the borrowed
+ * evidence, cured by the boundary test above. A candidate that
+ * cards claimless carries no other place's findings.
+ */
 
 function claimPlace(claim: ResearchedClaim, places: readonly AreaRow[]): AreaRow | null {
   for (const row of places) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   bindResolvedCandidates,
   candidateBoundForInput,
+  claimMentionsPlace,
   extractBareCandidateNames,
   runAnswerPipeline,
   type ComposedAnswer,
@@ -452,6 +453,118 @@ describe('FM-17 unmatched-line presentation (pipeline)', () => {
     expect(unresolvedCandidatesLine(answer)).toBe(
       'Research named Fort, which could not be matched to Census data, so it was not used. ' +
         '5 further names in the findings could not be matched to Census data either.',
+    )
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* FM-19 — claim-place attribution (the sheet-B Early/Austin specimen) */
+/* ------------------------------------------------------------------ */
+
+const TX_ROWS = [
+  row('78617', 'Austin, TX', 1449),
+  row('76802', 'Early, TX', 700),
+  row('78834', 'Crystal City, TX', 448),
+  row('79843', 'Marfa, TX', 460),
+]
+const TX_Q = 'what city in Texas is the most liberal'
+
+describe('FM-19 claim-place attribution (unit)', () => {
+  const claim = (text: string) => ({ text, sourceUrls: ['https://example.com/f'] })
+
+  it('a ZCTA matches as a standalone token, never inside a longer figure', () => {
+    const early = { name: 'Early, TX', zcta: '76802' }
+    expect(claimMentionsPlace(claim('Austin is home to 768021 registered voters.'), early)).toBe(false)
+    expect(claimMentionsPlace(claim('The ZIP 76802 covers the town.'), early)).toBe(true)
+    expect(claimMentionsPlace(claim('Early, TX (76802) is a small town.'), early)).toBe(true)
+    expect(
+      claimMentionsPlace(claim('Austin, TX is home to many voters.'), { name: 'Austin, TX', zcta: '78617' }),
+    ).toBe(true)
+  })
+
+})
+
+describe('FM-19 claim-place attribution (the sheet-B specimen, hermetic)', () => {
+  it('borrowed evidence is impossible: Austin findings render under Austin or as general claims, never under Early', async () => {
+    const prose =
+      'Crystal City, TX is described as the bluest town in red Texas, with Democratic margins among the largest in the state. ' +
+      'Austin is still the most liberal major city in Texas. ' +
+      'Austin, TX pairs that standing with a large university population and a deep bench of progressive organizations. ' +
+      'Early returns from the canvass point the same way as the endorsements. ' +
+      'Marfa, TX draws a smaller but durable liberal community around its arts institutions.'
+    const answer = await runPipeline({
+      q: TX_Q,
+      intent: { geographies: ['Texas'], metricKeys: [] },
+      rows: TX_ROWS,
+      prose,
+    })
+    const early = answer.places.find((p) => p.name === 'Early, TX')
+    // The recorded boundary (FM-19 diagnosis): the fragment token
+    // in name position still materializes Early — no deterministic
+    // form test separates it from a terse finding — but it cards
+    // CLAIMLESS. The sheet-B harm was the borrowed evidence:
+    // Austin's sentences rendered as Early's. That is what is
+    // pinned shut here.
+    expect(early).toBeDefined()
+    expect(early!.claims).toEqual([])
+    expect(answer.places.find((p) => p.name === 'Austin, TX')!.claims.map((c) => c.text)).toEqual([
+      'Austin, TX pairs that standing with a large university population and a deep bench of progressive organizations.',
+    ])
+    // The bare-form Austin finding attributes nowhere strictly and
+    // stays a general claim — it is not borrowed onto any place.
+    expect(answer.generalClaims.map((c) => c.text)).toContain(
+      'Austin is still the most liberal major city in Texas.',
+    )
+  })
+
+  it('a figure carrying another place ZIP digits attributes nowhere (768021 is not 76802)', async () => {
+    const prose =
+      'Crystal City, TX is described as the bluest town in red Texas. ' +
+      'Austin is home to 768021 registered voters across its precincts, the largest liberal electorate in the state. ' +
+      'Early returns from the canvass point the same way as the endorsements.'
+    const answer = await runPipeline({
+      q: TX_Q,
+      intent: { geographies: ['Texas'], metricKeys: [] },
+      rows: TX_ROWS,
+      prose,
+    })
+    // Before the cure this claim attached to Early, TX (its ZIP
+    // sits inside the figure). Now it attributes to no place and
+    // stays a general claim; no place carries it as evidence.
+    expect(answer.places.flatMap((p) => p.claims.map((c) => c.text))).toEqual([
+      'Crystal City, TX is described as the bluest town in red Texas.',
+    ])
+    expect(answer.generalClaims.map((c) => c.text)).toContain(
+      'Austin is home to 768021 registered voters across its precincts, the largest liberal electorate in the state.',
+    )
+    expect(answer.places.find((p) => p.name === 'Early, TX')!.claims).toEqual([])
+    expect(answer.places.map((p) => p.name)).toContain('Austin, TX')
+  })
+
+  it('a candidate whose only claim is refused for its form still cards — claimless, never borrowed (the design boundary)', async () => {
+    const prose =
+      'Crystal City, TX is described as the bluest town in red Texas. ' +
+      'Early, TX is the worst town in the state for a liberal household, by every account.'
+    const answer = await runPipeline({
+      q: TX_Q,
+      intent: { geographies: ['Texas'], metricKeys: [] },
+      rows: TX_ROWS,
+      prose,
+    })
+    // The Early sentence is a ranking construction with a place
+    // predication: compose refuses the claim for its FORM, as it
+    // refuses the A9 battery's "has the best..." lead claims —
+    // while extraction still elects their places. That posture
+    // is the measured design (FM-19 investigation record): claim
+    // survival cannot testify about description, so there is no
+    // materialization partition. Early cards with no claims; the
+    // refused claim is in droppedClaims, and nothing of
+    // Crystal City's renders under Early.
+    const early = answer.places.find((p) => p.name === 'Early, TX')
+    expect(early).toBeDefined()
+    expect(early!.claims).toEqual([])
+    expect(answer.droppedClaims.map((c) => c.text)).toContain(
+      'Early, TX is the worst town in the state for a liberal household, by every account.',
     )
   })
 })

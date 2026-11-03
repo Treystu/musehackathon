@@ -378,6 +378,7 @@ describe('cure 2 correspondence pin: every catalog criterion reaches the pipelin
     amenities: 'places with hospitals nearby',
     farmers_markets: 'places with farmers markets',
     climate: 'somewhere with a warm climate',
+    nature: 'places with nature nearby',
     current_events: 'the latest housing news',
     internet: 'places with good internet access',
     cost_of_living: 'places with a lower cost of living',

@@ -159,6 +159,7 @@ import {
   classifyMetricKey,
   type CountyAssignment,
 } from '../county-aggregate'
+import { STATE_NAME_BY_CODE } from '../sweep/states'
 import type { FlexibleAnswer } from './flexible'
 import { METRIC_DEFS_BY_KEY } from '../civicscope-registry'
 import type { AreaRow } from '../plugins/acs'
@@ -744,6 +745,15 @@ export const RESEARCH_CRITERION_CATALOG: readonly {
   // A3's "warm": a stated criterion with no slot in any layer
   // disappeared entirely; climate is research-servable and now has one.
   { id: 'climate', label: 'Warm climate', pattern: /\bwarm\b|\bclimate\b|\bsunny\b/i, keywords: ['warm', 'climate', 'weather', 'sunny'] },
+  // Nature (owner live failure, 2026-11-03: "what city in Colorado
+  // has the best nature and the lowest cost of living?"): the
+  // question's lead criterion had no entry here, no arm in
+  // AskPanel's research trigger, and — because cost of living DID
+  // match — not even the combined fallback below carried it: it
+  // vanished from every layer and the answer was a whole-state rent
+  // sort with no nature line at all. Nature and the outdoors are
+  // research-servable like schools or climate, and now have a slot.
+  { id: 'nature', label: 'Nature and outdoors', pattern: /\bnature\b|\boutdoors?\b|\bscenery\b|\bscenic\b|\bgreenery\b|\bgreen spaces?\b|\bnatural beauty\b|\bwilderness\b/i, keywords: ['nature', 'outdoor', 'scenic', 'trail', 'forest', 'wilderness', 'national park', 'state park', 'mountain'] },
   // Current-events arm (P3 step 7, battery E4): news phrasing is a
   // research criterion, so the pipeline researches it with citations
   // instead of the question stranding in clarification.
@@ -776,11 +786,77 @@ export const RESEARCH_CRITERION_CATALOG: readonly {
 const COUNT_SEEKING_RE = /\bfewest\b|\bleast\b|\bnumber of\b|\bcount\b|\bdensity\b|\bhow many\b/i
 
 /**
+ * Superlative phrases in the reader's words ("best nature",
+ * "quietest streets", "least average cost"): a phrase like this is
+ * how a criterion is stated, so decomposition checks each one for a
+ * claimant before it lets a partially-matching question through
+ * (see hasUnclaimedCriterionPhrase).
+ */
+const CRITERION_SUPERLATIVE_RE =
+  /\b(?:best|worst|most|least|fewest|greatest|finest|largest|smallest|highest|lowest|quietest|prettiest|nicest|cheapest|safest|warmest|coldest)\s+([a-z]+(?:\s[a-z]+)?)/gi
+
+/**
+ * Head words that make a superlative phrase a Census-measure reading
+ * ("lowest rent", "highest median income") rather than an
+ * outside-Census criterion, and the words of the ranking frame
+ * itself ("best places", "cheapest city") — the superlative ranges
+ * over the places, it does not state a criterion about them.
+ */
+const MEASURE_HEAD_WORDS: ReadonlySet<string> = new Set([
+  'average', 'rent', 'rents', 'income', 'incomes', 'home', 'homes', 'house', 'housing',
+  'cost', 'costs', 'price', 'prices', 'value', 'values', 'median', 'household',
+  'households', 'population', 'tax', 'taxes', 'salary', 'wage', 'wages',
+  'unemployment', 'poverty', 'commute', 'age', 'debt', 'expense', 'expenses',
+  'rate', 'rates', 'spending', 'insurance', 'mortgage', 'tuition',
+])
+const PLACE_FRAME_WORDS: ReadonlySet<string> = new Set([
+  'place', 'places', 'city', 'cities', 'town', 'towns', 'area', 'areas', 'county',
+  'counties', 'state', 'states', 'zip', 'neighbourhood', 'neighborhood',
+  'neighbourhoods', 'neighborhoods', 'community', 'communities', 'region',
+  'regions', 'location', 'locations', 'spot', 'spots',
+])
+
+/**
+ * Whether the question states a superlative criterion that neither a
+ * matched catalog entry nor a Census measure claims. The combined
+ * fallback in decomposeResearchCriteria used to fire only when
+ * NOTHING matched, so a question whose listed criteria matched and
+ * whose unlisted criterion did not ("best schools and the quietest
+ * streets") lost the unlisted criterion without a line anywhere —
+ * the silent-drop family the battery keeps finding (farmers markets
+ * D2, warm A3, salary A4, nature 2026-11-03). A phrase is claimed
+ * when its head is a measure word or the ranking frame, or when a
+ * matched entry's own pattern reads it ("best schools" is the
+ * schools entry's phrase, not a residue).
+ */
+export function hasUnclaimedCriterionPhrase(
+  queryText: string,
+  matched: readonly ResearchCriterion[],
+): boolean {
+  const matchedEntries = RESEARCH_CRITERION_CATALOG.filter((entry) =>
+    matched.some((criterion) => criterion.id === entry.id),
+  )
+  for (const match of queryText.matchAll(CRITERION_SUPERLATIVE_RE)) {
+    const phrase = (match[1] ?? '').toLowerCase()
+    const words = phrase.split(/\s+/).filter((w) => w.length > 0)
+    if (words.length === 0) continue
+    if (PLACE_FRAME_WORDS.has(words[0]!)) continue
+    if (words.some((w) => MEASURE_HEAD_WORDS.has(w))) continue
+    if (matchedEntries.some((entry) => entry.pattern.test(phrase))) continue
+    return true
+  }
+  return false
+}
+
+/**
  * Decompose a question's outside-Census criteria. Every catalog
  * criterion the words carry becomes its own criterion; when none
  * matches, the outside criteria are carried as one combined
- * criterion (the honest shape — see the header). An empty or absent
- * query decomposes to nothing: no research was asked for.
+ * criterion (the honest shape — see the header). When SOME match,
+ * an unclaimed superlative criterion rides as the combined
+ * criterion beside them (hasUnclaimedCriterionPhrase) — a partial
+ * match never silently drops the rest of the question. An empty or
+ * absent query decomposes to nothing: no research was asked for.
  */
 export function decomposeResearchCriteria(queryText: string | undefined): ResearchCriterion[] {
   if (!queryText || queryText.trim() === '') return []
@@ -798,7 +874,12 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
       ...(entry.decomposedMetricKey ? { decomposedMetricKey: entry.decomposedMetricKey } : {}),
     })
   }
-  if (found.length > 0) return found
+  if (found.length > 0) {
+    if (hasUnclaimedCriterionPhrase(queryText, found)) {
+      found.push({ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative })
+    }
+    return found
+  }
   return [{ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative }]
 }
 
@@ -837,6 +918,22 @@ export function requestedCountFromQuery(queryText: string | undefined): number |
   if (!token) return null
   const value = /^\d+$/.test(token) ? Number(token) : COUNT_WORDS[token.toLowerCase()]
   return value !== undefined && Number.isFinite(value) && value > 0 ? value : null
+}
+
+const STATE_NAME_SET: ReadonlySet<string> = new Set(
+  Object.values(STATE_NAME_BY_CODE).map((name) => name.toLowerCase()),
+)
+
+/**
+ * Whether one intent geography is a STATE bound — a postal code or a
+ * full state name — as opposed to a place (a named city, whose own
+ * rows are the answer's universe), a ZIP, or a county. The
+ * research-first widening below keys on this distinction.
+ */
+export function isStateGeography(geography: string): boolean {
+  const g = geography.trim()
+  if (/^[A-Za-z]{2}$/.test(g)) return STATE_NAME_BY_CODE[g.toUpperCase()] !== undefined
+  return STATE_NAME_SET.has(g.toLowerCase())
 }
 
 /** The geography level an intent's geographies name, before any county request. */
@@ -1246,11 +1343,22 @@ export function criterionEvidenceFor(input: {
   for (const criterion of input.researchCriteria) {
     // Decomposed criteria are Census-served (P3 step 3): the
     // criterion is ASSESSED on the card from the metric's figure on
-    // each shown place — met when every shown place carries the
-    // figure, partially measured when only some do, not measurable
-    // when none does. The direction is stated in the detail: for
-    // no_internet_access a lower figure is better access; the figure
-    // itself is the assessment, never a prose claim about it.
+    // each shown place — met when the places the answer ranks on
+    // the metric carry the figure, not measurable when none does.
+    // Coverage alone no longer makes it partial (owner live
+    // failure, 2026-11-03): the shipped rule counted every row of
+    // a several-hundred-row screen, so a state answer whose tail
+    // rows lack a published rent figure stamped its designed cost
+    // measure "partially measured" — coverage noise over places
+    // the answer does not rank on the measure, not the criterion's
+    // service. Places without a published figure are not ranked on
+    // the measure, and the detail says so. The one partial that
+    // remains is a DIRECTION failure — a shown place the
+    // criterion's own reading fails (the internet share rule
+    // below) — which is substantive, not coverage. The direction
+    // is stated in the detail: for no_internet_access a lower
+    // figure is better access; the figure itself is the assessment,
+    // never a prose claim about it.
     // Salary (P3b cure 3, battery A4): the criterion is ACCOUNTED,
     // never silently dropped — the reader's figure and the rent
     // anchor derived from it are both visible in the detail. The
@@ -1298,21 +1406,22 @@ export function criterionEvidenceFor(input: {
               )
             }).length
           : 0
+      const unranked = input.places.length > carrying
       evidence.push({
         criterion: criterion.label,
         kind: 'census',
         status:
-          input.places.length > 0 && carrying === input.places.length && failingInternet === 0
-            ? 'met'
-            : carrying > 0
+          carrying === 0
+            ? 'not_measurable'
+            : failingInternet > 0
               ? 'partially_measured'
-              : 'not_measurable',
+              : 'met',
         detail:
           key === 'no_internet_access'
             ? failingInternet > 0
               ? 'Assessed from the Census figures shown for each place: a place where more than a quarter of households have no internet access does not meet a good internet access criterion, and at least one shown place is above that share, so the criterion is not met for every shown place.'
-              : 'Assessed from the Census figure for households with no internet access shown for each place; a lower figure means better internet access.'
-            : 'Assessed from the Census cost figures shown for each place, read on median gross rent as the headline cost measure.',
+              : `Assessed from the Census figure for households with no internet access shown for each place; a lower figure means better internet access.${unranked ? ' Places without a published figure for it are not assessed on it.' : ''}`
+            : `Assessed from the Census cost figures shown for each place, read on median gross rent as the headline cost measure.${unranked ? ' Places without a published rent figure are not ranked on that measure.' : ''}`,
         sourceUrls: [],
       })
       continue
@@ -1896,15 +2005,35 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // researched (the combined carry alone does not widen: a placeless
   // superlative with a retained measure is the national screen's
   // shape, battery B1, and stays screen-first).
+  //
+  // State-bounded widening (owner live failure, 2026-11-03: "what
+  // city in Colorado has the best nature and the lowest cost of
+  // living?"): the no-geographies bound above left the state-bounded
+  // intersection on the screen-first path, where its "screen" is a
+  // boundless whole-state sort — not a real screen, and the lead
+  // researched criterion never engaged: the answer ranked 527 places
+  // by rent and said nothing about nature. The widening now also
+  // admits a geography bound that is a STATE (isStateGeography: a
+  // region whose places research must name), under the same two
+  // guards — no filter bounds (screenProbe empty: a ranking, not a
+  // screen) and a NAMED researched criterion. A place-level
+  // geography keeps the screen-first path: a named city's own rows
+  // are the answer's universe and the screen legitimately enumerates
+  // them (the Nashville shape — schools researched over the city's
+  // screened rows, A2's pinned behavior). A bounded state screen
+  // (a stated filter) likewise stays screen-first.
   const screenProbe = screenCriteriaFromIntent(input.intent)
   const namedResearchCriterion = researchCriteria.some(
     (c) => !c.decomposedMetricKey && c.id !== 'combined',
   )
+  const stateBounded =
+    input.intent.geographies.length > 0 &&
+    input.intent.geographies.every((g) => isStateGeography(g))
   const researchFirst =
     researchCriteria.some((c) => !c.decomposedMetricKey) &&
     screenProbe.criteria.length === 0 &&
     (input.intent.metricKeys.length === 0 ||
-      (input.intent.geographies.length === 0 && namedResearchCriterion)) &&
+      ((input.intent.geographies.length === 0 || stateBounded) && namedResearchCriterion)) &&
     !!input.provider &&
     !!input.researchQuery
 
@@ -1916,16 +2045,41 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     researchCriteria[0]?.label ??
     input.intent.geographies[0]
 
+  // State-bounded degrade (2026-11-03): a TOTAL research failure on
+  // the widened state-bounded arm does not take the research-first
+  // path's rethrow terminal. That arm's question carries a complete
+  // Census screen — the state's places under its stated measures —
+  // which the screen-compose cure (2026-11-02, the Arkansas
+  // battery) established as the card a total failure degrades onto,
+  // with every researched criterion recorded as a lookup that did
+  // not return. The pre-existing research-first arms keep the
+  // rethrow: their screen is placeless, and a national dump is not
+  // an answer to a criteria question. The widened arm is identified
+  // structurally: state bound + a named researched criterion +
+  // retained measures (the measures are what make the fallback
+  // screen a real answer rather than an unsorted list).
+  const widenedStateBound =
+    stateBounded && namedResearchCriterion && input.intent.metricKeys.length > 0
+  let firstResearch: ResearchStageResult | null = null
+  let firstResearchDown = false
   if (researchFirst) {
-    // Stage order inverts: research -> extract -> resolve -> pull.
     input.onStage?.('research', researchSubject)
-    const research = await researchPerCriterion(
-      input.provider!,
-      input.intent.geographies,
-      researchCriteria,
-      input.researchQuery!,
-      signal,
-    )
+    try {
+      firstResearch = await researchPerCriterion(
+        input.provider!,
+        input.intent.geographies,
+        researchCriteria,
+        input.researchQuery!,
+        signal,
+      )
+    } catch (err) {
+      if (!widenedStateBound) throw err
+      firstResearchDown = true
+    }
+  }
+  if (researchFirst && firstResearch) {
+    // Stage order inverts: research -> extract -> resolve -> pull.
+    const research = firstResearch
     const extractor = input.candidateExtractor ?? (({ prose }) => extractCandidateNamesFromProse(prose))
     const extracted = await extractor({ prose: research.prose, sources: research.sources })
     const resolver = input.candidateResolver ?? ((names) => resolveCandidatesAgainstRows(names, input.rows))
@@ -1986,7 +2140,38 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         ? Math.min(SCREENED_RESEARCH_CANDIDATE_CAP, requestedCount)
         : SCREENED_RESEARCH_CANDIDATE_CAP
     const candidateCapApplied = candidateRows.length > SCREENED_RESEARCH_CANDIDATE_CAP
-    const cappedRows = candidateRows.slice(0, placeLimit)
+    // Intersection ranking (2026-11-03, the Colorado cure): on the
+    // state-bounded arm, when the question also carries a criterion
+    // decomposed onto a Census metric (cost of living onto median
+    // gross rent), the research order is not the answer's order —
+    // the candidates are the researched criterion's places, ranked
+    // by the decomposed measure, lowest first, because both shipped
+    // decomposed measures read low-is-better (rent is the cost
+    // reading; the no-internet count is the access reading).
+    // Candidates with no published figure for the measure sort
+    // last, in research order — a missing figure is not the lowest
+    // — and the evidence detail discloses that they are not ranked
+    // on it. The sort is stable, so equal figures keep the research
+    // order, and it runs before the cap so the cap keeps the
+    // best-ranked candidates. The pre-existing research-first arms
+    // keep research order untouched: that order is their pinned
+    // contract (the B3 counting pin, geo-resolution), and the
+    // ranking belongs to the state-bounded intersection class this
+    // arm serves.
+    const rankKey = researchCriteria.find((c) => c.decomposedMetricKey)?.decomposedMetricKey
+    const rankedRows = rankKey && widenedStateBound
+      ? [...candidateRows].sort((a, b) => {
+          const av = a.metrics[rankKey]
+          const bv = b.metrics[rankKey]
+          const aKnown = typeof av === 'number' && Number.isFinite(av)
+          const bKnown = typeof bv === 'number' && Number.isFinite(bv)
+          if (aKnown && bKnown) return av - bv
+          if (aKnown) return -1
+          if (bKnown) return 1
+          return 0
+        })
+      : candidateRows
+    const cappedRows = rankedRows.slice(0, placeLimit)
     const baseScreen = screenRows(input.intent, input.rows, input.geographyZctas)
     const pullScreen: ScreenResult = {
       criteria: [],
@@ -2187,7 +2372,22 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // research is told county names, never member ZCTAs.
   let research: ResearchStageResult | null = null
   const candidateCapApplied = effectiveScreen.rows.length > SCREENED_RESEARCH_CANDIDATE_CAP
-  if (input.researchQuery && input.provider && effectiveScreen.rows.length > 0) {
+  if (firstResearchDown) {
+    // The research-first attempt above measured a total research
+    // failure for this state-bounded question; the screen flow
+    // carries the card and every researched criterion is recorded
+    // as a lookup that did not return — the screen path's own
+    // degrade accounting, without spending the identical passes a
+    // second time inside the same run.
+    research = {
+      prose: '',
+      sources: [],
+      claims: [],
+      failedCriteria: researchCriteria
+        .filter((c) => !c.decomposedMetricKey)
+        .map((c) => c.label),
+    }
+  } else if (input.researchQuery && input.provider && effectiveScreen.rows.length > 0) {
     // Inside the condition, so the stage is named only when a
     // research call really follows (item 17: never name a stage
     // that did not run).
@@ -2239,7 +2439,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // assessed from figures at compose; they never needed the
     // research stage to be accounted.
     researchCriteria,
-    candidateCapApplied: research ? candidateCapApplied : false,
+    candidateCapApplied: research && !firstResearchDown ? candidateCapApplied : false,
     geographyLevel,
     unsupportedGeography: effectiveUnsupportedGeography,
     countyMeta: mergedMeta,

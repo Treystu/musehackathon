@@ -340,7 +340,75 @@ export function screeningCoverageLine(answer: ComposedAnswer, shownCount: number
 /** Places beyond the map cap, named as text under the map (spec section 2.3 rule 1). */
 export function overflowPlaceNames(answer: ComposedAnswer): string[] {
   const ordered = orderedResultPlaces(answer)
-  return ordered.slice(RESULT_MAP_PLACE_CAP).map((p) => p.name)
+  // One name per PLACE, not per ZIP area (owner live failure,
+  // 2026-11-03): the roll listed the screen's rows, so a city with
+  // twenty ZIP areas was named twenty times — a ~500-name flood
+  // under a several-hundred-place answer. The roll is the map's
+  // text equivalent for the places it does not show; a place is
+  // named once, in card order, however many of its ZIP areas the
+  // answer holds.
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const place of ordered.slice(RESULT_MAP_PLACE_CAP)) {
+    if (seen.has(place.name)) continue
+    seen.add(place.name)
+    names.push(place.name)
+  }
+  return names
+}
+
+/**
+ * How many unique overflow names the "Also in this answer" roll
+ * lists before it counts the rest instead. The roll's job is to
+ * name the places the map does not show; past this many names the
+ * screening table below the card — which names every place — is
+ * the list, and the roll states the count (owner live failure,
+ * 2026-11-03: an uncapped roll of several hundred names).
+ */
+export const OVERFLOW_NAME_LIMIT = 50
+
+/** The roll as rendered: the listed names plus the count it stands in for. */
+export function overflowPlaceSummary(answer: ComposedAnswer): {
+  names: string[]
+  furtherCount: number
+} {
+  const all = overflowPlaceNames(answer)
+  return {
+    names: all.slice(0, OVERFLOW_NAME_LIMIT),
+    furtherCount: Math.max(0, all.length - OVERFLOW_NAME_LIMIT),
+  }
+}
+
+/**
+ * CHART RELEVANCE (owner standing rules, 2026-11-03: a chart shows
+ * only when it serves the request, is perfect when shown, and is
+ * bespoke to the request — never a static template): whether the
+ * in-card result map serves THIS answer. The predicate reads the
+ * answer's shape, in code terms:
+ *   - a verified answer only (the mount's own condition, restated
+ *     so the predicate is whole on its own);
+ *   - NOT a research-first candidate answer (researchNamedPlaces
+ *     is stamped only on that path): a superlative / intersection
+ *     answer is a ranked candidate list — its geography is not the
+ *     information, and a choropleth under it decorates the card
+ *     while sampling a set the question never screened;
+ *   - at least two places: a one-place map is a portrait of a ZIP
+ *     area, not information about an area;
+ *   - a driving metric the shown places carry figures for: no
+ *     metric, no scale, no map.
+ * Screen-composed geographic answers — bounded screens, state and
+ * national sweeps, county answers, named-geography comparisons —
+ * are the class whose spatial distribution IS the content, and
+ * they render exactly as before. The Map view is not gated by
+ * this predicate: a reader who navigates to the map has asked for
+ * geography, which is the relevance signal there (item 18's
+ * session-map contract).
+ */
+export function resultMapRelevant(answer: ComposedAnswer): boolean {
+  if (answer.status !== 'verified') return false
+  if (answer.researchNamedPlaces !== undefined) return false
+  if (answer.places.length < 2) return false
+  return drivingMetricKey(answer) !== null
 }
 
 /**

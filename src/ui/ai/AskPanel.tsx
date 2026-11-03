@@ -96,7 +96,7 @@ export function politicsCoverageNote(queryText: string | undefined): string {
  * to research instead of stranding it in clarification.
  */
 const OUTSIDE_KNOWLEDGE_RE =
-  /\b(schools?|starbucks|coffee shops?|grocer(?:y|ies)|gyms?|nightlife|walkable|walkability|restaurants?|playgrounds?|hospitals?|clinics?|doctors?|airports?|transit|commute|saf\w*|crime|dangerous|families|kids|children|liberals?|conservatives?|republicans?|democrats?|democratic|political|politics|voter|voting|red state|blue state|farmers?\s+markets?|warm|climate|news|current events|headlines?)\b/i
+  /\b(schools?|starbucks|coffee shops?|grocer(?:y|ies)|gyms?|nightlife|walkable|walkability|restaurants?|playgrounds?|hospitals?|clinics?|doctors?|airports?|transit|commute|saf\w*|crime|dangerous|families|kids|children|liberals?|conservatives?|republicans?|democrats?|democratic|political|politics|voter|voting|red state|blue state|farmers?\s+markets?|warm|climate|nature|outdoors?|scenery|scenic|greenery|wilderness|news|current events|headlines?)\b/i
 
 export function needsResearch(queryText: string | undefined): boolean {
   if (!queryText) return false

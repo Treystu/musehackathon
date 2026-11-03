@@ -5,6 +5,7 @@ import type {
   ResearchedClaim,
 } from '../../core/ai/answer'
 import { METRIC_DEFS_BY_KEY } from '../../core/civicscope-registry'
+import { resultMapRelevant } from '../../core/map/result-scale'
 import { formatMetricNumber } from '../metric-format'
 import { ResultMap } from '../map/ResultMap'
 import { FlexibleAnswer } from './FlexibleAnswer'
@@ -471,15 +472,21 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
       {/*
         P6 RESULT MAP MOUNT SEAM (drive item 13): the result map for a
         verified answer, rendered under the card's places inside this
-        same section. This is the whole AnswerCard change — ResultMap
-        owns its loading, geometry, legend and failure line, and
-        renders nothing for a non-verified or placeless answer. No
-        onSelect is passed: the Ask surface's comparison selection is
-        App-owned and AnswerCard has no seam for it today, so a tap on
-        the map shows that place's card figures in the map's own panel
-        (the P6 requirement) rather than selecting for comparison.
+        same section. ResultMap owns its loading, geometry, legend
+        and failure line, and renders nothing for a non-verified or
+        placeless answer. No onSelect is passed: the Ask surface's
+        comparison selection is App-owned and AnswerCard has no seam
+        for it today, so a tap on the map shows that place's card
+        figures in the map's own panel (the P6 requirement) rather
+        than selecting for comparison.
+        CHART RELEVANCE (owner standing rules, 2026-11-03): the mount
+        is gated by resultMapRelevant — the map renders only when the
+        answer's geography is itself the information (a screen over
+        an area). A research-first candidate answer gets no in-card
+        map: its answer is the ranked candidate list above, and the
+        Map view remains where its geography can be opened.
       */}
-      {answer.status === 'verified' && answer.places.length > 0 && <ResultMap answer={answer} />}
+      {answer.status === 'verified' && resultMapRelevant(answer) && <ResultMap answer={answer} />}
     </section>
   )
 }

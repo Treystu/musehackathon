@@ -68,7 +68,7 @@ import {
   metricLabel,
   nationalCircleRadius,
   orderedResultPlaces,
-  overflowPlaceNames,
+  overflowPlaceSummary,
   resultMapMode,
   resultMapPlaces,
   screeningCoverageLine,
@@ -455,7 +455,7 @@ export function ResultMap({
       ? `${missingKeys.length} ${missingKeys.length === 1 ? 'place is' : 'places are'} shown as dots \u2014 the Census Bureau publishes no area boundary for them. Their figures are in the answer above.`
       : null
   const coverageLine = screeningCoverageLine(answer, shown.length)
-  const overflow = overflowPlaceNames(answer)
+  const overflow = overflowPlaceSummary(answer)
 
   const onSvgKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft' && event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
@@ -790,9 +790,13 @@ export function ResultMap({
               {coverageLine}
             </p>
           )}
-          {overflow.length > 0 && (
+          {overflow.names.length > 0 && (
             <p role="note" className="mt-1 text-sm text-slate-500">
-              Also in this answer: {overflow.join(', ')} — shown in the screening table below.
+              Also in this answer: {overflow.names.join(', ')}
+              {overflow.furtherCount > 0
+                ? `, and ${overflow.furtherCount} more ${overflow.furtherCount === 1 ? 'place' : 'places'}`
+                : ''}{' '}
+              — shown in the screening table below.
             </p>
           )}
           {dotLine && (

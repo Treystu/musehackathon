@@ -11,9 +11,12 @@ import {
   nationalCircleRadius,
   orderedResultPlaces,
   overflowPlaceNames,
+  overflowPlaceSummary,
   resultMapMode,
   resultMapPlaces,
+  resultMapRelevant,
   screeningCoverageLine,
+  OVERFLOW_NAME_LIMIT,
 } from './result-scale'
 
 /**
@@ -333,5 +336,53 @@ describe('screening coverage line (P6 step 5)', () => {
     const a = answer({ places: many, screenedCount: 27 })
     expect(overflowPlaceNames(a)).toHaveLength(2)
     expect(screeningCoverageLine(a, 25)).toContain('shows 25')
+  })
+
+  it('names a multi-ZIP place once in the overflow roll', () => {
+    const shown = Array.from({ length: 25 }, (_, i) =>
+      place(String(98101 + i), `Place ${i}, WA`, [['median_gross_rent', 1000 + i]]),
+    )
+    const overflow = [
+      place('81001', 'Pueblo, CO', [['median_gross_rent', 1050]]),
+      place('81003', 'Pueblo, CO', [['median_gross_rent', 1100]]),
+      place('81008', 'Pueblo, CO', [['median_gross_rent', 1200]]),
+      place('80201', 'Denver, CO', [['median_gross_rent', 1800]]),
+    ]
+    const a = answer({ places: [...shown, ...overflow], screenedCount: 29 })
+    expect(overflowPlaceNames(a)).toEqual(['Pueblo, CO', 'Denver, CO'])
+  })
+
+  it('caps the roll at the name limit and counts the rest', () => {
+    const many = Array.from({ length: 25 + OVERFLOW_NAME_LIMIT + 10 }, (_, i) =>
+      place(String(10000 + i), `Place ${i}, WA`, [['median_gross_rent', 1000 + i]]),
+    )
+    const a = answer({ places: many, screenedCount: many.length })
+    const summary = overflowPlaceSummary(a)
+    expect(summary.names).toHaveLength(OVERFLOW_NAME_LIMIT)
+    expect(summary.furtherCount).toBe(10)
+  })
+})
+
+describe('chart relevance (owner rules, 2026-11-03)', () => {
+  it('renders for a screen-composed geographic answer', () => {
+    expect(resultMapRelevant(answer({ places: SEATTLE }))).toBe(true)
+  })
+
+  it('renders for a county answer', () => {
+    const counties = [
+      place('county:CO:Pueblo', 'Pueblo County, CO', [['median_gross_rent', 1050]], ['81001', '81003']),
+      place('county:CO:El Paso', 'El Paso County, CO', [['median_gross_rent', 1350]], ['80901']),
+    ]
+    expect(resultMapRelevant(answer({ places: counties, geographyLevel: 'county' }))).toBe(true)
+  })
+
+  it('does not render for a research-first candidate answer', () => {
+    const a = answer({ places: SEATTLE, researchNamedPlaces: ['Seattle, WA'] })
+    expect(resultMapRelevant(a)).toBe(false)
+  })
+
+  it('does not render for a single place or a non-verified answer', () => {
+    expect(resultMapRelevant(answer({ places: [SEATTLE[0]!] }))).toBe(false)
+    expect(resultMapRelevant(answer({ places: SEATTLE, status: 'empty' }))).toBe(false)
   })
 })

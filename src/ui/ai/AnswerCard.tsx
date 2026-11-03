@@ -170,6 +170,24 @@ export function consideredNotMeetingLine(answer: ComposedAnswer): string | null 
     : `${list} were named in the research but are not ranked here, because the cited sources describe them as not meeting the stated criteria.`
 }
 
+/**
+ * One quiet line for research-first candidates that resolved to
+ * real Census places outside the geography the question asks
+ * about (Lane A10 FM-15): they were named, they exist, and they
+ * are not answers to this question — the line says so plainly
+ * rather than letting the binding's refusal read as if the
+ * research never named them. Distinct from the unmatched line
+ * above: these names DID match Census data, in the wrong place.
+ */
+export function outOfBoundCandidatesLine(answer: ComposedAnswer): string | null {
+  const names = answer.outOfBoundCandidates ?? []
+  if (names.length === 0) return null
+  const list = names.join(', ')
+  return names.length === 1
+    ? `${list} was named in the research but is outside the area this question asks about, so it was not used.`
+    : `${list} were named in the research but are outside the area this question asks about, so they were not used.`
+}
+
 /** One quiet line for a requested geography level the shipped data cannot serve. */
 export function unsupportedGeographyLine(answer: ComposedAnswer): string | null {
   if (!answer.unsupportedGeography) return null
@@ -458,6 +476,7 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
   const capLine = candidateCapLine(answer)
   const shortfallLine = requestedCountLine(answer)
   const unresolvedCandidates = unresolvedCandidatesLine(answer)
+  const outOfBoundLine = outOfBoundCandidatesLine(answer)
   const notMeetingLine = consideredNotMeetingLine(answer)
   const unsupportedLine = unsupportedGeographyLine(answer)
   const countyLine = countyMethodLine(answer)
@@ -592,6 +611,11 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
       {unresolvedCandidates && (
         <p role="note" className="mt-1 text-sm text-slate-500">
           {unresolvedCandidates}
+        </p>
+      )}
+      {outOfBoundLine && (
+        <p role="note" className="mt-1 text-sm text-slate-500">
+          {outOfBoundLine}
         </p>
       )}
       {notMeetingLine && (

@@ -362,6 +362,18 @@ export interface ComposedAnswer {
    * research decorates them; it does not un-elect them).
    */
   consideredNotMeeting?: string[]
+  /**
+   * Research-first candidates that RESOLVED to Census places
+   * outside the geography the question asks about (Lane A10
+   * FM-15): resolution is national, so a Michigan question's
+   * research can name Ford, KS and resolve it exactly — the
+   * binding at materialization refuses it a card and records it
+   * here, so the refusal is disclosed rather than silent. Absent
+   * when no bound applied or every resolved candidate was in-bound.
+   * Distinct from unresolvedCandidates: these names DID match
+   * Census data, in a geography the reader did not ask about.
+   */
+  outOfBoundCandidates?: string[]
   geographyLevel: AnswerGeographyLevel
   /** A requested geography level the shipped data cannot serve ('county'), or null. */
   unsupportedGeography: string | null
@@ -1835,6 +1847,124 @@ export function representativeCandidateRows(
 }
 
 /* ------------------------------------------------------------------ */
+/* Geography binding for research-first candidates (Lane A10 FM-15)    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The bound a question's geographies impose on research-first
+ * candidates, in the two forms a caller can supply it: the ZCTA set
+ * the caller's resolution produced (the same set the Census screen
+ * itself bounds by — screenRows reads it identically), or, when no
+ * set was passed, the state bounds derivable from the intent's own
+ * geography strings (ZIP geographies give a ZCTA bound; state
+ * geographies, every one of them, give a state bound). Anything
+ * else — placeless, or a place/county bound with no resolved set —
+ * derives no bound here and keeps the caller's set as the only
+ * binding, exactly as before this cure.
+ */
+export interface CandidateBound {
+  zctas: ReadonlySet<string> | null
+  states: ReadonlySet<string> | null
+}
+
+function stateAbbrOfGeography(geography: string): string | null {
+  const g = geography.trim()
+  if (/^[A-Za-z]{2}$/.test(g)) {
+    const abbr = g.toUpperCase()
+    return STATE_NAME_BY_CODE[abbr] !== undefined ? abbr : null
+  }
+  const direct = STATE_NAME_TO_ABBR[g]
+  if (direct) return direct
+  const lower = g.toLowerCase()
+  for (const [name, abbr] of Object.entries(STATE_NAME_TO_ABBR)) {
+    if (name.toLowerCase() === lower) return abbr
+  }
+  return null
+}
+
+/** The state suffix of a "Name, ST" place name, or null. */
+function stateSuffixOf(name: string): string | null {
+  const match = /, ([A-Z]{2})$/.exec(name.trim())
+  return match ? match[1]! : null
+}
+
+export function candidateBoundForInput(input: {
+  intent: ValidatedIntent
+  geographyZctas?: ReadonlySet<string>
+}): CandidateBound {
+  if (input.geographyZctas && input.geographyZctas.size > 0) {
+    return { zctas: input.geographyZctas, states: null }
+  }
+  const geographies = input.intent.geographies
+  if (geographies.length > 0 && geographies.every((g) => /^\d{5}$/.test(g.trim()))) {
+    return { zctas: new Set(geographies.map((g) => g.trim())), states: null }
+  }
+  if (geographies.length > 0 && geographies.every((g) => isStateGeography(g))) {
+    const states = new Set<string>()
+    for (const g of geographies) {
+      const abbr = stateAbbrOfGeography(g)
+      if (abbr) states.add(abbr)
+    }
+    if (states.size > 0) return { zctas: null, states }
+  }
+  return { zctas: null, states: null }
+}
+
+/**
+ * Geography binding (Lane A10 FM-15): resolution tests candidate
+ * names against the national place index / the full loaded row
+ * set, so a name the research prose carries for another state
+ * resolves exactly as readily as an in-bound one — and until this
+ * cure nothing downstream checked the bound at all. Measured live
+ * (sheet A, production c7a6630): "Which town in Michigan has the
+ * most fun things to do?" carded Ford, KS 67842 with a rent figure,
+ * a confident figured answer to a different geography than the
+ * reader asked about. The binding runs at the one choke point
+ * every materialization path passes — after resolution, before
+ * representative-row selection — so the bare-name, full-state,
+ * comma-state, and representative-ZIP paths are all bound by the
+ * same test, at the terminal compose and at the interim progress
+ * derivation alike. Under a ZCTA bound a candidate keeps only its
+ * in-bound ZCTAs (a multi-state name contributes its in-bound
+ * instance); under a state bound the candidate's own state — from
+ * its name's suffix, or from a loaded row carrying one of its
+ * ZCTAs — decides. A candidate with nothing in-bound never cards:
+ * it is returned in outOfBound and recorded on the answer, never
+ * silently dropped and never repaired into the bound.
+ */
+export function bindResolvedCandidates(
+  resolved: readonly ResolvedCandidate[],
+  bound: CandidateBound,
+  rows: readonly AreaRow[],
+): { bound: ResolvedCandidate[]; outOfBound: string[] } {
+  if (!bound.zctas && !bound.states) return { bound: [...resolved], outOfBound: [] }
+  const rowStateByZcta = bound.states
+    ? new Map(rows.map((r) => [r.zcta, stateSuffixOf(r.name)] as const))
+    : null
+  const kept: ResolvedCandidate[] = []
+  const outOfBound: string[] = []
+  for (const candidate of resolved) {
+    if (bound.zctas) {
+      const inside = candidate.zctas.filter((z) => bound.zctas!.has(z))
+      if (inside.length === 0) outOfBound.push(candidate.name)
+      else if (inside.length === candidate.zctas.length) kept.push(candidate)
+      else kept.push({ ...candidate, zctas: inside })
+      continue
+    }
+    const nameState = stateSuffixOf(candidate.name)
+    const inBound =
+      (nameState !== null && bound.states!.has(nameState)) ||
+      candidate.zctas.some((z) => {
+        const s = rowStateByZcta!.get(z)
+        return s !== null && s !== undefined && bound.states!.has(s)
+      })
+    if (inBound) kept.push(candidate)
+    else outOfBound.push(candidate.name)
+  }
+  return { bound: kept, outOfBound }
+}
+
+/* ------------------------------------------------------------------ */
 /* Claim-level prose refusal (P3 step 9)                               */
 /* ------------------------------------------------------------------ */
 
@@ -2362,6 +2492,8 @@ export function composeAnswer(input: {
   researchCriteria?: readonly ResearchCriterion[]
   candidateCapApplied?: boolean
   unresolvedCandidates?: readonly string[]
+  /** Resolved candidates refused by the geography binding (FM-15), recorded on the answer. */
+  outOfBoundCandidates?: readonly string[]
   geographyLevel?: AnswerGeographyLevel
   unsupportedGeography?: string | null
   /** Research-first answers pull a headline Census figure even when the question named no measure. */
@@ -2613,6 +2745,9 @@ export function composeAnswer(input: {
     candidateCap: SCREENED_RESEARCH_CANDIDATE_CAP,
     candidateCapApplied: input.candidateCapApplied ?? false,
     unresolvedCandidates: [...(input.unresolvedCandidates ?? [])],
+    ...(input.outOfBoundCandidates && input.outOfBoundCandidates.length > 0
+      ? { outOfBoundCandidates: [...input.outOfBoundCandidates] }
+      : {}),
     geographyLevel: input.geographyLevel ?? geographyLevelOfIntent(intent),
     unsupportedGeography,
     requestedCount: input.requestedCount ?? null,
@@ -2954,6 +3089,13 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     !!input.provider &&
     !!input.researchQuery
 
+  // The geography bound research-first candidates must satisfy
+  // (FM-15): derived once here, applied at both materialization
+  // sites below (the interim progress derivation and the terminal
+  // compose), so a place the research names outside the asked
+  // geography can appear on neither rendering.
+  const candidateBound = candidateBoundForInput(input)
+
   // The research stage's reader-facing subject, from the reader's own
   // words: the first named (non-combined) decomposed criterion's label,
   // else the combined criterion's label, else the first geography.
@@ -3114,8 +3256,14 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
                   input.candidateResolver ??
                   ((names) => resolveCandidatesAgainstRows(names, input.rows))
                 const resolvedNow = await resolver(extractedNow)
+                // The same geography binding as the terminal path
+                // (FM-15): an out-of-bound place is not an interim
+                // place either — the map fills with the terminal
+                // places, arriving early, never with places the
+                // terminal will refuse.
+                const boundNow = bindResolvedCandidates(resolvedNow, candidateBound, input.rows)
                 const candidates = representativeCandidateRows(
-                  resolvedNow,
+                  boundNow.bound,
                   accumulated.claims,
                   input.rows,
                 )
@@ -3188,12 +3336,19 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           !extracted.some((e) => e.toLowerCase() === name.toLowerCase()),
       ),
     ]
+    // Geography binding (FM-15): the resolved set is tested
+    // against the question's bound before any row is selected —
+    // resolution itself is national (the index and the loaded rows
+    // know every state), so this is the first point where the
+    // asked geography speaks. Out-of-bound candidates are recorded
+    // on the answer, never carded.
+    const binding = bindResolvedCandidates(resolved, candidateBound, input.rows)
     // One representative row per resolved candidate, in research
     // order (representativeCandidateRows — the battery B3 rule:
     // places count by place, not by ZIP). The claim that names the
     // place still attributes to the representative by name mention
     // in compose, so no researched claim is lost with a split ZIP.
-    const candidateRows = representativeCandidateRows(resolved, research.claims, input.rows)
+    const candidateRows = representativeCandidateRows(binding.bound, research.claims, input.rows)
     // A top-N ask bounds the composed places at the asked count
     // (never above the candidate cap): "top five" answered with ten
     // places has not answered the question that was asked. The
@@ -3253,6 +3408,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       researchCriteria,
       candidateCapApplied,
       unresolvedCandidates,
+      outOfBoundCandidates: binding.outOfBound,
       geographyLevel,
       unsupportedGeography,
       pullMode: true,

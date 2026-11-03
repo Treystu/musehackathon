@@ -1,10 +1,19 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { ComposedAnswer } from '../../src/core/ai/answer'
+import {
+  runAnswerPipeline,
+  type ComposedAnswer,
+} from '../../src/core/ai/answer'
 import {
   runSummaryText,
   terminalEntryCount,
   type RunProgressSnapshot,
 } from '../../src/core/ai/run-progress'
+import { decodePlaces, PlaceIndex } from '../../src/core/zcta-place-index'
+import { resolveCandidatesWithIndex } from '../../src/ui/ai/answer-runner'
+import { createStubProvider, type ValidatedIntent } from '../../src/core/ai/provider'
+import type { AreaRow } from '../../src/core/plugins/acs'
 
 /**
  * Lane A11 generality pins (phase 4). Fixtures are the live
@@ -120,5 +129,137 @@ describe('FM-22 terminal entry count', () => {
       places: [place('A')],
     } as unknown as ComposedAnswer
     expect(terminalEntryCount(answer)).toBe(1)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* FM-23 — Jacksonville, OR and Livingston, MT are absent from the     */
+/* shipped place index's name universe (data-layer absence, proven     */
+/* against the real payload; the pipeline's unmatched record is the    */
+/* honest terminal, never a guess at a neighboring place)              */
+/* ------------------------------------------------------------------ */
+
+const PAYLOAD = join(__dirname, '..', '..', 'public', 'map', 'zcta-places.json')
+const placeIndex = new PlaceIndex(
+  ...(() => {
+    const { byZip, places } = decodePlaces(JSON.parse(readFileSync(PAYLOAD, 'utf8')))
+    return [byZip, places] as const
+  })(),
+)
+
+describe('FM-23 the shipped place index (real payload)', () => {
+  it("Jacksonville OR's own ZIP is carried under another place's name", () => {
+    // 97530 is Jacksonville's ZIP; the Census largest-overlap rule
+    // the index is built on assigns the ZCTA to Ruch CDP.
+    expect(placeIndex.lookup('97530')).toMatchObject({
+      censusName: 'Ruch CDP',
+      displayName: 'Ruch',
+      state: 'OR',
+    })
+    expect(placeIndex.label('97530')).toBe('Ruch, OR')
+  })
+
+  it("Livingston MT's own ZIP is carried under another place's name", () => {
+    expect(placeIndex.lookup('59047')).toMatchObject({
+      censusName: 'Pray CDP',
+      displayName: 'Pray',
+      state: 'MT',
+    })
+    expect(placeIndex.label('59047')).toBe('Pray, MT')
+  })
+
+  it('no place named Jacksonville exists in Oregon, and none named Livingston in Montana', () => {
+    expect(placeIndex.places.some((p) => p.displayName === 'Jacksonville' && p.state === 'OR')).toBe(false)
+    expect(placeIndex.places.some((p) => p.displayName === 'Livingston' && p.state === 'MT')).toBe(false)
+    expect(placeIndex.search('Jacksonville, OR')).toEqual([])
+    expect(placeIndex.search('Livingston, MT')).toEqual([])
+  })
+
+  it('the production resolver returns nothing for either name — and resolves the same town where the data carries it', () => {
+    expect(resolveCandidatesWithIndex(['Jacksonville, OR'], placeIndex)).toEqual([])
+    expect(resolveCandidatesWithIndex(['Livingston, MT'], placeIndex)).toEqual([])
+    const fl = resolveCandidatesWithIndex(['Jacksonville, FL'], placeIndex)
+    expect(fl).toHaveLength(1)
+    expect(fl[0]!.zctas).toContain('32208')
+    expect(placeIndex.label('32208')).toBe('Jacksonville, FL')
+  })
+})
+
+function fm23Intent(partial: Partial<ValidatedIntent>): ValidatedIntent {
+  return { mode: 'sweep_filter', geographies: [], metricKeys: [], filters: [], clarificationNeeded: false, ...partial }
+}
+
+function fm23Row(zcta: string, name: string, rent: number): AreaRow {
+  return { zcta, name, metrics: { median_gross_rent: rent }, moes: { median_gross_rent: 60 } }
+}
+
+async function fm23Run(input: {
+  q: string
+  geographies: string[]
+  rows: AreaRow[]
+  prose: string
+}): Promise<ComposedAnswer> {
+  const provider = createStubProvider({
+    async research() {
+      return { prose: input.prose, sources: [{ title: 'Findings source', url: 'https://example.com/f' }] }
+    },
+  })
+  return runAnswerPipeline({
+    intent: fm23Intent({ geographies: input.geographies }),
+    rows: input.rows,
+    researchQuery: input.q,
+    researchCriteria: [input.q],
+    queryText: input.q,
+    provider,
+    candidateResolver: (names) => resolveCandidatesWithIndex(names, placeIndex),
+  })
+}
+
+describe('FM-23 pipeline specimens (production resolver, real index)', () => {
+  it('Oregon charming: Jacksonville, OR is recorded unmatched and no place is dressed in its name', async () => {
+    const answer = await fm23Run({
+      q: 'Where in Oregon is the most charming small town?',
+      geographies: ['Oregon'],
+      rows: [
+        fm23Row('97103', 'Astoria, OR', 1150),
+        fm23Row('97365', 'Newport, OR', 1200),
+        fm23Row('97110', 'Cannon Beach, OR', 1600),
+        // The ZCTA the town's ZIP belongs to, under the name the
+        // shipped data actually carries for it.
+        fm23Row('97530', 'Ruch, OR', 900),
+      ],
+      prose:
+        'Jacksonville, OR is often called the most charming small town in the state, a storybook main street of brick storefronts and historic homes. ' +
+        'Its festivals and inns draw weekend visitors year-round.',
+    })
+    expect(answer.places).toEqual([])
+    expect(answer.unresolvedCandidates).toContain('Jacksonville, OR')
+    expect(answer.places.some((p) => p.name === 'Jacksonville, OR')).toBe(false)
+  })
+
+  it('Montana hiking: bare Livingston is recorded, never resolved; the named towns card', async () => {
+    const answer = await fm23Run({
+      q: 'What town in Montana has the best access to hiking and wilderness?',
+      geographies: ['Montana'],
+      rows: [
+        fm23Row('59068', 'Red Lodge, MT', 795),
+        fm23Row('59758', 'West Yellowstone, MT', 1050),
+        fm23Row('59911', 'Bigfork, MT', 1158),
+        fm23Row('59047', 'Pray, MT', 700),
+        // Same-named rows elsewhere in the loaded set: the bare
+        // mention is ambiguous nationally, which is why the live
+        // run recorded it rather than resolving it.
+        fm23Row('77351', 'Livingston, TX', 950),
+        fm23Row('70754', 'Livingston, LA', 900),
+      ],
+      prose:
+        'Red Lodge, MT sits at the foot of the Beartooth Highway with trailheads in every direction. ' +
+        'West Yellowstone, MT borders the park entrance and its trail network. ' +
+        'Bigfork, MT rests on Flathead Lake beneath Swan Range trails. ' +
+        'Livingston is the classic rail town gateway to the Paradise Valley trailheads.',
+    })
+    expect(answer.places.map((p) => p.name)).toEqual(['Red Lodge, MT', 'West Yellowstone, MT', 'Bigfork, MT'])
+    expect(answer.unresolvedCandidates).toContain('Livingston')
+    expect(answer.places.some((p) => p.zcta === '59047')).toBe(false)
   })
 })

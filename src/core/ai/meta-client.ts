@@ -93,8 +93,21 @@ export const MAX_INTENT_QUERY_CHARS = 500
  * research-first questions, which send fewer names, worked. Probes
  * against the live route that night: 10 places -> 400 in ~1s;
  * 8 places -> 200; no places -> 200.
+ *
+ * Raised 10 -> 50 (2026-11-03, the breadth-map build, Jev-gated
+ * proceed / destructive 0.08 / advances 0.95): the ceiling is a
+ * shape bound, not a target — every shipped caller still sends at
+ * most the candidate cap (10) names, so no existing request's
+ * payload changes. The raise exists for ONE new caller: breadth
+ * mode's assessment rosters (BREADTH_BATCH_SIZE in answer.ts),
+ * which carry a bounded geography's places to the research stage
+ * in batches; at a 10-name ceiling the largest state's display set
+ * (Texas: 1,282 distinct places in the shipped index) would need
+ * 129 sequential passes. The batch size stays pinned at or under
+ * this ceiling by the research-places-shape tests, so the two
+ * cannot drift into the 2026-11-02 refusal class again.
  */
-export const RESEARCH_PLACES_LIMIT = 10
+export const RESEARCH_PLACES_LIMIT = 50
 
 /** Errors after which the BYO path is the honest next attempt. */
 const BYO_FALLBACK_ERRORS: ReadonlySet<ProxyError> = new Set([

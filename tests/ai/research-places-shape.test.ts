@@ -119,17 +119,22 @@ describe('the shared places limit', () => {
       allowedModels: ['spark-test'],
       waitOut: { breakerWaitMs: 0, pollMs: 1, retryDelaysMs: [1, 1] as number[] },
     }
-    const ten = NASHVILLE_ROWS.map((r) => r.name)
+    // Adapted 2026-11-03 (breadth-map build): the limit rose
+    // 10 -> 50 for breadth rosters, so the at-limit request is
+    // built to the constant rather than to the Nashville ten —
+    // the invariant is unchanged (at the limit passes, one over
+    // refuses), only the fixture size follows the constant.
+    const full = Array.from({ length: RESEARCH_PLACES_LIMIT }, (_, i) => `Place ${i + 1}, TN`)
     const ok = await handleResearch(
-      { method: 'POST', path: '/api/muse/research', body: { queryText: NASHVILLE_QUESTION, places: ten }, clientId: 'c1' },
+      { method: 'POST', path: '/api/muse/research', body: { queryText: NASHVILLE_QUESTION, places: full }, clientId: 'c1' },
       deps,
     )
     expect(ok.status).toBe(200)
     expect(seen[0]).toHaveLength(RESEARCH_PLACES_LIMIT)
 
-    const eleven = [...ten, 'Extra, TN']
+    const over = [...full, 'Extra, TN']
     const refused = await handleResearch(
-      { method: 'POST', path: '/api/muse/research', body: { queryText: NASHVILLE_QUESTION, places: eleven }, clientId: 'c1' },
+      { method: 'POST', path: '/api/muse/research', body: { queryText: NASHVILLE_QUESTION, places: over }, clientId: 'c1' },
       deps,
     )
     expect(refused.status).toBe(400)
@@ -150,14 +155,21 @@ describe('the shared places limit', () => {
       )
     }) as unknown as typeof fetch
     const provider = createLiveProvider({ fetchImpl })
-    const twelve = [...NASHVILLE_ROWS.map((r) => r.name), 'Extra, TN', 'Other, TN']
+    // Adapted 2026-11-03 (breadth-map build): the over-limit
+    // roster is built to the constant (limit + 2) — at the old
+    // limit of 10 the Nashville twelve sufficed; the slicing
+    // invariant is unchanged.
+    const overLimit = Array.from(
+      { length: RESEARCH_PLACES_LIMIT + 2 },
+      (_, i) => `Place ${i + 1}, TN`,
+    )
     const result = await provider.research(
-      { queryText: NASHVILLE_QUESTION, places: twelve },
+      { queryText: NASHVILLE_QUESTION, places: overLimit },
       new AbortController().signal,
     )
     expect(result.sources).toHaveLength(1)
     expect(bodies).toHaveLength(1)
-    expect((bodies[0] as { places: string[] }).places).toEqual(twelve.slice(0, RESEARCH_PLACES_LIMIT))
+    expect((bodies[0] as { places: string[] }).places).toEqual(overLimit.slice(0, RESEARCH_PLACES_LIMIT))
   })
 })
 

@@ -1,3 +1,4 @@
+import { useState, type ReactNode } from 'react'
 import type { ComposedAnswer } from '../../core/ai/answer'
 import { sessionMapModel } from '../../core/map/session-map'
 import { ResultMap } from './ResultMap'
@@ -17,14 +18,26 @@ import { ResultMap } from './ResultMap'
  * both read from the session model (core/map/session-map.ts), which
  * is a pure function of the current answer, so a new answer replaces
  * this content outright.
+ *
+ * Item 18 S2 (surface-structure evaluation, 2026-11-02): the national
+ * hex overview is demoted to a one-click link from this empty state.
+ * The caller passes the overview surface in as `overview`; it is not
+ * rendered — not even mounted — until the reader clicks "See the
+ * whole country", and it never appears beside a session result, so
+ * the tab's standing content stays the session's own map alone. The
+ * overview itself is not deleted: one click still reaches the spatial
+ * breadth picture, which is the value the evaluation measured for it.
  */
 export function SessionMapView({
   answer,
   questionText,
+  overview,
 }: {
   answer: ComposedAnswer | null
   questionText: string | null
+  overview?: ReactNode
 }) {
+  const [overviewShown, setOverviewShown] = useState(false)
   const model = sessionMapModel(answer)
   if (model.kind === 'empty' || !answer) {
     return (
@@ -34,6 +47,18 @@ export function SessionMapView({
           Ask a question and its map appears here. When an answer names places, this tab
           draws them on a map, colored by the figure the answer turns on.
         </p>
+        {overview && !overviewShown && (
+          <p className="mt-3">
+            <button
+              type="button"
+              onClick={() => setOverviewShown(true)}
+              className="text-sm font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+            >
+              See the whole country
+            </button>
+          </p>
+        )}
+        {overview && overviewShown && overview}
       </section>
     )
   }

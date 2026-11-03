@@ -126,7 +126,8 @@ describe('e2e: result map under a verified answer', () => {
       await page.goto(BASE, { waitUntil: 'domcontentloaded' })
 
       await page.getByLabel('Ask in plain language').fill('What is the rent in 98101, 98103 and 98115?')
-      await page.getByRole('button', { name: 'Ask', exact: true }).click()
+      // Scoped to main (item 18 S1): the header pill is also named "Ask".
+      await page.locator('main').getByRole('button', { name: 'Ask', exact: true }).click()
 
       const answerSection = page.locator('section[aria-label="Answer"]')
       await answerSection.locator('svg [data-result-place]').first().waitFor({ timeout: 120000 })
@@ -176,7 +177,8 @@ describe('e2e: result map under a verified answer', () => {
       await page.goto(BASE, { waitUntil: 'domcontentloaded' })
 
       await page.getByLabel('Ask in plain language').fill('What is the rent in 98101, 98103 and 98115?')
-      await page.getByRole('button', { name: 'Ask', exact: true }).click()
+      // Scoped to main (item 18 S1): the header pill is also named "Ask".
+      await page.locator('main').getByRole('button', { name: 'Ask', exact: true }).click()
 
       const answerSection = page.locator('section[aria-label="Answer"]')
       await page

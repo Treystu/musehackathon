@@ -62,9 +62,14 @@ afterAll(async () => {
  * indicator, margins) timed out waiting for it. The explore view holds
  * two modes; the data mode is the one this file's assertions describe,
  * so the helper now switches to it whenever the lookup is absent.
+ *
+ * Item 18 S1 (2026-11-02): the header pill for this view is labelled
+ * "Ask" — Ask is the front door and Explore-the-data lives only at
+ * the underline level — so the helper selects the pill inside the
+ * Primary nav (the Ask panel's submit shares the "Ask" name).
  */
 async function gotoExplore() {
-  const explore = page.locator('button:has-text("Explore")')
+  const explore = page.locator('nav[aria-label="Primary"] button:has-text("Ask")')
   if ((await explore.count()) > 0 && (await explore.first().getAttribute('aria-current')) !== 'page') {
     await explore.first().click()
   }

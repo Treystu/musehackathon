@@ -353,6 +353,29 @@ describe('Map = session results (item 17c)', () => {
     expect(text).not.toContain('Median gross rent')
   })
 
+  it('the empty state demotes the national overview to a one-click link (item 18 S2)', () => {
+    // The overview is passed in but not rendered: it appears only
+    // after the "See the whole country" click, and the link gives
+    // way to it — demoted, not standing tab content, not deleted.
+    render(
+      <SessionMapView
+        answer={null}
+        questionText={null}
+        overview={<p>national hex overview</p>}
+      />,
+    )
+    expect(container.textContent).toContain('Ask a question and its map appears here')
+    expect(container.textContent).toContain('See the whole country')
+    expect(container.textContent).not.toContain('national hex overview')
+    const link = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'See the whole country',
+    )
+    if (!link) throw new Error('overview link not found')
+    act(() => link.click())
+    expect(container.textContent).toContain('national hex overview')
+    expect(container.textContent).not.toContain('See the whole country')
+  })
+
   it('an answer that verified no places keeps the empty state', async () => {
     const withheld = await runAnswerPipeline({
       intent: { ...sweepIntent, filters: [{ metricKey: 'median_gross_rent', op: 'lt', value: 100 }] },

@@ -383,9 +383,13 @@ describe('e2e: deterministic screening and explain surfaces', () => {
       const detail = sortPage.locator('main article').filter({ hasText: '10002' }).first()
       await detail.getByRole('button', { name: "Explain this area's figures" }).waitFor()
 
-      await sortPage.getByRole('button', { name: 'Explore', exact: true }).click()
+      // Item 18 S1 (2026-11-02): the header pill for the Ask view is
+      // labelled "Ask"; both it and the panel submit are scoped —
+      // nav for the pill, main for the submit — because they now
+      // share the name.
+      await sortPage.locator('nav[aria-label="Primary"]').getByRole('button', { name: 'Ask', exact: true }).click()
       await sortPage.getByRole('textbox', { name: 'Ask in plain language' }).fill('rent in 10002')
-      await sortPage.getByRole('button', { name: 'Ask', exact: true }).click()
+      await sortPage.locator('main').getByRole('button', { name: 'Ask', exact: true }).click()
       // Plain-language labels (owner finding F-B, 2026-11-02): the
       // chip shows the mode's plain name and the measure's label,
       // never the raw mode string or measure key.

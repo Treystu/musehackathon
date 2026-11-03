@@ -25,6 +25,7 @@ import { Comparison } from './Comparison'
 import { FundingSection } from './Funding'
 import { StateFilter } from './StateFilter'
 import { SessionMapView } from './map/SessionMapView'
+import { MapView } from './MapView'
 import { sortSweepRows } from '../core/sweep-sorting'
 import { scopePrefixesForStates, STATE_NAME_BY_CODE } from '../core/sweep/states'
 import { AskPanel, needsResearch } from './ai/AskPanel'
@@ -1261,10 +1262,14 @@ export default function App() {
   /**
    * The lookup form and the Census key prompt.
    *
-   * Shared by Explore and Map rather than duplicated, because a visitor who
-   * opens the map and then wants to compare a specific ZIP has to be able to
-   * search from there. Two copies of a search box that subtly drift apart is a
-   * worse bug than one shared component.
+   * It was shared by Explore and Map rather than duplicated, because a
+   * visitor who opened the map and then wanted to compare a specific
+   * ZIP had to be able to search from there. Item 18 S2 (2026-11-02)
+   * retired that sharing on purpose: the panel now stands only in
+   * Explore-the-data, and the Map tab is the session-results view
+   * alone — a second search box on the Map tab was a measured
+   * duplicate of this one, and lookup from the map goes through the
+   * frame like every other manual task. One component, one mount.
    */
   const searchPanel = (
     <>
@@ -1374,9 +1379,20 @@ export default function App() {
    * strapline is de-emphasised, because the product name is the only thing on
    * the line that is not descriptive.
    *
-   * The nav contract is unchanged deliberately: the buttons keep their labels,
-   * their `aria-current`, and their order, because the accessibility suite and
-   * the gate both select on them.
+   * The nav contract was unchanged deliberately for a long time: the
+   * buttons kept their labels, their `aria-current`, and their order,
+   * because the accessibility suite and the gate both select on them.
+   * Item 18 (surface-structure evaluation, 2026-11-02, S1/S3) changes
+   * exactly one label on purpose: the first pill reads "Ask" — the Ask
+   * frame is the product front door and comes first in the order —
+   * and "Explore" no longer stands in the header as a co-equal
+   * product; Explore-the-data keeps only its secondary underline
+   * billing inside the Ask view, internally unchanged. The view id
+   * behind the pill is still 'explore' and no routing or state
+   * changed. The header "Ask" and the Ask panel's "Ask" submit share
+   * a name deliberately and are told apart by landmark (the Primary
+   * nav vs main), so e2e selectors for the submit are scoped to main
+   * from this change on.
    */
   return (
     <div className="min-h-screen">
@@ -1427,7 +1443,7 @@ export default function App() {
             <ul className="flex items-center gap-1 rounded-lg bg-slate-100 p-1 text-sm">
               {(
                 [
-      ['explore', 'Explore'],
+      ['explore', 'Ask'],
       ['map', 'Map'],
       ['methodology', 'Methodology'],
                 ] as const
@@ -1457,29 +1473,65 @@ export default function App() {
           <Methodology censusFetcher={CENSUS_PROBE_FETCHER} />
         ) : view === 'map' ? (
           <>
-            {searchPanel}
-
             {/*
-              The Map tab is the session's results map (drive item
-              17 part c): the last answer's places and driving
-              metric, drawn by the item-13 ResultMap machinery at
-              full view width — not the detached country-wide sweep
-              surface that used to stand here, which showed a dataset
-              unrelated to the question the reader had just asked.
-              Before any answer (and for an answer that named no
-              places) SessionMapView renders the inviting empty
-              state; a new answer replaces the content, because the
-              view is a pure function of the session's current
-              answer. The manual comparison for places the reader
-              selected by hand stays below, unchanged.
-            */}
-            <SessionMapView answer={answer} questionText={answerRequest?.queryText ?? null} />
+              The Map tab is the session's results map only (drive
+              item 17 part c, completed by item 18 S2): the last
+              answer's places and driving metric, drawn by the
+              item-13 ResultMap machinery at full view width. Before
+              any answer (and for an answer that named no places)
+              SessionMapView renders the inviting empty state; a new
+              answer replaces the content, because the view is a pure
+              function of the session's current answer.
 
-            <Comparison
-              drilldowns={q.drilldowns}
-              onDeselect={q.deselect}
-              placeLabel={placeLabel}
-              explainProvider={HOUSE_PROVIDER}
+              Item 18 S2 took two duplicate mounts off this tab: the
+              search panel (the same panel stands in Explore-the-data,
+              where lookup belongs) and this tab's own Comparison
+              mount (Comparison lives in the Ask frame; the component
+              and its Explore mounts are untouched). The national hex
+              overview is demoted, not deleted: it is passed in as the
+              empty state's one-click "See the whole country" reveal
+              — never standing tab content — with the same props and
+              selection behaviour it carried on this tab before item
+              17 (measured there: clicking a hexagon opened its areas
+              in the comparison set, capped at six).
+            */}
+            <SessionMapView
+              answer={answer}
+              questionText={answerRequest?.queryText ?? null}
+              overview={
+                q.sweepStatus === 'needs-key' ? (
+                  <p className="mt-6 text-sm text-slate-700">
+                    Add a free Census key on the Explore-the-data surface to load every ZIP code, then the map
+                    draws them.
+                  </p>
+                ) : q.sweep.length === 0 ? (
+                  <p className="mt-6 text-sm text-slate-700" role="status" aria-live="polite">
+                    Loading the country-wide figures the map draws from…
+                  </p>
+                ) : (
+                  <>
+                    <MapView
+                      rows={q.sweep}
+                      loading={(q.sweepProgress?.done ?? 0) < (q.sweepProgress?.total ?? 0)}
+                      selectedZctas={q.selectedZctas}
+                      explainProvider={HOUSE_PROVIDER}
+                      onSelect={(zctas) => {
+                        for (const zcta of zctas.slice(0, 6)) {
+                          const row = q.sweep.find((r) => r.zcta === zcta)
+                          if (row) void q.selectPlace({ name: row.name, zip: zcta })
+                        }
+                      }}
+                    />
+
+                    {q.sweepFromCache && (
+                      <p className="mt-2 text-xs text-slate-500">
+                        Loaded from this browser&rsquo;s local cache. Figures come from the American Community
+                        Survey {VINTAGE_LABEL} and update annually; use Refresh in the cache panel to re-fetch.
+                      </p>
+                    )}
+                  </>
+                )
+              }
             />
 
             {q.selected.length > 0 && <FundingSection />}

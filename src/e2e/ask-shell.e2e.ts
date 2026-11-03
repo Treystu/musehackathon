@@ -59,7 +59,8 @@ it('mounts the text-only Ask surface', async () => {
 
 it('parses a real query through the live client and shows the validated intent', async () => {
   await page.getByLabel('Ask in plain language').fill('What is the rent in Pahoa?')
-  await page.getByRole('button', { name: 'Ask', exact: true }).click()
+  // Scoped to main (item 18 S1): the header pill is also named "Ask".
+  await page.locator('main').getByRole('button', { name: 'Ask', exact: true }).click()
 
   // Plain-language labels (owner finding F-B, 2026-11-02), as in
   // app.e2e.ts: plain mode name and measure label, never raw keys.

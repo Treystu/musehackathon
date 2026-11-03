@@ -81,9 +81,19 @@ export function GuidedTour({ open, onDismiss }: { open: boolean; onDismiss: () =
 
   const steps: Step[] = [
     {
-      heading: 'Every ZIP code in the country, from federal data',
+      // Item 18 S1/S3 (2026-11-02): the tour names the frame first.
+      // Ask is the product front door; the data table (Explore the
+      // data) and the Map tab support it and are not presented here
+      // as co-equal products.
+      heading: 'Ask first — every ZIP code in the country, from federal data',
       body: (
         <>
+          <p>
+            Ask is the front door: put a question in plain language and the answer comes back with its map
+            and its figures together. The Map tab shows the places from your own answers, and the full
+            country-wide table stays one click away under Explore the data — both support Ask; neither
+            replaces it.
+          </p>
           <p>
             For the data itself there is no server copy: this site holds no copy of the data, and no search is
             recorded. Your browser fetches every figure directly from its publisher, so any number on screen

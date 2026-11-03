@@ -5,6 +5,15 @@
  * rendered something, that the shapes are in the right places, and that a
  * visitor can read a figure off it. A blank or misprojected map would pass
  * every test in map-data.test.ts.
+ *
+ * Item 18 S2 (2026-11-02): the canvas under test is the national hex
+ * overview (MapView), which the Map tab no longer stands as content —
+ * the tab is the session-results view, and the overview is reached
+ * through its empty state's "See the whole country" link. These flows
+ * open it through that link, exactly as a reader does; the
+ * pointer-cancellation flow's comparison assertions moved to the Ask
+ * view, because the Map tab's own Comparison mount came off with the
+ * same change (Comparison lives in the frame).
  */
 import { chromium, type Browser, type Page } from 'playwright'
 import { readFileSync } from 'node:fs'
@@ -78,6 +87,9 @@ describe.skipIf(!KEY)('the map view', () => {
     await page.reload({ waitUntil: 'domcontentloaded' })
     await waitForRows()
     await page.click('nav[aria-label="Primary"] button:has-text("Map")')
+    // The Map tab opens on the session empty state; the overview is
+    // its one-click reveal (item 18 S2).
+    await page.getByRole('button', { name: 'See the whole country' }).click()
     await page.waitForSelector('canvas', { timeout: 60000 })
     // The centroid fetch and the first paint are not instantaneous.
     await page.waitForTimeout(4000)
@@ -215,6 +227,9 @@ describe('e2e: map pointer cancellation', () => {
         timeout: 60000,
       })
       await mapPage.getByRole('button', { name: 'Map', exact: true }).click()
+      // Item 18 S2: the overview is behind the session empty state's
+      // one-click link, not standing on the tab.
+      await mapPage.getByRole('button', { name: 'See the whole country' }).click()
 
       const canvas = mapPage.locator('canvas')
       await canvas.waitFor({ state: 'visible', timeout: 60000 })
@@ -235,12 +250,24 @@ describe('e2e: map pointer cancellation', () => {
       await tooltip.waitFor({ state: 'visible', timeout: 5000 })
       expect(await tooltip.innerText()).toContain(hoverLabel)
       await mapPage.mouse.click(initialX, initialY)
-      await mapPage.locator('#comparison-heading').waitFor({ state: 'visible', timeout: 5000 })
+      // Selection evidence on this surface is the overview's own
+      // Explain action; the comparison itself lives in the Ask frame
+      // since item 18 S2 took the Map tab's Comparison mount off.
       await mapPage.getByRole('button', { name: 'Explain the selected map figures' }).waitFor({ timeout: 5000 })
+      // Clear the selection in the Ask view, where Comparison lives.
+      // (On the Map tab the header "Ask" pill is the only button of
+      // that name — the panel submit is not mounted here.)
+      await mapPage.getByRole('button', { name: 'Ask', exact: true }).click()
+      await mapPage.locator('#comparison-heading').waitFor({ state: 'visible', timeout: 5000 })
       for (let index = 0; index < initialCell.zctas.length; index += 1) {
         await mapPage.getByRole('button', { name: 'Remove', exact: true }).first().click()
       }
       await mapPage.locator('#comparison-heading').waitFor({ state: 'hidden', timeout: 5000 })
+      // Back to the overview for the cancelled-drag half: the tab
+      // remounts on its empty state, so the link is clicked again.
+      await mapPage.getByRole('button', { name: 'Map', exact: true }).click()
+      await mapPage.getByRole('button', { name: 'See the whole country' }).click()
+      await canvas.waitFor({ state: 'visible', timeout: 60000 })
 
       await canvas.scrollIntoViewIfNeeded()
       const box = await canvas.boundingBox()
@@ -299,6 +326,9 @@ describe('e2e: map pointer cancellation', () => {
       await tooltip.waitFor({ state: 'visible', timeout: 5000 })
       expect(await tooltip.innerText()).toMatch(/\d+ ZIP codes/)
       await mapPage.mouse.click(targetX + panX, targetY + panY)
+      // The comparison the click filled is read in the Ask view,
+      // where Comparison lives (item 18 S2).
+      await mapPage.getByRole('button', { name: 'Ask', exact: true }).click()
       await mapPage.locator('#comparison-heading').waitFor({ state: 'visible', timeout: 5000 })
       expect(await mapPage.locator('#comparison-heading').innerText()).toMatch(/^Comparing [1-6] areas?$/)
     } finally {

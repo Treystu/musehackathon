@@ -50,7 +50,8 @@ afterAll(async () => {
 
 it('shows ack + thinking indicator during a deferred run, gone at the terminal state', async () => {
   await page.getByRole('textbox', { name: 'Ask in plain language' }).fill('What is the rent like?')
-  await page.getByRole('button', { name: 'Ask', exact: true }).click()
+  // Scoped to main (item 18 S1): the header pill is also named "Ask".
+  await page.locator('main').getByRole('button', { name: 'Ask', exact: true }).click()
   // Working state: one ack line from the annex set + the indicator.
   await page.getByText(/Sure thing|On it|Let me look into that/).first().waitFor({ timeout: 10000 })
   expect(await page.getByText('Working on it').count()).toBeGreaterThan(0)

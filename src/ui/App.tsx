@@ -1718,7 +1718,10 @@ export default function App() {
                   selected={q.stateScope}
                   onToggle={q.toggleState}
                   onClear={() => q.setStateScope([])}
-                  onApply={() => void q.applyScope(q.stateScope)}
+                  // Apply on tick (item-16 cure C5): the filter
+                  // coalesces a burst of ticks into one call here
+                  // carrying the change-set's final scope.
+                  onApplyScope={(next) => void q.applyScope(next)}
                   totalChunks={q.totalChunks}
                   scopeChunks={q.scopeChunks}
                   // The real load state, not a constant: with busy

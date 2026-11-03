@@ -1,5 +1,5 @@
-import { useId, useState } from 'react'
-import type { StateOption } from '../core/sweep/states'
+import { useEffect, useId, useRef, useState } from 'react'
+import { toggleStateOption, type StateOption } from '../core/sweep/states'
 
 /**
  * State pre-filter for the country-wide screen.
@@ -15,7 +15,7 @@ export function StateFilter({
   selected,
   onToggle,
   onClear,
-  onApply,
+  onApplyScope,
   totalChunks,
   scopeChunks,
   busy,
@@ -26,13 +26,66 @@ export function StateFilter({
   selected: string[]
   onToggle: (option: StateOption) => void
   onClear: () => void
-  onApply: () => void
+  /**
+   * Applies a scope (the prefix list) as the live selection — called
+   * once per coalesced change-set, never per tick (see handleToggle).
+   */
+  onApplyScope: (next: string[]) => void
   totalChunks: number
   scopeChunks: number
   busy: boolean
 }) {
   const [open, setOpen] = useState(false)
   const listId = useId()
+  const applyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The selection the pending coalesced apply will carry. Ticks
+  // inside the window accumulate from this, not from the `selected`
+  // prop, so two ticks landing before a re-render cannot lose the
+  // first one.
+  const pendingSelection = useRef<string[] | null>(null)
+
+  useEffect(
+    () => () => {
+      if (applyTimer.current) clearTimeout(applyTimer.current)
+    },
+    [],
+  )
+
+  /**
+   * Apply on tick (item-16 cure C5): the tick IS the decision, the
+   * same live model the figure bounds beside this panel already use.
+   * The old tick-then-Apply split one decision into two acts and
+   * left ticks visibly doing nothing until the confirm click.
+   *
+   * Coalescing is the risk control the audit named: applyScope
+   * restarts the country sweep load, so a reader ticking five
+   * states in a row must not start five loads. Ticks inside the
+   * window collapse into one applyScope call carrying the final
+   * selection; loadSweep aborts the superseded load, so even a
+   * late second call cannot stack work.
+   */
+  function handleToggle(option: StateOption) {
+    onToggle(option)
+    const next = toggleStateOption(pendingSelection.current ?? selected, option)
+    pendingSelection.current = next
+    if (applyTimer.current) clearTimeout(applyTimer.current)
+    applyTimer.current = setTimeout(() => {
+      applyTimer.current = null
+      const finalSelection = pendingSelection.current ?? next
+      pendingSelection.current = null
+      onApplyScope(finalSelection)
+    }, 400)
+  }
+
+  function handleClear() {
+    if (applyTimer.current) {
+      clearTimeout(applyTimer.current)
+      applyTimer.current = null
+    }
+    pendingSelection.current = null
+    onClear()
+    onApplyScope([])
+  }
   const selectedOptions = options.filter((o) => o.prefixes.every((p) => selected.includes(p)))
   const selectedText =
     selectedOptions.length > 0 && selectedOptions.flatMap((o) => o.prefixes).length === selected.length
@@ -82,7 +135,7 @@ export function StateFilter({
                 <input
                   type="checkbox"
                   checked={o.prefixes.every((p) => selected.includes(p))}
-                  onChange={() => onToggle(o)}
+                  onChange={() => handleToggle(o)}
                   className="sr-only"
                 />
                 {o.label}
@@ -93,15 +146,7 @@ export function StateFilter({
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={onApply}
-              disabled={busy}
-              className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
-            >
-              {busy ? 'Loading…' : selected.length ? 'Load selected states' : 'Load all 50 states + DC'}
-            </button>
-            <button
-              type="button"
-              onClick={onClear}
+              onClick={handleClear}
               disabled={busy || selected.length === 0}
               className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
             >

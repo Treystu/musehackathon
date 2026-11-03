@@ -27,8 +27,13 @@
  *     (90-day TTL: boundaries change at most annually; the ZCTA
  *     enumeration's 90-day precedent) and the shared paced() queue, so
  *     geometry never stampedes alongside sweep chunks. TIGERweb is
- *     keyless, so no Census API key or daily figure budget is spent
- *     beyond the pacing queue every request in this app shares.
+ *     keyless, so the fetch rides the queue's keyless posture
+ *     (ratelimit.ts): the concurrency and interval discipline apply,
+ *     but the Census key's daily budget neither walls it nor is
+ *     charged for it. That distinction is load-bearing — under the
+ *     counted default, an exhausted key budget failed the map of an
+ *     answer whose figures were already in hand (Lane completion
+ *     K2, production specimen 2026-11-03).
  *   - TIGERweb answers a bad field name with HTTP 200 and an
  *     {"error": ...} body (the geocode.ts trap), so the body is checked
  *     before it is parsed as geometry. The field list is exactly
@@ -189,8 +194,10 @@ const defaultFetcher: ResultGeometryFetcher = async (url, signal) => {
   if (cached && isFresh(cached, RESULT_GEOMETRY_CACHE_TTL_MS)) {
     return { text: cached.body.text, status: 200 }
   }
-  const res = await paced(() =>
-    fetchResilient(url, { signal, headers: { Accept: 'application/geo+json, application/json' } }),
+  const res = await paced(
+    () =>
+      fetchResilient(url, { signal, headers: { Accept: 'application/geo+json, application/json' } }),
+    { budget: 'keyless' },
   )
   const text = await res.text()
   if (res.ok) await writeCache(url, { text })

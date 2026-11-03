@@ -156,8 +156,8 @@ function pump(): void {
   next()
 }
 
-async function acquire(): Promise<void> {
-  if (budgetState().remaining <= 0) throw new QuotaExhaustedError(budgetState())
+async function acquire(checkBudget: boolean): Promise<void> {
+  if (checkBudget && budgetState().remaining <= 0) throw new QuotaExhaustedError(budgetState())
 
   if (active < config.maxConcurrency) {
     active += 1
@@ -190,11 +190,31 @@ function release(): void {
 /**
  * Runs a request under the pacing rules: concurrency-capped, spaced, and
  * counted against the daily budget.
+ *
+ * The budget posture is explicit (Lane completion K2, 2026-11-03):
+ * the daily budget exists to protect the Census API KEY — the
+ * Bureau's 500/day ceiling is per key, and only requests that spend
+ * the key can threaten it. A keyless request (the result map's
+ * TIGERweb geometry is the shipped case: keyless, cached for 90
+ * days, and the only fetch standing between a carded answer and its
+ * map) must therefore neither be WALLED by the key's budget nor
+ * COUNTED against it. Before this posture existed, geometry rode
+ * the counted default: an exhausted budget failed the map of an
+ * answer whose figures were already in hand (production specimen,
+ * 2026-11-03), and every geometry fetch drained the key budget it
+ * never spent. `{ budget: 'keyless' }` keeps the queue's
+ * concurrency cap and minimum interval — the stampede discipline —
+ * and skips only the key-budget throw and count. The default stays
+ * 'counted': every keyed caller is unchanged by construction.
  */
-export async function paced<T>(fn: () => Promise<T>): Promise<T> {
-  await acquire()
+export async function paced<T>(
+  fn: () => Promise<T>,
+  opts: { budget?: 'counted' | 'keyless' } = {},
+): Promise<T> {
+  const counted = opts.budget !== 'keyless'
+  await acquire(counted)
   try {
-    recordRequest()
+    if (counted) recordRequest()
     return await fn()
   } finally {
     release()

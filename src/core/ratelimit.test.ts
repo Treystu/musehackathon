@@ -117,3 +117,35 @@ describe('quota: daily budget', () => {
     expect(budgetState().used).toBe(used)
   })
 })
+
+describe('keyless posture (Lane completion K2)', () => {
+  it('a keyless request runs while the key budget is exhausted; a counted one still refuses', async () => {
+    configureRateLimit({ minIntervalMs: 0, dailyBudget: 0 })
+    await expect(paced(async () => 'never', { budget: 'counted' })).rejects.toBeInstanceOf(
+      QuotaExhaustedError,
+    )
+    await expect(paced(async () => 'geometry', { budget: 'keyless' })).resolves.toBe('geometry')
+  })
+
+  it('a keyless request is not counted against the key budget', async () => {
+    configureRateLimit({ minIntervalMs: 0, dailyBudget: 10 })
+    await paced(async () => 'geometry', { budget: 'keyless' })
+    expect(budgetState().used).toBe(0)
+    await paced(async () => 'counted')
+    expect(budgetState().used).toBe(1)
+  })
+
+  it('a keyless request still rides the concurrency cap', async () => {
+    configureRateLimit({ minIntervalMs: 0, maxConcurrency: 2, dailyBudget: 0 })
+    let active = 0
+    let peak = 0
+    const task = async () => {
+      active++
+      peak = Math.max(peak, active)
+      await sleep(20)
+      active--
+    }
+    await Promise.all(Array.from({ length: 8 }, () => paced(task, { budget: 'keyless' })))
+    expect(peak).toBeLessThanOrEqual(2)
+  }, 15000)
+})

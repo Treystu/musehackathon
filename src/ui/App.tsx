@@ -2153,13 +2153,23 @@ export default function App() {
                 {/*
                   The progressive map (Lane A7): while this run's
                   research is in flight and the progress snapshot
-                  carries at least two interim places, they render
-                  here under the status line, filling as passes
-                  land. It unmounts with this in-flight branch at
-                  the terminal — the card above takes over, under
-                  A6's terminal-map decision.
+                  carries interim places, they render here under the
+                  status line, filling as passes land. It unmounts
+                  with this in-flight branch at the terminal — the
+                  card above takes over, under A6's terminal-map
+                  decision. The threshold is ONE place (Lane
+                  completion K2, 2026-11-03): the shipped >= 2 gate
+                  hid every one-place snapshot — and one place is
+                  the common yield of the dominant shape, a single
+                  researched criterion whose single pass lands its
+                  candidates at pass completion, moments before the
+                  terminal. Three live attempts under the old gate
+                  observed interim counts 0/0/1 and no fill at all.
+                  A one-place map is honest: the status line and
+                  percent above it carry the partial state, labeled
+                  as such.
                 */}
-                {stage?.progress && stage.progress.places.length >= 2 ? (
+                {stage?.progress && stage.progress.places.length >= 1 ? (
                   <ProgressivePlacesMap places={stage.progress.places} />
                 ) : null}
               </div>

@@ -7,8 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AnswerPlace, ComposedAnswer } from '../../src/core/ai/answer'
 import { encodeCentroids } from '../../src/core/map/centroids'
-import { _resetPacing, resetBudget } from '../../src/core/ratelimit'
+import {
+  _resetPacing,
+  budgetState,
+  configureRateLimit,
+  resetBudget,
+} from '../../src/core/ratelimit'
 import { ResultMap } from '../../src/ui/map/ResultMap'
+import { ProgressivePlacesMap } from '../../src/ui/map/ProgressivePlacesMap'
 
 /**
  * ResultMap component pins (drive item 13 / plan P6), hermetic: the
@@ -399,5 +405,52 @@ describe('ResultMap — national mode', () => {
     const circles = [...container.querySelectorAll('svg circle[data-result-place]')]
     const r = circles.map((c) => Number(c.getAttribute('r')))
     expect(Math.max(...r)).toBeGreaterThan(Math.min(...r))
+  }, 30000)
+})
+
+/* ------------------------------------------------------------------ */
+/* K2 — the answer map under an exhausted Census budget, and the      */
+/* one-place progressive render (Lane completion program, 2026-11-03) */
+/* ------------------------------------------------------------------ */
+
+describe('K2 — answer map with the Census budget exhausted', () => {
+  it('the map renders from the answer\u2019s own places and spends no key budget on geometry', async () => {
+    // The specimen state: the browser's counted Census budget is
+    // gone (450 of 450 spent by earlier runs). The answer's figures
+    // are in hand; only its boundary geometry is fetched, from
+    // keyless TIGERweb. Before the cure, paced() walled that fetch
+    // with QuotaExhaustedError and the card showed the failure line.
+    configureRateLimit({ minIntervalMs: 0, dailyBudget: 0 })
+    try {
+      render(<ResultMap answer={answer({ places: SEATTLE_PLACES })} />)
+      expectNoGateButton()
+      await flushUntil(() => container.querySelectorAll('svg [data-result-place]').length === 3)
+      expect(container.textContent).not.toContain('could not be loaded')
+      expect(tigerwebCalls).toBe(1)
+      // Geometry is keyless: the key budget was not charged for it.
+      expect(budgetState().used).toBe(0)
+    } finally {
+      configureRateLimit({ minIntervalMs: 400, dailyBudget: 450 })
+    }
+  }, 30000)
+})
+
+describe('K2 — progressive map at one interim place', () => {
+  it('a snapshot carrying exactly one interim place renders the map with that place', async () => {
+    render(
+      <ProgressivePlacesMap
+        places={[
+          {
+            name: 'Seattle, WA',
+            zcta: '98101',
+            verdicts: [{ criterion: 'School quality', state: 'served' }],
+          },
+        ]}
+      />,
+    )
+    await flushUntil(() => container.querySelector('[data-testid="progressive-places-map"]') !== null)
+    const panel = container.querySelector('[data-testid="progressive-places-map"]')!
+    expect(panel.textContent).toContain('places so far')
+    expect(panel.textContent).toContain('Seattle, WA')
   }, 30000)
 })

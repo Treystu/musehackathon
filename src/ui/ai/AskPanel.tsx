@@ -534,6 +534,8 @@ export function AskPanel({
   // snapshot — a static render reads whatever the session holds.
   const getPanelSnapshot = () => session.getSnapshot().panel
   const panel = useSyncExternalStore(session.subscribe, getPanelSnapshot, getPanelSnapshot)
+  const getAnswerSnapshot = () => session.getSnapshot().answer
+  const answerSlice = useSyncExternalStore(session.subscribe, getAnswerSnapshot, getAnswerSnapshot)
   const text = panel.text
   const setText = (value: string) => session.setPanel({ text: value })
   const ack = panel.ack
@@ -552,6 +554,23 @@ export function AskPanel({
   const setCoverageNote = (value: string) => session.setPanel({ coverageNote: value })
   const research = panel.research
   const setResearch = (value: PanelResearchState) => session.setPanel({ research: value })
+  /**
+   * Single frame ownership (indicator lifecycle cure, 2026-11-02):
+   * once the answer layer has adopted THIS run — a request object
+   * minted after this run began (identity differs from the request
+   * current at run start), for this run's question — the answer
+   * area owns the working frame and this panel's mount stands down,
+   * so the parse→compose hand-off never renders two ack lines, two
+   * dot sets, or two live regions at once. Identity rather than
+   * text alone keeps a re-asked identical question's parse frame
+   * alive until its own hand-off lands (the runQuery finally's
+   * stage-ownership test uses the text half of the same test).
+   */
+  const adoptedRequest = answerSlice.request
+  const frameAdoptedByAnswerLayer =
+    adoptedRequest !== null &&
+    adoptedRequest !== session.counters.requestAtRunStart &&
+    adoptedRequest.queryText === session.counters.lastQueryText
 
   /**
    * Grounded web findings for the parts of a question the Census data
@@ -830,6 +849,11 @@ export function AskPanel({
     // it: a handed-off run's stage is adopted by the answer layer,
     // and a standalone research run's stage ends when research
     // settles (startResearch's completion).
+    // Frame ownership baseline (indicator lifecycle cure): the
+    // request current as this run begins; a different request
+    // object appearing for this question is the answer layer's
+    // adoption of THIS run, and the panel's frame stands down.
+    session.counters.requestAtRunStart = session.getSnapshot().answer.request
     const stageToken = session.beginStageRun('understanding')
     setBusy(true)
     if (needsResearch(queryText)) {
@@ -1134,11 +1158,13 @@ export function AskPanel({
           </button>
         ))}
       </div>
-      {busy && (
+      {busy && !frameAdoptedByAnswerLayer && (
         <p className="mt-3 flex items-center gap-2 text-sm text-slate-700">
-          {/* The ack + thinking indicator, plus the staged line once
-              the run passes one second (item 17; StagedStatus owns
-              the threshold and the aria-live discipline). */}
+          {/* The ack, plus the visual indicator once the run passes
+              one second (item 17; StagedStatus owns the threshold
+              and the aria-live discipline). This mount owns the
+              frame only until the answer layer adopts the run —
+              see frameAdoptedByAnswerLayer above. */}
           <StagedStatus session={session} ack={ack} />
         </p>
       )}

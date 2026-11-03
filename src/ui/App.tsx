@@ -140,6 +140,22 @@ const ANSWER_BLOCKED_NOTE =
 const ANSWER_UNRESOLVED_NOTE =
   'The place named in this question could not be resolved, so no answer was composed. The data views below still work.'
 
+/**
+ * The bounded wait for the answer area's load waits (indicator
+ * lifecycle cure, 2026-11-02): the place/county index waits and the
+ * sweep-coverage wait in the answer effect end on success or on
+ * error, but a STALLED load settles neither — the working state
+ * (ack + thinking dots) rendered unbounded while the reader waited
+ * on a fetch that was never coming back. Past this bound the wait
+ * lands the load-failed note above instead. The bound sits far
+ * beyond healthy load times (the indexes are ~1 s class; the
+ * sweep's paced, chunked load is the slowest legitimate wait), and
+ * the terminal is non-destructive: the request is not marked
+ * composed, so a load that lands late still composes over the
+ * note, exactly as after an error-terminal note today.
+ */
+const ANSWER_WAIT_BOUND_MS = 45_000
+
 type ScreeningSort = {
   presetId: string
   sortKey: SortableMetricKey | null
@@ -345,9 +361,32 @@ export default function App() {
   const answerNote = answerState.note
   const setAnswerNote = (value: { id: number; text: string } | null) =>
     sessionStore.setAnswerState({ note: value })
+  /**
+   * The session's stage and the panel's busy flag, read reactively
+   * (indicator lifecycle cure): the answer area's working-state
+   * mount keys on an actual in-flight signal — a live stage or a
+   * compose in flight — rather than on the request alone, and the
+   * general lane's frame yields while the panel's frame is up.
+   */
+  const getStageSnapshot = () => sessionStore.getSnapshot().stage
+  const stage = useSyncExternalStore(sessionStore.subscribe, getStageSnapshot, getStageSnapshot)
+  const getPanelBusySnapshot = () => sessionStore.getSnapshot().panel.busy
+  const panelBusy = useSyncExternalStore(
+    sessionStore.subscribe,
+    getPanelBusySnapshot,
+    getPanelBusySnapshot,
+  )
   const answerRequestSeq = useRef(0)
   /** The staged-status run token each answer request adopted (item 17). */
   const answerStageTokens = useRef(new Map<number, number>())
+  /** When each answer request first entered a load wait (bounded-wait cure). */
+  const answerWaitSince = useRef(new Map<number, number>())
+  const answerWaitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [answerWaitTick, setAnswerWaitTick] = useState(0)
+  /** Reactive mirrors of staged work the stage alone does not prove. */
+  const [composeInFlight, setComposeInFlight] = useState(false)
+  const [generalInFlight, setGeneralInFlight] = useState(false)
+  const [refineInFlight, setRefineInFlight] = useState(false)
   const answerLoadIds = useRef(new Set<number>())
   const answerComposedIds = useRef(new Set<number>())
   const answerInFlightIds = useRef(new Set<number>())
@@ -404,6 +443,9 @@ export default function App() {
     // card above fresh results would read as this question's answer.
     setAnswer(null)
     setAnswerNote(null)
+    // A superseded compose no longer owns the working frame; this
+    // question's own compose claims it when it starts.
+    setComposeInFlight(false)
     if (generalQueryRef.current !== queryText) {
       generalSeq.current += 1
       setGeneralAnswer(null)
@@ -429,6 +471,15 @@ export default function App() {
     generalQueryRef.current = queryText
     setGeneralAnswer(null)
     setGeneralNote(null)
+    setGeneralInFlight(true)
+    // The general compose is staged work (indicator lifecycle
+    // cure): it gets its own stage run, so the working frame covers
+    // it the way it covers a data compose — previously it ran for
+    // seconds after the parse settled with no indicator anywhere.
+    // For a hybrid, the data companion's handleAnswerRequest adopts
+    // this same token (ensureStageRun), and the settle below then
+    // leaves the stage to that owner.
+    const generalToken = sessionStore.beginStageRun('composing')
     void (async () => {
       try {
         const data = await composeGeneralAnswer({
@@ -442,6 +493,10 @@ export default function App() {
         setGeneralNote(
           'That question sits outside the Census data, and the general answer could not be reached just now. The data views below still work.',
         )
+      } finally {
+        if (generalSeq.current === id) setGeneralInFlight(false)
+        const adoptedByAnswer = [...answerStageTokens.current.values()].includes(generalToken)
+        if (!adoptedByAnswer) sessionStore.clearStage(generalToken)
       }
     })()
   }, [])
@@ -509,7 +564,12 @@ export default function App() {
       if (!canRefine(modalState, branch)) return
       // A refinement is a fresh run of the pipeline (item 17): it
       // gets its own stage clock, adopted and ended the same way.
+      // The working frame renders for it under the card (indicator
+      // lifecycle cure): previously the refinement's stage ran with
+      // no mount anywhere, the card standing unchanged over seconds
+      // of staged work.
       const refineToken = sessionStore.beginStageRun('screening')
+      setRefineInFlight(true)
       void (async () => {
         try {
           const refined = await refineAnswerForRequest({
@@ -530,6 +590,7 @@ export default function App() {
             setModalState((state) => markRefined(state, branch))
           }
         } finally {
+          setRefineInFlight(false)
           sessionStore.clearStage(refineToken)
         }
       })()
@@ -545,6 +606,57 @@ export default function App() {
     if (!answerRequest) return
     const { id, intent, queryText } = answerRequest
     if (answerComposedIds.current.has(id) || answerInFlightIds.current.has(id)) return
+    // A re-run re-arms the bounded wait's timer below if this
+    // request is still waiting; a stale timer never outlives the
+    // run of the effect that armed it.
+    if (answerWaitTimer.current !== null) {
+      clearTimeout(answerWaitTimer.current)
+      answerWaitTimer.current = null
+    }
+    /**
+     * The load-failed terminal, shared by the sweep-error branch
+     * and the bounded wait's expiry: the note lands once per
+     * request, the stage display ends with it, and the request is
+     * deliberately NOT marked composed — a load that lands later
+     * still composes over the note.
+     */
+    const landLoadFailedNote = () => {
+      if (answerNotedIds.current.has(id)) return
+      answerNotedIds.current.add(id)
+      setAnswerNote({ id, text: ANSWER_LOAD_FAILED_NOTE })
+      const token = answerStageTokens.current.get(id)
+      if (token !== undefined) sessionStore.clearStage(token)
+    }
+    /**
+     * The bounded wait (see ANSWER_WAIT_BOUND_MS): the first entry
+     * starts this request's wait clock and arms a timer that
+     * re-runs this effect when the bound passes — a stalled load
+     * changes no dependency, so nothing else would ever re-check
+     * the clock. Returns true while the request may keep waiting;
+     * past the bound the caller lands the load-failed note instead
+     * of returning to an unbounded indicator.
+     */
+    const stillWaiting = (): boolean => {
+      const started = answerWaitSince.current.get(id)
+      const nowMs = Date.now()
+      if (started === undefined) {
+        answerWaitSince.current.set(id, nowMs)
+        answerWaitTimer.current = setTimeout(
+          () => setAnswerWaitTick((n) => n + 1),
+          ANSWER_WAIT_BOUND_MS,
+        )
+        return true
+      }
+      const remaining = ANSWER_WAIT_BOUND_MS - (nowMs - started)
+      if (remaining <= 0) return false
+      if (answerWaitTimer.current === null) {
+        answerWaitTimer.current = setTimeout(
+          () => setAnswerWaitTick((n) => n + 1),
+          remaining,
+        )
+      }
+      return true
+    }
     const resolved: ResolvedAnswerGeographies = resolveAnswerGeographies(
       intent,
       placeIndex ?? null,
@@ -555,8 +667,15 @@ export default function App() {
       // had its authority yet: an empty result here is a wait, not a
       // verdict. Marking the request composed in that state stranded
       // it permanently when the index landed a moment later — the
-      // guard above then refused every re-run.
-      if (placeIndex === undefined) return
+      // guard above then refused every re-run. The wait is bounded
+      // (indicator lifecycle cure): a stalled index fetch lands the
+      // load-failed note at the bound instead of holding the
+      // working state open forever.
+      if (placeIndex === undefined) {
+        if (stillWaiting()) return
+        landLoadFailedNote()
+        return
+      }
       // The same wait applies to the county index when the intent
       // names a county-class geography (the resolver's own suffix
       // set: county, parish, borough, census area, municipality).
@@ -576,6 +695,9 @@ export default function App() {
           /\b(county|parish|borough|census area|municipality)\b/i.test(geography),
         )
       ) {
+        // The same bounded wait as the place index above.
+        if (stillWaiting()) return
+        landLoadFailedNote()
         return
       }
       // Terminally unresolvable with every index the resolution
@@ -617,12 +739,7 @@ export default function App() {
       // the compose replaces the note with the card.
       const loadFailed = q.sweepStatus === 'error' || q.sweepStatus === 'needs-key'
       if (loadFailed && (q.sweepStatus === 'needs-key' || answerLoadIds.current.has(id))) {
-        if (!answerNotedIds.current.has(id)) {
-          answerNotedIds.current.add(id)
-          setAnswerNote({ id, text: ANSWER_LOAD_FAILED_NOTE })
-          const token = answerStageTokens.current.get(id)
-          if (token !== undefined) sessionStore.clearStage(token)
-        }
+        landLoadFailedNote()
         return
       }
       // Reuse the sweep loading machinery: scope the load to the
@@ -632,10 +749,24 @@ export default function App() {
       if (!answerLoadIds.current.has(id) && q.sweepStatus !== 'loading') {
         answerLoadIds.current.add(id)
         void q.applyScope(intent.geographies.length === 0 ? [] : resolved.scopePrefixes)
+        // The scoped attempt is now in flight; the wait for its
+        // coverage runs on the bounded clock like the index waits.
+        stillWaiting()
+        return
       }
+      // Waiting on the load — in flight, or attempted and not yet
+      // covering: bounded (indicator lifecycle cure). A stalled
+      // sweep load held this return open forever; past the bound
+      // the load-failed note lands instead.
+      if (stillWaiting()) return
+      landLoadFailedNote()
       return
     }
     answerInFlightIds.current.add(id)
+    // Coverage satisfied: any bounded-wait clock for this request
+    // is done, and the compose now owns the working frame.
+    answerWaitSince.current.delete(id)
+    setComposeInFlight(true)
     answerContextRef.current = { intent, queryText, resolved }
     // The compose run is registered as session-owned in-flight work
     // (item 17): it completes into the store whether or not the Ask
@@ -697,6 +828,10 @@ export default function App() {
         setAnswerNote({ id, text: ANSWER_COMPOSE_FAILED_NOTE })
       } finally {
         answerInFlightIds.current.delete(id)
+        // Only the current request's compose releases the frame
+        // claim; a superseded run's settle leaves the newer run's
+        // claim standing (handleAnswerRequest also resets it).
+        if (answerRequestSeq.current === id) setComposeInFlight(false)
         // Terminal (answer, note, or supersession): the stage
         // display ends. Token-guarded — a superseded run cannot
         // clear the newer run's stage.
@@ -705,7 +840,16 @@ export default function App() {
     })()
     sessionStore.trackRun(`answer:${id}`, composeRun)
     void composeRun
-  }, [answerRequest, placeIndex, countyIndex, q.sweep, q.sweepStatus, q.sweepScope, q.applyScope])
+    // answerWaitTick is the bounded wait's re-check signal: the
+    // timer it arms changes no other dependency when it fires.
+  }, [answerRequest, placeIndex, countyIndex, q.sweep, q.sweepStatus, q.sweepScope, q.applyScope, answerWaitTick])
+
+  // The bounded wait's timer never outlives the page.
+  useEffect(() => {
+    return () => {
+      if (answerWaitTimer.current !== null) clearTimeout(answerWaitTimer.current)
+    }
+  }, [])
 
   const askFigures = useMemo(
     () =>
@@ -1646,6 +1790,26 @@ export default function App() {
                   </p>
                 </section>
               </div>
+            ) : generalInFlight &&
+              !panelBusy &&
+              !(
+                answerRequest &&
+                answerRequest.queryText === generalQueryRef.current &&
+                (stage !== null || composeInFlight)
+              ) ? (
+              <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+                {/*
+                  The general compose's working frame (indicator
+                  lifecycle cure): the same single-owner frame as
+                  every other staged run. It yields while the panel
+                  owns the frame (the parse) and, for a hybrid, while
+                  the data companion's frame is mounted below — one
+                  working frame at a time.
+                */}
+                <p className="flex items-center gap-2 text-sm text-slate-500">
+                  <StagedStatus session={sessionStore} ack="Let me think that through." />
+                </p>
+              </div>
             ) : null}
             {answer ? (
               <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
@@ -1679,7 +1843,7 @@ export default function App() {
                   </p>
                 </section>
               </div>
-            ) : answerRequest ? (
+            ) : answerRequest && (stage !== null || composeInFlight) ? (
               <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
                 {/*
                   The answer path's working state is the conversational
@@ -1688,7 +1852,11 @@ export default function App() {
                   Past one second the staged line joins the frame
                   (item 17): StagedStatus names the pipeline stage the
                   run is actually in, from the session store the run
-                  itself advances.
+                  itself advances. The mount keys on an actual
+                  in-flight signal — a live stage or a compose in
+                  flight (indicator lifecycle cure) — not on the
+                  request alone: a request with no run behind it
+                  renders nothing here.
                 */}
                 <p className="flex items-center gap-2 text-sm text-slate-500">
                   <StagedStatus
@@ -1699,6 +1867,21 @@ export default function App() {
                         : 'Let me look into that.'
                     }
                   />
+                </p>
+              </div>
+            ) : null}
+            {refineInFlight && stage !== null && answer ? (
+              <div className="anim-rise mx-auto mt-2 max-w-3xl px-2">
+                {/*
+                  A decision-modal refinement's working frame
+                  (indicator lifecycle cure): the refinement runs a
+                  full staged pipeline over the standing card, and
+                  the same single-owner frame renders for it here —
+                  previously that work ran with no indicator
+                  anywhere.
+                */}
+                <p className="flex items-center gap-2 text-sm text-slate-500">
+                  <StagedStatus session={sessionStore} ack="Refining your answer." />
                 </p>
               </div>
             ) : null}

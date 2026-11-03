@@ -12,17 +12,25 @@ import {
  * hanging" — the ack + thinking dots carried no stage information
  * over a long wait, which is why he tab-switched).
  *
- * Shape: the existing conversational frame is untouched — the ack
- * line plus the thinking indicator (whose dots already respect
- * prefers-reduced-motion through the global guard in app.css). The
- * staged line joins it only once the RUN passes the 1-second rule
- * (session-store's STAGED_STATUS_THRESHOLD_MS, timed from the run's
- * start, not the stage's): a fast run shows the ack alone, exactly
- * as before. The line names the stage the pipeline is actually in —
- * the store's stage advances only at real stage boundaries (see
- * session-store's StageId contract) — in plain words, with no
- * percentages and no invented granularity; research names its parsed
- * subject where the pipeline supplied one.
+ * Shape: the ack line is the conversational frame and renders for
+ * as long as the parent mounts this component. The VISUAL
+ * indicator — the thinking dots (which respect
+ * prefers-reduced-motion through the global guard in app.css) and
+ * the staged line — joins it only once the RUN passes the
+ * 1-second rule (session-store's STAGED_STATUS_THRESHOLD_MS, timed
+ * from the run's start, not the stage's), and only while a run's
+ * stage is actually active. That gating is the indicator
+ * lifecycle cure (2026-11-02): the dots previously rendered from
+ * t=0 on every run and whenever a parent mounted the component
+ * with no run behind it — the owner's words: the indicator was
+ * "there regardless of if it's necessary, or complete." A
+ * sub-second run now shows the ack alone; a mount with no active
+ * stage shows the ack alone. The staged line names the stage the
+ * pipeline is actually in — the store's stage advances only at
+ * real stage boundaries (see session-store's StageId contract) —
+ * in plain words, with no percentages and no invented
+ * granularity; research names its parsed subject where the
+ * pipeline supplied one.
  *
  * Accessibility: stage changes are announced through a visually
  * hidden aria-live polite region whose text is the stage label and
@@ -62,7 +70,7 @@ export function StagedStatus({
   return (
     <>
       <span>{ack}</span>
-      <ThinkingIndicator />
+      {visible && <ThinkingIndicator />}
       {visible && (
         <span className="text-slate-500" data-testid="staged-status-line">
           {label}

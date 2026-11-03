@@ -9,10 +9,14 @@ let releaseIntent: (() => void) | null = null
 
 /**
  * The conversational frame's behaviour pin (plan C6/C12): during a
- * deferred run the Ask surface shows the acknowledgment line + the
- * thinking indicator (aria-live "Working on it"); at the terminal
- * state the indicator is gone. The intent route is held open at the
- * network boundary so the working state is observable, then released
+ * deferred run the Ask surface shows the acknowledgment line at
+ * once, and the thinking indicator (aria-live "Working on it")
+ * joins it once the run passes the 1-second rule (indicator
+ * lifecycle cure, 2026-11-02: the visual indicator renders only
+ * while a run is actually under way past the point where a
+ * progress signal is necessary); at the terminal state the
+ * indicator is gone. The intent route is held open at the network
+ * boundary so the working state is observable, then released
  * with a clarification intent (a terminal state that needs no sweep
  * data).
  */
@@ -52,8 +56,16 @@ it('shows ack + thinking indicator during a deferred run, gone at the terminal s
   await page.getByRole('textbox', { name: 'Ask in plain language' }).fill('What is the rent like?')
   // Scoped to main (item 18 S1): the header pill is also named "Ask".
   await page.locator('main').getByRole('button', { name: 'Ask', exact: true }).click()
-  // Working state: one ack line from the annex set + the indicator.
+  // Working state: one ack line from the annex set at once; the
+  // indicator joins once the held run passes the 1-second rule
+  // (its text is screen-reader-only, so poll the document text).
   await page.getByText(/Sure thing|On it|Let me look into that/).first().waitFor({ timeout: 10000 })
+  expect(await page.getByText('Working on it').count()).toBe(0)
+  await page.waitForFunction(
+    () => (document.body.textContent ?? '').includes('Working on it'),
+    undefined,
+    { timeout: 10000 },
+  )
   expect(await page.getByText('Working on it').count()).toBeGreaterThan(0)
   releaseIntent?.()
   // Terminal state (clarification): the indicator is gone.

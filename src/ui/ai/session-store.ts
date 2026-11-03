@@ -40,13 +40,16 @@ import type { GeneralAnswerData } from './general-runner'
  * intent-url channel for shareable state), so an accidental reload
  * restores the thread. Precisely what survives a reload: the
  * question text, the understood request (intent), the panel notes,
- * finished web research (prose + sources), the last answer request,
- * the last composed answer, the general lane's answer/note, and the
+ * finished web research (prose + sources), the last answer request
+ * together with its landed outcome (the last composed answer or
+ * its terminal note), the general lane's answer/note, and the
  * decision modal's closed/refined branch sets (the decisions
  * themselves live in their own session record, unchanged). What
  * does NOT survive a reload: any in-flight run (busy and the stage
  * state restore cleared — a run cannot resume across a page load,
- * and claiming it was still running would be inventing state), the
+ * and claiming it was still running would be inventing state), an
+ * answer request whose run was still in flight (the projection
+ * below drops it: it has no landed outcome to restore), the
  * ack line, and a transient proxy error.
  */
 
@@ -149,7 +152,10 @@ export function stageLabel(stage: StageId, subject?: string | null): string {
 /**
  * The 1-second rule (owner's words, 2026-11-02: status "if it's going
  * to take more than one second"): under this threshold the ack frame
- * alone is the working state; past it the staged line joins it.
+ * alone is the working state; past it the visual indicator (the
+ * thinking dots and the staged line) joins it — and only while a
+ * run's stage is active, so the predicate is false for a mount with
+ * no run behind it.
  */
 export const STAGED_STATUS_THRESHOLD_MS = 1000
 
@@ -212,14 +218,40 @@ export function initialSessionSnapshot(): SessionSnapshot {
 }
 
 /**
+ * The persistence projection for the answer slice (indicator
+ * lifecycle cure, 2026-11-02): a request whose run was still in
+ * flight — no composed answer and no terminal note landed — does
+ * not survive a reload. Busy and the stage state were already
+ * projected out on exactly this reasoning (an in-flight run cannot
+ * resume across a page load), but the request itself survived, and
+ * the answer area keys its working-state mount off the request
+ * alone: a restored in-flight request rendered the ack + thinking
+ * dots forever, with no run behind them — its re-driven compose's
+ * result is discarded by the per-page-life supersession guard in
+ * App, so no terminal ever arrived (audit evidence C4a/C4b). A
+ * request that DID land — an answer or a note — survives whole.
+ * Applied on both sides of the storage boundary: serialize never
+ * writes the phantom, and deserialize drops one written by an
+ * earlier build.
+ */
+function projectAnswerForPersistence(answer: AnswerState): AnswerState {
+  if (answer.request !== null && answer.answer === null && answer.note === null) {
+    return { ...answer, request: null }
+  }
+  return answer
+}
+
+/**
  * The reload-persistence projection (see the file header for the
  * exact survives / does-not-survive contract): busy, a loading
- * research state, the ack, a transient error, a live modal, and the
- * stage state are all reset rather than serialized, because none of
- * them can truthfully resume after a page load.
+ * research state, the ack, a transient error, a live modal, the
+ * stage state, and an unlanded answer request are all reset rather
+ * than serialized, because none of them can truthfully resume
+ * after a page load.
  */
 export function serializeSession(snapshot: SessionSnapshot): string {
   const { panel, answer } = snapshot
+  const projectedAnswer = projectAnswerForPersistence(answer)
   return JSON.stringify({
     v: 1,
     panel: {
@@ -231,11 +263,11 @@ export function serializeSession(snapshot: SessionSnapshot): string {
         panel.research.status === 'loading' ? { status: 'idle' } : panel.research,
     },
     answer: {
-      request: answer.request,
-      answer: answer.answer,
-      note: answer.note,
-      generalAnswer: answer.generalAnswer,
-      generalNote: answer.generalNote,
+      request: projectedAnswer.request,
+      answer: projectedAnswer.answer,
+      note: projectedAnswer.note,
+      generalAnswer: projectedAnswer.generalAnswer,
+      generalNote: projectedAnswer.generalNote,
       modal: {
         live: null,
         closedBranches: [...answer.modal.closedBranches],
@@ -264,7 +296,7 @@ export function deserializeSession(raw: string | null): SessionSnapshot | null {
     const refined = Array.isArray(parsed.answer.modal?.refinedBranches)
       ? (parsed.answer.modal.refinedBranches as ModalState['refinedBranches'])
       : []
-    const answer: AnswerState = {
+    const answer: AnswerState = projectAnswerForPersistence({
       ...initialAnswerState(),
       ...parsed.answer,
       modal: {
@@ -272,7 +304,7 @@ export function deserializeSession(raw: string | null): SessionSnapshot | null {
         closedBranches: new Set(closed) as ModalState['closedBranches'],
         refinedBranches: new Set(refined) as ModalState['refinedBranches'],
       },
-    }
+    })
     return { panel, answer, stage: null }
   } catch {
     return null
@@ -299,6 +331,16 @@ export class AskSessionStore {
     executionRun: 0,
     lastAckOpener: null as string | null,
     lastQueryText: '',
+    /**
+     * The answer request that was current when the panel's latest
+     * run began (indicator lifecycle cure): the panel's working
+     * frame stands down once a DIFFERENT request object — minted by
+     * the answer layer's adoption of this run — is current, so the
+     * parse→compose hand-off has exactly one frame owner. Object
+     * identity, not question text: re-asking the same question
+     * keeps the parse frame until its own hand-off lands.
+     */
+    requestAtRunStart: null as SessionAnswerRequest | null,
   }
 
   constructor(storage: SessionStorageLike | null = defaultSessionStorage(), now: () => number = () => Date.now()) {

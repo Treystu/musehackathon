@@ -47,7 +47,11 @@ import {
   type GeneralAnswerData,
 } from './ai/general-runner'
 import { createSpeechDriver, type SpeechDriver } from './ai/speech-driver'
-import { guardSpokenSentences, planTerminalSpeech } from './ai/spoken-answer'
+import {
+  composeGeneralSpokenHeadline,
+  guardSpokenSentences,
+  planTerminalSpeech,
+} from './ai/spoken-answer'
 import { StagedStatus } from './ai/StagedStatus'
 import { runSummaryText, terminalEntryCount } from '../core/ai/run-progress'
 import { ProgressivePlacesMap } from './map/ProgressivePlacesMap'
@@ -318,9 +322,12 @@ export default function App() {
    * tabs — which unmounts the Explore subtree, AskPanel included —
    * destroys nothing: an in-flight run's completion handlers close
    * over the store, and its answer is waiting when the reader comes
-   * back. The store also persists the serializable session to
-   * sessionStorage, so an accidental reload restores the thread
-   * (session-store.ts states exactly what survives).
+   * back. The store is memory-only (refresh-starts-clean cure,
+   * 2026-11-02): a page load starts a clean session, and nothing
+   * here persists to sessionStorage — session-store.ts states the
+   * contract in full. (Corrected 2026-11-03, Lane completion K9:
+   * this comment previously described the retired item-17
+   * sessionStorage restore in the present tense.)
    */
   const [sessionStore] = useState(() => new AskSessionStore())
   const getAnswerSnapshot = () => sessionStore.getSnapshot().answer
@@ -631,15 +638,29 @@ export default function App() {
     })()
   }, [])
 
-  // In voice mode the general lane's inquiry turn is spoken through
-  // the same speech driver and the same spoken-number guard as the
-  // decision modal's question (plan C7/C10 wiring): the inquiry text
-  // carries no figures, so it passes the guard with an empty verified
-  // list, and any numeral that ever entered it would suppress the
-  // speech, never the inquiry. Beat 1's own numerals are the model's
-  // estimates, not verified figures, so they are NOT spoken — speech
-  // never replaces the on-screen card, and the spoken-number
-  // provenance gate is not widened for them.
+  // In voice mode the general lane speaks twice, headline first.
+  // The headline (Lane completion K6, narrowing the A8 boundary):
+  // composeGeneralSpokenHeadline speaks the derivation class, the
+  // precision-limit clause when the terminal carries one, and the
+  // shipped text's first guard-passing sentences — beat 1's
+  // numerals are the model's estimates, not verified figures, so
+  // every numeral-bearing sentence is suppressed by the guard with
+  // an empty verified list; the provenance gate is not widened,
+  // and speech never replaces the on-screen card. The inquiry turn
+  // then speaks through the same driver and guard, as before: the
+  // inquiry text carries no figures, so it passes with an empty
+  // verified list, and any numeral that ever entered it would
+  // suppress the speech, never the inquiry. Each speaks once per
+  // terminal (the two refs below).
+  const spokenGeneralHeadlineRef = useRef<GeneralAnswerData | null>(null)
+  useEffect(() => {
+    if (!voiceMode || !generalAnswer) return
+    if (spokenGeneralHeadlineRef.current === generalAnswer) return
+    spokenGeneralHeadlineRef.current = generalAnswer
+    const sentences = composeGeneralSpokenHeadline(generalAnswer)
+    if (sentences.length > 0) speechDriverRef.current?.speak(sentences)
+  }, [generalAnswer, voiceMode])
+
   const spokenGeneralRef = useRef<GeneralAnswerData | null>(null)
   useEffect(() => {
     if (!voiceMode || !generalAnswer?.inquiry) return

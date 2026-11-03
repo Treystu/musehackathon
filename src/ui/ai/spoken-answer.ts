@@ -86,6 +86,7 @@ import {
   type CriterionEvidenceStatus,
 } from '../../core/ai/answer'
 import { EVIDENCE_CLASS_LABELS } from '../../core/ai/flexible'
+import { GENERAL_SPOKEN_CLASS_LINE } from '../../core/ai/general'
 import {
   orderedResultPlaces,
   terminalChartKinds,
@@ -267,6 +268,45 @@ function splitSentences(prose: string): string[] {
     .split(/(?<=[.!?])\s+/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
+}
+
+/* ---------------- general-lane headline speech ------------------- */
+
+/**
+ * The general lane's spoken headline (Lane completion K6, closing
+ * the A8 recorded boundary on this class). A general terminal's
+ * text shipped through its own validation ladder — the arithmetic
+ * check and the Jev accuracy/relevance loop in general-runner —
+ * but its numerals are the model's estimates, not verified
+ * figures, so the A8 rule stood: beat 1 never speaks, and a voice
+ * listener heard only the beat-2 inquiry, a follow-up question
+ * whose answer they never heard. The shape that keeps the
+ * provenance gate intact: speak ONLY (1) the derivation class in
+ * plain words, a code-composed figure-free line; (2) the
+ * terminal's precision-limit clause verbatim when it carries one
+ * (a code-authored constant, present exactly when the shipped
+ * version is below bar — the confidence signal speech owes the
+ * listener); and (3) the shipped text's first sentences that pass
+ * guardSpokenSentences with an EMPTY verified list, capped at
+ * two — every numeral-bearing sentence, digits or number words,
+ * is suppressed by the unchanged guard, so no estimate is ever
+ * spoken as a figure. No surviving headline sentence: nothing
+ * speaks (the class line alone would be framing without an
+ * answer), and the inquiry still speaks as before. The gate is
+ * not widened: the verified list stays empty, and this composer
+ * adds no figures of its own.
+ */
+export function composeGeneralSpokenHeadline(general: {
+  text: string
+  precisionLimit: string | null
+}): string[] {
+  const headline = guardSpokenSentences(splitSentences(general.text.trim()), []).slice(0, 2)
+  if (headline.length === 0) return []
+  return [
+    GENERAL_SPOKEN_CLASS_LINE,
+    ...(general.precisionLimit ? [general.precisionLimit] : []),
+    ...headline,
+  ]
 }
 
 /**

@@ -32,6 +32,16 @@ export const GENERAL_ANSWER_LABEL =
   "Not a Census-data question — this is the model's own answer, outside the Census data."
 
 /**
+ * The label's spoken form (Lane completion K6): the derivation
+ * class in plain words, composed by code and figure-free by
+ * construction, spoken ahead of a general terminal's headline so
+ * a voice listener hears what kind of answer this is before any
+ * of its content.
+ */
+export const GENERAL_SPOKEN_CLASS_LINE =
+  "This is the model's own answer, outside the Census data."
+
+/**
  * The open inquiry (beat 2, below the bridge bar): the plan's shape,
  * verbatim in structure — one question, easily waved off, no
  * manufactured tie-in attached.

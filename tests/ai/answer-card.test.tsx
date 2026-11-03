@@ -199,4 +199,31 @@ describe('AnswerCard', () => {
     expect(text).toContain('No place in the loaded data meets all of the stated Census criteria.')
     expect(text).not.toContain('Hilo, HI')
   })
+
+  it('a research-failure note carries its per-criterion accounting on the note shell (FM-8)', async () => {
+    // Finding F3: note terminals rendered the summary alone — the
+    // per-criterion block was mounted on the card and flexible
+    // branches only, so a note's reader could not see which stated
+    // criteria were looked up and which did not return. The data
+    // was always on the answer; the mount was the gap.
+    const question = 'Where can I find the best schools but also the fewest fast food restaurants?'
+    const answer = await runAnswerPipeline({
+      intent: intent({ geographies: [], metricKeys: [] }),
+      rows: ROWS,
+      researchQuery: question,
+      researchCriteria: [question],
+      queryText: question,
+      provider: createStubProvider({
+        async research() {
+          throw new Error('provider_down')
+        },
+      }),
+    })
+    expect(answer.status).toBe('empty')
+    expect(answer.criterionEvidence.length).toBeGreaterThan(0)
+    render(<AnswerCard answer={answer} />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('School quality')
+    expect(text).toContain('did not return')
+  })
 })

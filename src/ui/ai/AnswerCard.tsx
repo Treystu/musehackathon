@@ -505,9 +505,21 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
         </p>
       )}
       {answer.status === 'empty' && (
-        <p role="note" className="mt-2 text-base text-slate-600">
-          {answer.summary}
-        </p>
+        <>
+          <p role="note" className="mt-2 text-base text-slate-600">
+            {answer.summary}
+          </p>
+          {/*
+            The note shell carries the per-criterion accounting too
+            (Lane A9 FM-8 / finding F3): a note is where the
+            accounting matters most — it is the reader's only record
+            of which stated criteria were looked up, which returned,
+            and which did not. The list renders nothing when the
+            answer carries no evidence entries, so notes without
+            criteria are unchanged.
+          */}
+          <CriterionEvidenceList answer={answer} />
+        </>
       )}
       {answer.status === 'flexible' && answer.flexible && (
         <>

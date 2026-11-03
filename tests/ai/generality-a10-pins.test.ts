@@ -8,7 +8,7 @@ import {
   type ResolvedCandidate,
   type RunProgressSnapshot,
 } from '../../src/core/ai/answer'
-import { outOfBoundCandidatesLine } from '../../src/ui/ai/AnswerCard'
+import { outOfBoundCandidatesLine, unresolvedCandidatesLine } from '../../src/ui/ai/AnswerCard'
 import type { AreaRow } from '../../src/core/plugins/acs'
 import { createStubProvider, type ValidatedIntent } from '../../src/core/ai/provider'
 
@@ -375,5 +375,83 @@ describe('FM-16 name normalization (pipeline)', () => {
     expect(answer.places.map((p) => p.name)).toEqual(['St. Petersburg, FL'])
     expect(answer.unresolvedCandidates).toEqual([])
     expect(answer.unmatchedFragmentCount).toBe(5)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* FM-17 — unmatched-line presentation: names print, fragments count   */
+/* ------------------------------------------------------------------ */
+
+function lineAnswer(partial: {
+  status?: string
+  unresolvedCandidates?: string[]
+  unmatchedFragmentCount?: number
+}): ComposedAnswer {
+  return {
+    status: 'empty',
+    unresolvedCandidates: [],
+    ...partial,
+  } as unknown as ComposedAnswer
+}
+
+describe('FM-17 unmatched-line presentation (unit)', () => {
+  it('names only: the shipped wording is verbatim, singular and plural', () => {
+    expect(unresolvedCandidatesLine(lineAnswer({ unresolvedCandidates: ['Fort'] }))).toBe(
+      'Research named Fort, which could not be matched to Census data, so it was not used.',
+    )
+    expect(unresolvedCandidatesLine(lineAnswer({ unresolvedCandidates: ['Fort', 'Palm'] }))).toBe(
+      'Research named Fort, Palm, which could not be matched to Census data, so they were not used.',
+    )
+  })
+
+  it('names plus fragments: the count rides as a second sentence, tokens never print', () => {
+    const line = unresolvedCandidatesLine(
+      lineAnswer({ unresolvedCandidates: ['Fort'], unmatchedFragmentCount: 5 }),
+    )
+    expect(line).toBe(
+      'Research named Fort, which could not be matched to Census data, so it was not used. ' +
+        '5 further names in the findings could not be matched to Census data either.',
+    )
+    expect(
+      unresolvedCandidatesLine(lineAnswer({ unresolvedCandidates: ['Fort'], unmatchedFragmentCount: 1 })),
+    ).toBe(
+      'Research named Fort, which could not be matched to Census data, so it was not used. ' +
+        '1 further name in the findings could not be matched to Census data either.',
+    )
+  })
+
+  it('fragments only: the line is the count alone, in the same plain wording', () => {
+    expect(unresolvedCandidatesLine(lineAnswer({ unmatchedFragmentCount: 5 }))).toBe(
+      '5 names in the findings could not be matched to Census data, so they were not used.',
+    )
+    expect(unresolvedCandidatesLine(lineAnswer({ unmatchedFragmentCount: 1 }))).toBe(
+      '1 name in the findings could not be matched to Census data, so it was not used.',
+    )
+  })
+
+  it('nothing recorded: no line; a flexible answer never carries the line', () => {
+    expect(unresolvedCandidatesLine(lineAnswer({}))).toBeNull()
+    expect(
+      unresolvedCandidatesLine(lineAnswer({ status: 'flexible', unmatchedFragmentCount: 5 })),
+    ).toBeNull()
+  })
+})
+
+describe('FM-17 unmatched-line presentation (pipeline)', () => {
+  it('a place-shaped unmatched name prints; the sheet-A fragments are counted beside it', async () => {
+    const q = 'What city in Florida has the best weather year-round?'
+    const prose = FL_FRAGMENT_PROSE + ' Fort sits on the river bend.'
+    const answer = await runPipeline({
+      q,
+      intent: { geographies: ['Florida'], metricKeys: [] },
+      rows: FL_ROWS,
+      prose,
+    })
+    expect(answer.places.map((p) => p.name)).toEqual(['St. Petersburg, FL'])
+    expect(answer.unresolvedCandidates).toEqual(['Fort'])
+    expect(unresolvedCandidatesLine(answer)).toBe(
+      'Research named Fort, which could not be matched to Census data, so it was not used. ' +
+        '5 further names in the findings could not be matched to Census data either.',
+    )
   })
 })

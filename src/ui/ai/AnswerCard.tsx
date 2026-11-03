@@ -141,17 +141,45 @@ export function requestedCountLine(answer: ComposedAnswer): string | null {
   return `You asked for ${count.format(answer.requestedCount)} places; the cited research named ${count.format(answer.places.length)} that could be matched to Census data.`
 }
 
-/** One quiet line for research-first candidates that resolved to no ZCTA. */
+/**
+ * One quiet line for research-first candidates that resolved to
+ * no ZCTA. The recorded names print — they are place-shaped
+ * mentions the research made and the data could not match. The
+ * fragment tokens the extraction gate counted (Lane A10 FM-14)
+ * do NOT print (Lane A10 FM-17): sheet A printed harvested
+ * sentence fragments as if they were named places ("Initial,
+ * Described, January-April..."). They are accounted by count in
+ * a second sentence, in the same plain wording, so the record
+ * stays complete without dressing fragments as names.
+ */
 export function unresolvedCandidatesLine(answer: ComposedAnswer): string | null {
   // A flexible completion DID use the named places — as
   // research-labelled content, not Census matches — so this line's
   // "was not used" wording would contradict the card it sits on.
   if (answer.status === 'flexible') return null
-  if (answer.unresolvedCandidates.length === 0) return null
-  const list = answer.unresolvedCandidates.join(', ')
-  return answer.unresolvedCandidates.length === 1
-    ? `Research named ${list}, which could not be matched to Census data, so it was not used.`
-    : `Research named ${list}, which could not be matched to Census data, so they were not used.`
+  const fragments = answer.unmatchedFragmentCount ?? 0
+  if (answer.unresolvedCandidates.length === 0 && fragments === 0) return null
+  const parts: string[] = []
+  if (answer.unresolvedCandidates.length > 0) {
+    const list = answer.unresolvedCandidates.join(', ')
+    parts.push(
+      answer.unresolvedCandidates.length === 1
+        ? `Research named ${list}, which could not be matched to Census data, so it was not used.`
+        : `Research named ${list}, which could not be matched to Census data, so they were not used.`,
+    )
+    if (fragments > 0) {
+      parts.push(
+        `${count.format(fragments)} further ${fragments === 1 ? 'name' : 'names'} in the findings could not be matched to Census data either.`,
+      )
+    }
+  } else {
+    parts.push(
+      fragments === 1
+        ? '1 name in the findings could not be matched to Census data, so it was not used.'
+        : `${count.format(fragments)} names in the findings could not be matched to Census data, so they were not used.`,
+    )
+  }
+  return parts.join(' ')
 }
 
 /**

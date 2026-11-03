@@ -333,6 +333,25 @@ describe('flexible completion at the runner', () => {
     expect(typeof answer?.timings?.['flexible-draft']).toBe('number')
   })
 
+  it('the flexible takeover re-issues the progress snapshot without its percent (FM-13)', async () => {
+    const snapshots: { totalUnits: number | null; criteriaTotal: number }[] = []
+    const answer = await composeAnswerForRequest({
+      ...baseInput(async () => DRAFT, jevTransportWith(0.95)),
+      onProgress: (snapshot) => {
+        snapshots.push({ totalUnits: snapshot.totalUnits, criteriaTotal: snapshot.criteriaTotal })
+      },
+    })
+    expect(answer?.status).toBe('flexible')
+    // The strict stage emitted percent-bearing snapshots...
+    expect(snapshots.some((s) => s.totalUnits !== null)).toBe(true)
+    // ...and the last one, emitted at the flexible takeover, has
+    // its total nulled (no bar, no percent on the flexible shape)
+    // while keeping the strict run's true criteria count.
+    const last = snapshots[snapshots.length - 1]!
+    expect(last.totalUnits).toBeNull()
+    expect(last.criteriaTotal).toBe(2)
+  })
+
   it('a draft the validator rejects leaves the strict note standing (fail-closed)', async () => {
     const badDraft = {
       ...DRAFT,

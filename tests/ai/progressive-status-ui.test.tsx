@@ -64,6 +64,26 @@ describe('the progress block', () => {
     expect(progressBar()?.getAttribute('aria-valuenow')).toBe('50')
     expect(progressLine()?.textContent).toBe('1 of 2 checks done · 2 places named so far')
     expect(liveText()).toBe('Researching School quality')
+    // FM-13: the percent is also a visible figure beside the bar —
+    // the bar alone carried it only in width and aria.
+    expect(container.querySelector('[data-testid="staged-progress-percent"]')?.textContent).toBe('50%')
+  })
+
+  it('a no-total snapshot (the flexible shape) shows no bar and no percent, counts intact', () => {
+    // The A7 contract: shapes with no honest percent show no bar.
+    // After the FM-13 flexible takeover the strict snapshot is
+    // re-issued with its total nulled — the counts it carries are
+    // true and keep rendering; only the bar and percent go.
+    let now = 1_000
+    const store = new AskSessionStore(() => now)
+    const token = store.beginStageRun()
+    store.setStage(token, 'researching', 'School quality')
+    store.setStageProgress(token, { ...SNAPSHOT, totalUnits: null })
+    now = 3_000
+    render(<StagedStatus session={store} ack="Let me look into that." />)
+    expect(progressBar()).toBeNull()
+    expect(container.querySelector('[data-testid="staged-progress-percent"]')).toBeNull()
+    expect(progressLine()?.textContent).toBe('1 of 2 checks done · 2 places named so far')
   })
 
   it('joins the elapsed clause once the stage is ~30s old, still outside the live region', () => {

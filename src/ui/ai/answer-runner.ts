@@ -938,6 +938,11 @@ export async function composeAnswerForRequest(input: {
     }
   }
 
+  // The strict run's latest progress snapshot, retained so the
+  // flexible takeover below can re-issue it without its percent
+  // (FM-13): the observer seam is fire-and-forget, so the runner
+  // keeps the last one it forwarded.
+  const lastProgress: { current: RunProgressSnapshot | null } = { current: null }
   const runPipeline = (query: string, forwardProgress: boolean) =>
     runAnswerPipeline({
       intent: input.intent,
@@ -983,7 +988,12 @@ export async function composeAnswerForRequest(input: {
             )
         : undefined,
       onProgress:
-        forwardProgress && input.onProgress ? (snapshot) => input.onProgress!(snapshot) : undefined,
+        forwardProgress && input.onProgress
+          ? (snapshot) => {
+              lastProgress.current = snapshot
+              input.onProgress!(snapshot)
+            }
+          : undefined,
     })
 
   // Branch evaluation at the screen -> research boundary (plan C7):
@@ -1080,6 +1090,21 @@ export async function composeAnswerForRequest(input: {
     answer.status === 'empty' &&
     (answer.noCensusMatch || (answer.researchNamedPlaces?.length ?? 0) > 0)
   ) {
+    // Lane A9 FM-13: the flexible lane owns the run from here, and
+    // its shape has no honest percent (the A7 contract — Jev-loop
+    // totals are unknowable). The strict stage's final snapshot
+    // would otherwise persist in the store and hold the progress
+    // bar at 100% through the whole flexible stage: a bar element
+    // on a no-percent shape (measured on the A7 live run sheet).
+    // The snapshot is re-issued with its total nulled — percent
+    // reads null and the bar unmounts — while its counts stay,
+    // because they are true: the strict checks did run, and the
+    // counts line and the terminal Complete strip read them
+    // through the criteria total (run-progress's own fallback).
+    const settledProgress = lastProgress.current
+    if (settledProgress) {
+      input.onProgress?.({ ...settledProgress, totalUnits: null })
+    }
     const completion = await composeFlexibleCompletion({
       queryText: input.queryText,
       strictAnswer: answer,

@@ -102,17 +102,30 @@ export function StagedStatus({
         </span>
       )}
       {visible && percent !== null && (
-        <span
-          role="progressbar"
-          aria-label="Research checks complete"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percent}
-          data-testid="staged-progress-bar"
-          className="inline-block h-1.5 w-40 overflow-hidden rounded bg-slate-200 align-middle"
-        >
-          <span className="block h-full bg-slate-500" style={{ width: `${percent}%` }} />
-        </span>
+        <>
+          <span
+            role="progressbar"
+            aria-label="Research checks complete"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+            data-testid="staged-progress-bar"
+            className="inline-block h-1.5 w-40 overflow-hidden rounded bg-slate-200 align-middle"
+          >
+            <span className="block h-full bg-slate-500" style={{ width: `${percent}%` }} />
+          </span>
+          {/*
+            The percent as a visible figure beside the bar (Lane A9
+            FM-13): the bar carried the number only in its width and
+            its aria value, so a sighted reader got a fraction from
+            the counts line but never the percent the bar asserted.
+            Same floored value progressPercent computes — one
+            number, two renderings.
+          */}
+          <span className="text-slate-500 tabular-nums" data-testid="staged-progress-percent">
+            {percent}%
+          </span>
+        </>
       )}
       <span aria-live="polite" className="sr-only" data-testid="staged-status-live">
         {label}

@@ -171,7 +171,9 @@ import {
   type FigureForValidation,
 } from './validator'
 import {
+  deriveBreadthPlaces,
   deriveInterimPlaces,
+  estimateRemainingMs,
   type BreadthLabels,
   type BreadthPlace,
   type BreadthStanding,
@@ -2778,6 +2780,53 @@ export function bindResolvedCandidates(
 }
 
 /* ------------------------------------------------------------------ */
+/* Breadth display set (breadth mode)                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A breadth run's display set: every DISTINCT place among the
+ * bound rows, one representative row per place — the member row
+ * with the largest published population (a place counts once, by
+ * place, the B3 rule; ties break by ZCTA so the choice is
+ * deterministic), ordered by population descending, then name,
+ * then ZCTA. The order is an ASSESSMENT order only — which places
+ * the batch passes reach first when the pass structure exhausts —
+ * never a ranking: the map colors standings, not size, and the
+ * card's order comes from the standings. The set's size is the
+ * denominator every breadth surface states (Texas measured
+ * 1,282 distinct places in the shipped index, 2026-11-03).
+ */
+export function breadthDisplaySet(
+  rows: readonly AreaRow[],
+): { name: string; zcta: string }[] {
+  const populationOf = (row: AreaRow): number => {
+    const value = row.metrics['population']
+    return typeof value === 'number' && Number.isFinite(value) ? value : -1
+  }
+  const representative = new Map<string, AreaRow>()
+  for (const row of rows) {
+    const current = representative.get(row.name)
+    if (!current) {
+      representative.set(row.name, row)
+      continue
+    }
+    const challenger = populationOf(row)
+    const holder = populationOf(current)
+    if (challenger > holder || (challenger === holder && row.zcta < current.zcta)) {
+      representative.set(row.name, row)
+    }
+  }
+  return [...representative.values()]
+    .map((row) => ({ name: row.name, zcta: row.zcta }))
+    .sort(
+      (a, b) =>
+        populationOf(representative.get(b.name)!) - populationOf(representative.get(a.name)!) ||
+        a.name.localeCompare(b.name, 'en') ||
+        a.zcta.localeCompare(b.zcta),
+    )
+}
+
+/* ------------------------------------------------------------------ */
 /* Claim-level prose refusal (P3 step 9)                               */
 /* ------------------------------------------------------------------ */
 
@@ -4494,6 +4543,166 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       }
     }
     let research = firstResearch
+    // Breadth mode (owner directive 2026-11-03 12:44 HST: a
+    // set-shaped researched question over a state — "Which areas
+    // of Texas are the most liberal?" — must show ALL the state's
+    // areas on the map by standing, filling in real time, with a
+    // completion estimate): when the shape gate (breadthShapeFor)
+    // admits the run, the standard stage's claims are joined by
+    // roster batches over the bound geography's display set —
+    // every distinct place in the bound rows, in assessment
+    // order — one research call per batch, each batch's places
+    // riding the request's places roster. Standings derive from
+    // the merged claims through the pole test (placeStanding);
+    // a place no sourced claim characterizes stays unassessed,
+    // on the map and in the counts. A batch that fails leaves
+    // its places unassessed and the run continues — the counts
+    // line states the coverage honestly either way. When the
+    // merged material characterizes NOTHING, breadth stands down
+    // and the standard materialization below owns the terminal
+    // exactly as before (the K1 re-ask included): breadth is an
+    // assessment structure over material, never a new failure
+    // mode. Design gate: Jev proceed / destructive 0.08 /
+    // advances 0.95, PROCEED under Jev gate policy v1.
+    const breadthShape = !firstResearchFailed
+      ? breadthShapeFor({
+          queryText: input.queryText ?? input.researchQuery,
+          intent: input.intent,
+          researchCriteria,
+        })
+      : null
+    let breadthActive: {
+      shape: NonNullable<typeof breadthShape>
+      standings: BreadthPlace[]
+      assessedCount: number
+      elapsedMs: number
+      rankedRows: AreaRow[]
+      negativeNames: string[]
+    } | null = null
+    if (breadthShape) {
+      const boundRows =
+        candidateBoundRows ??
+        input.rows.filter((r) => stateSuffixOf(r.name) === breadthShape.stateAbbr)
+      const displaySet = breadthDisplaySet(boundRows)
+      if (displaySet.length > 0) {
+        const rowByZcta = new Map(input.rows.map((r) => [r.zcta, r]))
+        const batches: (typeof displaySet)[] = []
+        for (let i = 0; i < displaySet.length; i += BREADTH_BATCH_SIZE) {
+          batches.push(displaySet.slice(i, i + BREADTH_BATCH_SIZE))
+        }
+        // The roster steering rides the query text, so it is
+        // bounded by the route's query ceiling: appended only
+        // when the whole text stays comfortably under it — the
+        // places roster itself scopes the call either way (the
+        // research prompt researches only the named places).
+        const steering =
+          "\nFor each place in this request's place list, name the place in its finding " +
+          'and state the characterization plainly — one finding per place.'
+        const breadthQuery =
+          input.researchQuery!.length + steering.length <= 480
+            ? input.researchQuery! + steering
+            : input.researchQuery!
+        const breadthStart = Date.now()
+        let batchStage: ResearchStageResult = { prose: '', sources: [], claims: [] }
+        let batchesDone = 0
+        const emitBreadthProgress = () => {
+          if (!input.onProgress) return
+          const merged = mergeResearchStages(firstResearch, batchStage)
+          const placesNow = deriveBreadthPlaces(
+            { displaySet, claims: merged.claims, criterion: breadthShape.criterion },
+            { mentionsPlace: claimMentionsPlace, standingForPlace: placeStanding },
+          )
+          const assessedNow = placesNow.filter((p) => p.standing !== 'unassessed').length
+          const elapsedNow = Date.now() - breadthStart
+          input.onProgress({
+            doneUnits: passGroups.length + batchesDone,
+            totalUnits: passGroups.length + batches.length,
+            criteriaTotal: researchPassCriteria.length,
+            criteriaDone: researchPassCriteria
+              .filter((c) => !(firstResearch.failedCriteria ?? []).includes(c.label))
+              .map((c) => c.label),
+            criteriaFailed: [...(firstResearch.failedCriteria ?? [])],
+            places: [],
+            breadth: {
+              displayTotal: displaySet.length,
+              assessedCount: assessedNow,
+              elapsedMs: elapsedNow,
+              etaMs: estimateRemainingMs(assessedNow, displaySet.length, elapsedNow),
+              geographyLabel: breadthShape.geographyLabel,
+              criterionLabel: breadthCriterionLabel(breadthShape.criterion),
+              labels: breadthLabelsFor(breadthShape.criterion, 'interim'),
+            },
+            breadthPlaces: placesNow.map(({ name, zcta, standing }) => ({
+              name,
+              zcta,
+              standing,
+            })),
+          })
+        }
+        emitBreadthProgress()
+        for (const batch of batches) {
+          try {
+            const result = await input.provider!.research(
+              { queryText: breadthQuery, places: batch.map((p) => p.name) },
+              signal,
+            )
+            batchStage = mergeResearchStages(batchStage, {
+              prose: result.prose,
+              sources: result.sources.map((s) => ({ title: s.title, url: s.url })),
+              claims: claimsFromResearch(result),
+            })
+          } catch {
+            // The batch's places stay unassessed; the run
+            // continues and the counts state the coverage.
+          }
+          batchesDone++
+          emitBreadthProgress()
+        }
+        research = mergeResearchStages(firstResearch, batchStage)
+        const standings = deriveBreadthPlaces(
+          { displaySet, claims: research.claims, criterion: breadthShape.criterion },
+          { mentionsPlace: claimMentionsPlace, standingForPlace: placeStanding },
+        )
+        const assessed = standings.filter((p) => p.standing !== 'unassessed')
+        // The card's ranked rows: positive-pole places first,
+        // then mixed, each in assessment (display) order — the
+        // candidate-led simple answer over the assessed set.
+        // Negative-pole places are the FM-4 class read through
+        // the poles: considered and not meeting, named on the
+        // card's existing line, never ranked.
+        const rankedRows = [
+          ...assessed.filter((p) => p.standing === 'positive'),
+          ...assessed.filter((p) => p.standing === 'mixed'),
+        ]
+          .map((p) => rowByZcta.get(p.zcta))
+          .filter((r): r is AreaRow => r !== undefined)
+        // Breadth owns the terminal only when it can lead the
+        // card: an all-negative or all-unassessed yield stands
+        // down to the standard materialization, whose terminals
+        // (the FM-4 partition, the honest note, the flexible
+        // fall-through) already own those shapes.
+        if (rankedRows.length > 0) {
+          breadthActive = {
+            shape: breadthShape,
+            // The terminal standings carry only CHARACTERIZING
+            // claims — the click detail shows the evidence behind
+            // the standing, not every mention of the place.
+            standings: standings.map((p) => ({
+              ...p,
+              claims: (p.claims ?? []).filter(
+                (claim) => claimCharacterization(claim, breadthShape.criterion) !== null,
+              ),
+            })),
+            assessedCount: assessed.length,
+            elapsedMs: Date.now() - breadthStart,
+            rankedRows,
+            negativeNames: assessed
+              .filter((p) => p.standing === 'negative')
+              .map((p) => p.name),
+          }
+        }
+      }
+    }
     let m = await materialize(research)
     // The resolution re-ask (Lane completion K1, 2026-11-03): the
     // stage returned material and extraction named candidates, but
@@ -4514,6 +4723,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     if (
       m.cappedRows.length === 0 &&
       !firstResearchFailed &&
+      !breadthActive &&
       m.extracted.length + m.bare.ambiguous.length + m.bare.unresolved.length > 0
     ) {
       try {
@@ -4534,15 +4744,18 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         // The first yield stands, exactly as gathered.
       }
     }
-    const {
-      extracted,
-      bare,
-      unresolvedCandidates,
-      outOfStateCandidates,
-      binding,
-      candidateCapApplied,
-      cappedRows,
-    } = m
+    const { extracted, bare, unresolvedCandidates, outOfStateCandidates, binding } = m
+    let candidateCapApplied = m.candidateCapApplied
+    let cappedRows = m.cappedRows
+    if (breadthActive) {
+      // The breadth card: the assessed set's ranked rows under
+      // the same place limit the research-first card observes,
+      // with the cap accounting reading the ranked set's size —
+      // the breadth counts line on the card states the full
+      // assessed/display accounting beside it.
+      candidateCapApplied = breadthActive.rankedRows.length > placeLimit
+      cappedRows = breadthActive.rankedRows.slice(0, placeLimit)
+    }
     const baseScreen = screenRows(input.intent, input.rows, input.geographyZctas)
     const pullScreen: ScreenResult = {
       criteria: [],
@@ -4615,6 +4828,34 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       ...(cappedRows.length === 0 && !firstResearchFailed ? { noCensusMatch: true } : {}),
       ...(research.failedCriteria?.length
         ? { researchFailures: research.failedCriteria }
+        : {}),
+      // The breadth record (breadth mode): the terminal map and
+      // the counts line read the answer's own standings, and the
+      // negative-pole places join compose's own FM-4 partition
+      // on the considered-and-not-meeting line — one accounting,
+      // deduped, compose's entries first.
+      ...(breadthActive
+        ? {
+            breadth: {
+              geographyLabel: breadthActive.shape.geographyLabel,
+              criterionLabel: breadthCriterionLabel(breadthActive.shape.criterion),
+              labels: breadthLabelsFor(breadthActive.shape.criterion, 'terminal'),
+              displayTotal: breadthActive.standings.length,
+              assessedCount: breadthActive.assessedCount,
+              elapsedMs: breadthActive.elapsedMs,
+              standings: breadthActive.standings,
+            },
+            ...(breadthActive.negativeNames.length > 0
+              ? {
+                  consideredNotMeeting: [
+                    ...new Set([
+                      ...(composedRaw.consideredNotMeeting ?? []),
+                      ...breadthActive.negativeNames,
+                    ]),
+                  ],
+                }
+              : {}),
+          }
         : {}),
     }
     const composed = input.unresolvedGeographies

@@ -105,7 +105,7 @@ export function StagedStatus({
         <>
           <span
             role="progressbar"
-            aria-label="Research checks complete"
+            aria-label={progress?.breadth ? 'Areas assessed' : 'Research checks complete'}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}

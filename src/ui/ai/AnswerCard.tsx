@@ -14,6 +14,7 @@ import {
 import { formatMetricNumber } from '../metric-format'
 import { ResultMap } from '../map/ResultMap'
 import { QualifyingPlacesMap } from '../map/QualifyingPlacesMap'
+import { ProgressivePlacesMap } from '../map/ProgressivePlacesMap'
 import { FlexibleAnswer } from './FlexibleAnswer'
 import { HelpTip } from './HelpTip'
 import { measureLabel } from './plain-labels'
@@ -126,8 +127,30 @@ export function droppedClaimsLine(answer: ComposedAnswer): string | null {
  * the whole screened set.
  */
 export function candidateCapLine(answer: ComposedAnswer): string | null {
+  // A breadth answer's cap accounting is its own line
+  // (breadthCountsLine): every display place was rostered for
+  // assessment, so this line's "further places were not
+  // researched" would be false on the card it sits on.
+  if (answer.breadth) return null
   if (!answer.candidateCapApplied) return null
   return `Research covered the first ${count.format(answer.candidateCap)} candidate places; any further places were not researched.`
+}
+
+/**
+ * The breadth counts line (breadth mode): the assessed count over
+ * the display total, in the geography's own name, with the
+ * unassessed remainder stated plainly — the same assessed/display
+ * accounting the terminal map and the COMPLETE strip carry, from
+ * the answer's own breadth record, so the three surfaces can
+ * never disagree about the run's coverage.
+ */
+export function breadthCountsLine(answer: ComposedAnswer): string | null {
+  if (!answer.breadth) return null
+  const { assessedCount, displayTotal, geographyLabel } = answer.breadth
+  const head = `${count.format(assessedCount)} of ${count.format(displayTotal)} areas in ${geographyLabel} were assessed from cited sources.`
+  const rest = displayTotal - assessedCount
+  if (rest <= 0) return head
+  return `${head} The other ${count.format(rest)} are shown on the map as not assessed — no cited source characterized them.`
 }
 
 /**
@@ -529,6 +552,7 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
   const unresolvedLine = unresolvedGeographiesLine(answer)
   const droppedClaims = droppedClaimsLine(answer)
   const capLine = candidateCapLine(answer)
+  const breadthLine = breadthCountsLine(answer)
   const shortfallLine = requestedCountLine(answer)
   const unresolvedCandidates = unresolvedCandidatesLine(answer)
   const outOfBoundLine = outOfBoundCandidatesLine(answer)
@@ -659,6 +683,11 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
           {capLine}
         </p>
       )}
+      {breadthLine && (
+        <p role="note" className="mt-3 text-sm text-slate-500">
+          {breadthLine}
+        </p>
+      )}
       {shortfallLine && (
         <p role="note" className="mt-1 text-sm text-slate-500">
           {shortfallLine}
@@ -747,8 +776,34 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
         points map receives the card's shown places in card order;
         its marks jump to the PlaceBlock anchors above.
       */}
+      {/*
+        BREADTH MAP (owner directive 2026-11-03 12:44 HST): a
+        breadth terminal mounts the breadth surface — the whole
+        display set by standing — in place of both maps below: its
+        geography IS the answer in a stronger form than the
+        qualifying points (which would plot only the card's ten),
+        and the three predicates stay mutually exclusive, so a
+        card still mounts at most one map. The surface is the
+        progressive map component in its terminal mode: the same
+        surface the run filled, settled.
+      */}
+      {answer.status === 'verified' && answer.breadth && (
+        <ProgressivePlacesMap
+          places={[]}
+          breadth={{
+            places: answer.breadth.standings,
+            labels: answer.breadth.labels,
+            criterionLabel: answer.breadth.criterionLabel,
+            geographyLabel: answer.breadth.geographyLabel,
+            assessedCount: answer.breadth.assessedCount,
+            displayTotal: answer.breadth.displayTotal,
+            terminal: true,
+            sources: answer.sources,
+          }}
+        />
+      )}
       {answer.status === 'verified' && resultMapRelevant(answer) && <ResultMap answer={answer} />}
-      {answer.status === 'verified' && qualifyingPlacesMapRelevant(answer) && (
+      {answer.status === 'verified' && !answer.breadth && qualifyingPlacesMapRelevant(answer) && (
         <QualifyingPlacesMap
           places={orderedPlaces(answer).slice(0, ANSWER_CARD_PLACE_LIMIT)}
         />

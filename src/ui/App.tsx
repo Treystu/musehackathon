@@ -972,7 +972,22 @@ export default function App() {
         sessionStore.setAnswerState({
           runSummary: {
             requestId: id,
-            text: runSummaryText(progress, terminal ? terminalEntryCount(terminal) : 0),
+            text: runSummaryText(
+              progress,
+              terminal ? terminalEntryCount(terminal) : 0,
+              // Breadth terminals stamp their own counts (the
+              // assessed/display accounting + actual elapsed) —
+              // the FM-22 rule with the breadth record as the
+              // terminal's own numbers.
+              terminal?.breadth
+                ? {
+                    assessedCount: terminal.breadth.assessedCount,
+                    displayTotal: terminal.breadth.displayTotal,
+                    geographyLabel: terminal.breadth.geographyLabel,
+                    elapsedMs: terminal.breadth.elapsedMs,
+                  }
+                : undefined,
+            ),
           },
         })
       }
@@ -2190,8 +2205,24 @@ export default function App() {
                   percent above it carry the partial state, labeled
                   as such.
                 */}
-                {stage?.progress && stage.progress.places.length >= 1 ? (
-                  <ProgressivePlacesMap places={stage.progress.places} />
+                {stage?.progress &&
+                (stage.progress.places.length >= 1 ||
+                  (stage.progress.breadthPlaces?.length ?? 0) >= 1) ? (
+                  <ProgressivePlacesMap
+                    places={stage.progress.places}
+                    breadth={
+                      stage.progress.breadth && stage.progress.breadthPlaces
+                        ? {
+                            places: stage.progress.breadthPlaces,
+                            labels: stage.progress.breadth.labels,
+                            criterionLabel: stage.progress.breadth.criterionLabel,
+                            geographyLabel: stage.progress.breadth.geographyLabel,
+                            assessedCount: stage.progress.breadth.assessedCount,
+                            displayTotal: stage.progress.breadth.displayTotal,
+                          }
+                        : undefined
+                    }
+                  />
                 ) : null}
               </div>
             ) : null}

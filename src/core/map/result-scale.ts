@@ -479,6 +479,21 @@ export interface TerminalChartKind {
  * this set.
  */
 export function terminalChartKinds(answer: ComposedAnswer): TerminalChartKind[] {
+  // The breadth map (breadth mode, 2026-11-03): the terminal
+  // render mounts it for a breadth answer in place of both maps
+  // below (AnswerCard), so speech references it, in its own
+  // sentence — "the areas of Texas by political leaning" names
+  // the map's actual content, the geography by the criterion.
+  if (answer.breadth && answer.status === 'verified') {
+    return [
+      {
+        kind: 'map',
+        spokenName: 'the map',
+        subject: 'the areas by their standing',
+        sentence: `The map shows the areas of ${answer.breadth.geographyLabel} by ${answer.breadth.criterionLabel.toLowerCase()}.`,
+      },
+    ]
+  }
   if (resultMapRelevant(answer)) {
     const key = drivingMetricKey(answer)
     if (!key) return []

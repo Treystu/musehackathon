@@ -126,7 +126,12 @@ export interface AnswerState {
    * terminal moment the answer lands and keyed to its request: it
    * renders above that request's card or note and is dropped when
    * a new ask begins, so a summary can never outlive its own run
-   * or drift onto another's card.
+   * or drift onto another's card. The K is the landed answer's own
+   * entry count (Lane A11 FM-22): the run's progress snapshot
+   * counts the first pipeline run's interim candidates, which a
+   * shipped Jev-loop patch re-run can supersede — stamping the
+   * snapshot's count beside the re-run's card misstated the card
+   * on three live specimens (3 vs 4, 1 vs 3, 3 vs 5).
    */
   runSummary: { requestId: number; text: string } | null
   /**

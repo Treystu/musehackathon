@@ -33,7 +33,7 @@
  * renders a function of (snapshot, stage, elapsed bucket).
  */
 
-import type { ResearchCriterion, ResearchedClaim } from './answer'
+import type { ComposedAnswer, ResearchCriterion, ResearchedClaim } from './answer'
 
 /** One criterion's interim state for one place. */
 export type InterimVerdictState = 'served' | 'not-served' | 'failed' | 'pending'
@@ -253,25 +253,50 @@ export function situationalText(
 }
 
 /**
+ * The number of place entries the terminal card lists for an
+ * answer: the composed places, or — on a flexible terminal, whose
+ * strict places are empty by construction — the flexible
+ * completion's own places, which are the entries its card renders.
+ */
+export function terminalEntryCount(answer: ComposedAnswer): number {
+  return answer.status === 'flexible' && answer.flexible
+    ? answer.flexible.places.length
+    : answer.places.length
+}
+
+/**
  * The COMPLETE strip's text, stamped at the terminal for a run that
  * carried a progress snapshot. "Complete" describes the RUN
  * finishing, never the outcome succeeding: failed lookups are named
  * as lookups that did not return, and the places clause appears only
  * when places were actually assessed (a total failure assessed
  * none, however many candidates were waiting).
+ *
+ * The assessed count is the TERMINAL answer's entry count when the
+ * caller supplies it (Lane A11 FM-22): the snapshot's own places
+ * are the FIRST pipeline run's interim candidates, and the runner
+ * can ship a Jev-loop patch re-run whose research named a different
+ * candidate set — the strip then counted a run the reader never
+ * saw beside the card that run produced. Measured live on
+ * production 44f90ff (re-verification sheet, 2026-11-03): Florida
+ * weather strip 3 against 4 card entries, Montana hiking 1 against
+ * 3, Colorado 3 against 5. The view stamps the strip in the same
+ * moment it lands the answer, so it passes the answer's own count;
+ * the snapshot count remains the fallback for callers with no
+ * terminal answer in scope.
  */
-export function runSummaryText(snapshot: RunProgressSnapshot): string {
+export function runSummaryText(
+  snapshot: RunProgressSnapshot,
+  terminalEntries?: number,
+): string {
   const total = snapshot.totalUnits ?? snapshot.criteriaTotal
   const done = snapshot.doneUnits
   const failed = snapshot.criteriaFailed.length
+  const assessed = terminalEntries ?? snapshot.places.length
   const parts = [`Complete — ${done} of ${total} checks done`]
   if (failed > 0) parts.push(lookupPhrase(failed))
-  if (snapshot.places.length > 0 && snapshot.criteriaDone.length > 0) {
-    parts.push(
-      snapshot.places.length === 1
-        ? '1 place assessed'
-        : `${snapshot.places.length} places assessed`,
-    )
+  if (assessed > 0 && snapshot.criteriaDone.length > 0) {
+    parts.push(assessed === 1 ? '1 place assessed' : `${assessed} places assessed`)
   }
   return parts.join(' · ')
 }

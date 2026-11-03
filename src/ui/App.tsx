@@ -49,7 +49,7 @@ import {
 import { createSpeechDriver, type SpeechDriver } from './ai/speech-driver'
 import { guardSpokenSentences, planTerminalSpeech } from './ai/spoken-answer'
 import { StagedStatus } from './ai/StagedStatus'
-import { runSummaryText } from '../core/ai/run-progress'
+import { runSummaryText, terminalEntryCount } from '../core/ai/run-progress'
 import { ProgressivePlacesMap } from './map/ProgressivePlacesMap'
 import { AskSessionStore, type AnswerRequestOrigin } from './ai/session-store'
 import { researchAck } from './ai/ack'
@@ -934,12 +934,25 @@ export default function App() {
     // the card are one terminal state. A run that never researched
     // has no progress record and no checks to summarize: no strip,
     // rather than a fabricated count.
-    const stampRunSummary = () => {
+    //
+    // The strip's places count is the TERMINAL answer's own entry
+    // count (Lane A11 FM-22), never the snapshot's: the progress
+    // record holds the first pipeline run's interim candidates,
+    // and the runner may ship a Jev-loop patch re-run whose
+    // research named more places than the first run's snapshot
+    // ever carried — measured live on 44f90ff as strips reading 3,
+    // 1 and 3 places assessed beside cards listing 4, 3 and 5
+    // entries. A note terminal has no card and no entries: the
+    // count is 0 and the places clause does not render.
+    const stampRunSummary = (terminal: ComposedAnswer | null) => {
       const stageNow = sessionStore.getSnapshot().stage
       const progress = stageNow && stageNow.runToken === runToken ? stageNow.progress : null
       if (progress) {
         sessionStore.setAnswerState({
-          runSummary: { requestId: id, text: runSummaryText(progress) },
+          runSummary: {
+            requestId: id,
+            text: runSummaryText(progress, terminal ? terminalEntryCount(terminal) : 0),
+          },
         })
       }
     }
@@ -967,7 +980,7 @@ export default function App() {
         // stranded the request with nothing rendered at all.
         if (answerRequestSeq.current !== id) return
         answerComposedIds.current.add(id)
-        stampRunSummary()
+        stampRunSummary(composed)
         if (composed) {
           setAnswerNote(null)
           setAnswer(composed)
@@ -1000,7 +1013,7 @@ export default function App() {
             ? code
             : 'unexpected',
         )
-        stampRunSummary()
+        stampRunSummary(null)
         setAnswerNote({ id, text: ANSWER_COMPOSE_FAILED_NOTE })
       } finally {
         answerInFlightIds.current.delete(id)

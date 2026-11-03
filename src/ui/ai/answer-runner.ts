@@ -788,6 +788,29 @@ export async function evaluateDecisionProposal(input: {
 }
 
 /**
+ * A bookend transport call, settled: a transport that throws
+ * degrades exactly like one that returns null — the bookend
+ * abstains and the run proceeds on the deterministic stages. The
+ * production HTTP transports already settle their own failures to
+ * null; this holds the stack contract (every transport failure
+ * degrades its own consumer only) for any transport a caller
+ * injects, so one bookend failure can never block a run outright
+ * or discard a composed answer (compose-degradation cure,
+ * 2026-11-03: measured pre-cure, a throwing verify transport
+ * rejected the run after a verified answer already existed).
+ * Packet construction stays outside the settle: a defect in the
+ * packet builders is a code error, not a transport failure, and
+ * still surfaces as one.
+ */
+async function settleBookend<T>(call: () => Promise<T | null>): Promise<T | null> {
+  try {
+    return await call()
+  } catch {
+    return null
+  }
+}
+
+/**
  * Run the pipeline for one Ask request over already-loaded rows.
  *
  * Returns null — no card — in exactly two cases: the intent named
@@ -798,13 +821,17 @@ export async function evaluateDecisionProposal(input: {
  * note in the card's blocked words — on the research-first handoff
  * path nothing upstream speaks for a blocked composition, and a
  * silent null there was one half of the Round 11 dead-end.
- * Research failures on the research-first path propagate to the
- * caller, which likewise renders them as the answer area's note
- * and records the failure class in diagnostics; on the screen path
- * a research failure degrades inside the pipeline onto the Census
- * card as a recorded lookup failure and never reaches the caller
- * (answer.ts, total-failure degrade, 2026-11-02). No terminal
- * state of this pipeline is silent.
+ * A research failure degrades inside the pipeline on both paths
+ * and never reaches the caller as a throw (answer.ts,
+ * total-failure ladder, 2026-11-03): the screen path and the
+ * state-bounded research-first arm land on the Census card with
+ * the researched criteria recorded as lookup failures, and the
+ * remaining research-first arms land on the honest-note answer.
+ * Bookend transport failures settle the same way at this seam
+ * (settleBookend above). What still propagates is a defect-class
+ * throw — deterministic code failing, not a provider — which the
+ * caller renders as the answer area's note and records in
+ * diagnostics. No terminal state of this pipeline is silent.
  */
 export async function composeAnswerForRequest(input: {
   intent: ValidatedIntent
@@ -976,25 +1003,24 @@ export async function composeAnswerForRequest(input: {
   if (stack) {
     const started = performance.now()
     input.onStage?.('wonder-plan')
-    const verdict = await stack.planTransport(
-      buildPlanPacket({
-        question: input.queryText,
-        intent: {
-          mode: input.intent.mode,
-          geographies: [...input.intent.geographies],
-          metricKeys: [...input.intent.metricKeys],
-        },
-        criteria: [
-          ...screenCriteriaFromIntent(input.intent).criteria.map((c) => ({
-            kind: 'census' as const,
-            text: c.metricKey,
-          })),
-          ...researchCriteria.map((c) => ({ kind: 'research' as const, text: c.label })),
-        ],
-        subsetSummary: { count: rows.length, ranges: [] },
-        decisions: { ...decisions } as Record<string, string>,
-      }),
-    )
+    const planPacket = buildPlanPacket({
+      question: input.queryText,
+      intent: {
+        mode: input.intent.mode,
+        geographies: [...input.intent.geographies],
+        metricKeys: [...input.intent.metricKeys],
+      },
+      criteria: [
+        ...screenCriteriaFromIntent(input.intent).criteria.map((c) => ({
+          kind: 'census' as const,
+          text: c.metricKey,
+        })),
+        ...researchCriteria.map((c) => ({ kind: 'research' as const, text: c.label })),
+      ],
+      subsetSummary: { count: rows.length, ranges: [] },
+      decisions: { ...decisions } as Record<string, string>,
+    })
+    const verdict = await settleBookend(() => stack.planTransport(planPacket))
     timings.plan = performance.now() - started
     if (verdict?.verdict === 'unsound') {
       planObjections = verdict.objections.map((o) => `${o.code}: ${o.detail}`)
@@ -1013,10 +1039,13 @@ export async function composeAnswerForRequest(input: {
   // drafts on the hourglass seams and must pass the extended
   // validator before it replaces the note; any failure along the
   // way returns null here and the strict terminal stands, unchanged.
-  // Provider failures never reach this branch (they throw out of
-  // the pipeline to the caller's note), and neither do safety
-  // refusals ('blocked' returned null above) or a genuine Census
-  // screen with no match (status 'empty' with no research material).
+  // Provider failures reach this branch only as the pipeline's
+  // honest-note terminal (compose-degradation cure, 2026-11-03):
+  // it carries no noCensusMatch marker and names no places, so
+  // the material test below excludes it — a total failure grounds
+  // no completion. Neither do safety refusals ('blocked' returned
+  // null above) or a genuine Census screen with no match (status
+  // 'empty' with no research material).
   //
   // Trigger widening (2026-11-02, flexible-trigger cure): the
   // fall-through keys on the MATERIAL — research-named places
@@ -1195,23 +1224,22 @@ export async function composeAnswerForRequest(input: {
   if (stack && answer.status === 'verified') {
     const started = performance.now()
     input.onStage?.('wonder-verify')
-    const verdict = await stack.verifyTransport(
-      buildVerifyPacket({
-        summary: answer.summary,
-        places: answer.places.map((place) => ({
-          name: place.name,
-          figures: place.figures.map((f) => ({ key: f.key, value: f.value })),
-        })),
-        evidence: answer.criterionEvidence.map((entry) => ({
-          criterion: entry.criterion,
-          status: entry.status,
-          detail: entry.detail,
-        })),
-        sources: answer.sources.map((s) => ({ title: s.title, url: s.url })),
-        verifySummary: `status ${answer.status}; ${answer.places.length} places; ${answer.failures.length} verify failures`,
-        placeDisplayLimit: 10,
-      }),
-    )
+    const verifyPacket = buildVerifyPacket({
+      summary: answer.summary,
+      places: answer.places.map((place) => ({
+        name: place.name,
+        figures: place.figures.map((f) => ({ key: f.key, value: f.value })),
+      })),
+      evidence: answer.criterionEvidence.map((entry) => ({
+        criterion: entry.criterion,
+        status: entry.status,
+        detail: entry.detail,
+      })),
+      sources: answer.sources.map((s) => ({ title: s.title, url: s.url })),
+      verifySummary: `status ${answer.status}; ${answer.places.length} places; ${answer.failures.length} verify failures`,
+      placeDisplayLimit: 10,
+    })
+    const verdict = await settleBookend(() => stack.verifyTransport(verifyPacket))
     timings.verify = performance.now() - started
     verification.wonder = wonderLabelFor(verdict)
     if (verdict?.verdict === 'concerns') {

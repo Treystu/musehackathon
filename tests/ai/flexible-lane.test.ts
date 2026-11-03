@@ -632,15 +632,26 @@ describe('screen-path research failure degrade', () => {
     expect(answer.summary).toContain('School quality')
   })
 
-  it('the research-first path still throws on total research failure — the boundary stands', async () => {
-    await expect(
-      runAnswerPipeline({
-        intent: EXTERNAL_ONLY,
-        rows: ROWS,
-        researchQuery: SENTENCE_1,
-        queryText: SENTENCE_1,
-        provider: downProvider(),
-      }),
-    ).rejects.toThrow('provider_down')
+  it('the research-first path lands its honest note on total research failure — the boundary moved into the pipeline', async () => {
+    // Before the compose-degradation cure (2026-11-03) this case
+    // pinned the throw: the screen path degraded and the
+    // research-first path rethrew, the boundary between them
+    // deliberate. The cure removed the throw — a placeless total
+    // failure now composes the honest-note terminal in-pipeline
+    // (the state-bounded arm degrades onto its screen instead),
+    // and this pin holds the new boundary: the note, with every
+    // researched failure recorded, never a rejection.
+    const answer = await runAnswerPipeline({
+      intent: EXTERNAL_ONLY,
+      rows: ROWS,
+      researchQuery: SENTENCE_1,
+      queryText: SENTENCE_1,
+      provider: downProvider(),
+    })
+    expect(answer.status).toBe('empty')
+    expect(answer.places).toEqual([])
+    expect(answer.summary).toContain('did not return')
+    expect(answer.researchFailures).toEqual(['School quality', 'Fast food restaurants'])
+    expect(answer.noCensusMatch).toBeUndefined()
   })
 })

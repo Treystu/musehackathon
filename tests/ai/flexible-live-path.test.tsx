@@ -350,7 +350,15 @@ describe('flexible trigger gap — the owner question battery', () => {
     installFetch(log, { researchMode: 'down' })
     render(<App />)
     await ask(OWNER_QUESTION)
-    expect(await waitFor(() => pageText().includes(COMPOSE_FAILED_NOTE))).toBe(true)
+    // Compose-degradation cure (2026-11-03): the total failure
+    // composes the honest-note answer in-pipeline — the
+    // lookup-failure summary — rather than throwing to the bare
+    // compose-failed note this case pinned before the cure. The
+    // note carries no research material (no marker, no named
+    // places), so the flexible route stays uncalled, as asserted
+    // below.
+    expect(await waitFor(() => pageText().includes('did not return'))).toBe(true)
+    expect(pageText()).not.toContain(COMPOSE_FAILED_NOTE)
     const text = pageText()
     expect(log.research).toBeGreaterThanOrEqual(1)
     expect(log.researchStatuses).not.toContain(200)

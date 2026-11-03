@@ -257,7 +257,7 @@ describe('answer layer on the real data path: terminal states', () => {
     expect(pageText()).not.toContain('Hilo, HI elementary schools')
   }, 90_000)
 
-  it('compose failure (the swallowed catch): research fired and failed, honest note — never silence', async () => {
+  it('total research failure (the swallowed catch, cured): research fired and failed, the honest note answer — never silence, never the bare compose terminal', async () => {
     installFetch({ enumeration: 'ok', research: 'fail' }, log)
     render(<App />)
     await ask(OWNER_QUESTION_SCHOOLS)
@@ -265,7 +265,13 @@ describe('answer layer on the real data path: terminal states', () => {
     // The load lands, compose starts, the research stage fails — the
     // divergence from the load-failure case, proven by the call count.
     expect(await waitFor(() => log.research >= 1)).toBe(true)
-    expect(await waitFor(() => pageText().includes(COMPOSE_FAILED_NOTE), 8000)).toBe(true)
+    // Compose-degradation cure (2026-11-03): a total research
+    // failure on the research-first path composes the honest-note
+    // answer in-pipeline — the lookup-failure summary in the
+    // answer area — instead of throwing to the bare compose-failed
+    // note this case pinned before the cure.
+    expect(await waitFor(() => pageText().includes('did not return'), 8000)).toBe(true)
+    expect(pageText()).not.toContain(COMPOSE_FAILED_NOTE)
   }, 90_000)
 
   it('the owner’s schools + fast-food question composes its card end to end on the real seams', async () => {

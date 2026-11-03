@@ -884,9 +884,19 @@ export default function App() {
         }
       } catch (err) {
         if (answerRequestSeq.current !== id) return
-        // A failed research or pipeline run is a terminal state with
-        // a note and a diagnostics record, never a silent catch.
-        // The executed views below remain available.
+        // A thrown run is a terminal state with a note and a
+        // diagnostics record, never a silent catch. The executed
+        // views below remain available. Since the compose-
+        // degradation cure (2026-11-03), no provider failure
+        // reaches this catch: research failures degrade inside the
+        // pipeline (the state screen card, or the honest-note
+        // answer) and bookend transport failures settle at the
+        // runner, so the throws that remain are defect-class —
+        // deterministic code failing, where no composition
+        // contract exists to degrade onto. This note is that
+        // case's terminal, and the note itself is a static string
+        // set unconditionally here, so it has no failure mode of
+        // its own.
         const code = (err as { code?: unknown } | null)?.code
         diagnostics.recordErrorState(
           typeof code === 'string' && (PROXY_ERRORS as readonly string[]).includes(code)

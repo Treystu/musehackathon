@@ -2045,23 +2045,45 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     researchCriteria[0]?.label ??
     input.intent.geographies[0]
 
-  // State-bounded degrade (2026-11-03): a TOTAL research failure on
-  // the widened state-bounded arm does not take the research-first
-  // path's rethrow terminal. That arm's question carries a complete
-  // Census screen — the state's places under its stated measures —
-  // which the screen-compose cure (2026-11-02, the Arkansas
-  // battery) established as the card a total failure degrades onto,
-  // with every researched criterion recorded as a lookup that did
-  // not return. The pre-existing research-first arms keep the
-  // rethrow: their screen is placeless, and a national dump is not
-  // an answer to a criteria question. The widened arm is identified
-  // structurally: state bound + a named researched criterion +
-  // retained measures (the measures are what make the fallback
-  // screen a real answer rather than an unsorted list).
+  // The widened arm, identified structurally: state bound + a named
+  // researched criterion + retained measures. This identification
+  // gates the intersection RANKING below (candidates ranked by the
+  // decomposed measure) — the class whose success-path order the
+  // Colorado cure established.
   const widenedStateBound =
     stateBounded && namedResearchCriterion && input.intent.metricKeys.length > 0
+  // Total-failure ladder on the research-first path
+  // (compose-degradation cure, 2026-11-03): a TOTAL research
+  // failure never rethrows out of the pipeline. The hosted-browser
+  // capture on df91134 measured the rethrow's cost: the Colorado
+  // question — state-bounded, its cost measure carried only in the
+  // criterion decomposition, so the intent retained no measures
+  // and the earlier measures-gated degrade did not hold —
+  // terminated at the caller's bare compose-failure note after one
+  // provider_down, discarding the complete state screen the run
+  // already held. The ladder, by the material in hand:
+  // - State-bounded: the question carries a complete Census screen
+  //   (the state's places under its stated bounds), so the run
+  //   degrades onto the screen card with every researched
+  //   criterion recorded as a lookup that did not return — the
+  //   screen-compose cure's terminal (2026-11-02, the Arkansas
+  //   battery), now gated on the state bound alone: whether a
+  //   measure survived the intent parse is not what makes the
+  //   screen real.
+  // - Any other bound (placeless or place-level): no screen
+  //   answers the question — a national dump is not an answer —
+  //   so the run composes the honest-note terminal in-pipeline
+  //   from an empty research result whose failedCriteria carry
+  //   every researched label: the summary states the lookup did
+  //   not return and the per-criterion accounting renders the
+  //   same line. The terminal carries no noCensusMatch marker
+  //   and names no places, so the caller's flexible fall-through
+  //   does not engage: a completion is grounded on what research
+  //   returned, and a total failure returns nothing to ground
+  //   one on — nothing in hand stays the honest note.
   let firstResearch: ResearchStageResult | null = null
   let firstResearchDown = false
+  let firstResearchFailed = false
   if (researchFirst) {
     input.onStage?.('research', researchSubject)
     try {
@@ -2072,9 +2094,20 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         input.researchQuery!,
         signal,
       )
-    } catch (err) {
-      if (!widenedStateBound) throw err
-      firstResearchDown = true
+    } catch {
+      if (stateBounded) {
+        firstResearchDown = true
+      } else {
+        firstResearchFailed = true
+        firstResearch = {
+          prose: '',
+          sources: [],
+          claims: [],
+          failedCriteria: researchCriteria
+            .filter((c) => !c.decomposedMetricKey)
+            .map((c) => c.label),
+        }
+      }
     }
   }
   if (researchFirst && firstResearch) {
@@ -2195,13 +2228,15 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       geographyDisclosures: input.geographyDisclosures,
       summaryOverride:
         cappedRows.length === 0
-          ? 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
+          ? firstResearchFailed
+            ? 'The research lookup for the stated criteria did not return, so no place is named here.'
+            : 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
           : undefined,
     })
     const composedWithMarker = {
       ...composedRaw,
       researchNamedPlaces: [...extracted],
-      ...(cappedRows.length === 0 ? { noCensusMatch: true } : {}),
+      ...(cappedRows.length === 0 && !firstResearchFailed ? { noCensusMatch: true } : {}),
       ...(research.failedCriteria?.length
         ? { researchFailures: research.failedCriteria }
         : {}),
@@ -2396,9 +2431,10 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // This stage runs only over a non-empty screen, so Census
     // material exists that can carry the card on its own: a total
     // research failure degrades onto the card as recorded lookup
-    // failures (tolerateTotalFailure — see researchPerCriterion),
-    // where the research-first call above deliberately keeps the
-    // rethrow, research being its only leg. The single-pass legacy
+    // failures (tolerateTotalFailure — see researchPerCriterion);
+    // the research-first call above degrades on its own ladder
+    // (the state screen, or the honest note where no screen
+    // answers the question). The single-pass legacy
     // shape degrades the same way; it carries no decomposed
     // criterion, so there is no label for the stage result to
     // record — the card is the screen's, with no research claims.

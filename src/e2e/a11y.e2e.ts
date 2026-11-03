@@ -146,6 +146,37 @@ describe('accessibility requirements axe cannot check', () => {
     expect(bad).toBe(0)
   })
 
+  it('opens the heading order with the page h1 on the Ask surface', async () => {
+    // Cure D1 (2026-11-03), measured by the judge-a11y DOM audit on the
+    // served production build: the GuidedTour step heading was an h2
+    // ahead of the page h1 in DOM order, so a screen reader's heading
+    // list opened with a tour step. The tour titles are non-heading
+    // text now; their containers keep their accessible names through
+    // aria-labelledby pointing at that text.
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(500)
+    const headings = await page.evaluate(() =>
+      [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].map((h) => ({
+        level: Number(h.tagName.slice(1)),
+        text: (h.textContent ?? '').trim(),
+      })),
+    )
+    expect(headings.length).toBeGreaterThan(0)
+    expect(headings[0]!.level).toBe(1)
+    const tourTitle = await page.evaluate(() => {
+      const dialog = document.querySelector('dialog')
+      const id = dialog?.getAttribute('aria-labelledby')
+      const target = id ? document.getElementById(id) : null
+      return target ? { tag: target.tagName, text: (target.textContent ?? '').trim() } : null
+    })
+    expect(tourTitle?.tag).toBe('P')
+    expect(tourTitle?.text).toContain('Ask first')
+    // The TourNotice title ("New here", GuidedTour.tsx) was demoted in
+    // the same edit; no surface currently mounts the notice (it came
+    // off the task surfaces in the 2026-11-02 phone review), so there
+    // is no live heading-order instance of it to assert here.
+  })
+
   it('announces async loading state through a live region', async () => {
     await gotoExplore()
     const live = page.locator('[role="status"][aria-live="polite"]')

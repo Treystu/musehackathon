@@ -1600,6 +1600,55 @@ export default function App() {
     </>
   )
 
+  /**
+   * Terminal focus placement (a11y cure D2, 2026-11-03). The ask-submit
+   * lockout removes the focused Ask button from the DOM for the run's
+   * whole span (owner ruling, 2026-11-02; the lockout itself is
+   * unchanged by this cure), so a keyboard submit drops focus to the
+   * body — and nothing owned it afterward. Measured on the served
+   * production build (judge-a11y DOM audit): focus sat on body at
+   * submit, through the run, and at the terminal. So when a run
+   * settles with a terminal artifact on screen — the answer card, the
+   * note in the card's shell, or the general lane's card or note —
+   * AND focus is sitting on the body (the exact signature of the
+   * unmount drop), focus moves to the answer region, and the reader
+   * lands on the outcome they were waiting for. Focus the reader
+   * placed anywhere else — the question box, a control tabbed to
+   * mid-run — is never taken. preventScroll: the landing registers
+   * without a visual jump. A clarification is not a terminal (no
+   * artifact renders), so clarification keeps focus where it is.
+   */
+  const answerRegionEl = useRef<HTMLElement | null>(null)
+  const setAnswerRegion = useCallback((el: HTMLElement | null) => {
+    if (el) answerRegionEl.current = el
+  }, [])
+  const answerRunWasInFlight = useRef(false)
+  const answerInFlightNow =
+    panelBusy || stage !== null || composeInFlight || generalInFlight || refineInFlight
+  const answerTerminalPresent = Boolean(
+    generalAnswer ||
+      generalNote ||
+      (answer &&
+        answerRequest &&
+        (answerRequest.epoch ?? 0) === answerState.askEpoch) ||
+      (answerNote &&
+        answerRequest &&
+        answerNote.id === answerRequest.id &&
+        (answerRequest.epoch ?? 0) === answerState.askEpoch),
+  )
+  useEffect(() => {
+    if (answerInFlightNow) {
+      answerRunWasInFlight.current = true
+      return
+    }
+    if (!answerRunWasInFlight.current || !answerTerminalPresent) return
+    answerRunWasInFlight.current = false
+    const active = document.activeElement
+    if (active !== null && active !== document.body) return
+    const region = answerRegionEl.current
+    if (region && region.isConnected) region.focus({ preventScroll: true })
+  }, [answerInFlightNow, answerTerminalPresent])
+
   /*
    * The shell.
    *
@@ -1863,11 +1912,21 @@ export default function App() {
               the Census part on the data card below it.
             */}
             {generalAnswer ? (
-              <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+              <div
+                ref={setAnswerRegion}
+                tabIndex={-1}
+                data-answer-region
+                className="anim-rise mx-auto mt-6 max-w-3xl px-2"
+              >
                 <GeneralAnswer answer={generalAnswer} />
               </div>
             ) : generalNote ? (
-              <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+              <div
+                ref={setAnswerRegion}
+                tabIndex={-1}
+                data-answer-region
+                className="anim-rise mx-auto mt-6 max-w-3xl px-2"
+              >
                 <section
                   aria-label="General answer"
                   className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-[0_1px_6px_rgba(32,33,36,0.14)]"
@@ -1899,7 +1958,12 @@ export default function App() {
               </div>
             ) : null}
             {answer && answerRequest && (answerRequest.epoch ?? 0) === answerState.askEpoch ? (
-              <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+              <div
+                ref={setAnswerRegion}
+                tabIndex={-1}
+                data-answer-region
+                className="anim-rise mx-auto mt-6 max-w-3xl px-2"
+              >
                 {voiceMode && !voiceMuted && speechDriverRef.current?.isAvailable() ? (
                   <div className="mb-2 text-right">
                     <button
@@ -1920,7 +1984,12 @@ export default function App() {
               answerRequest &&
               answerNote.id === answerRequest.id &&
               (answerRequest.epoch ?? 0) === answerState.askEpoch ? (
-              <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">
+              <div
+                ref={setAnswerRegion}
+                tabIndex={-1}
+                data-answer-region
+                className="anim-rise mx-auto mt-6 max-w-3xl px-2"
+              >
                 <section
                   aria-label="Answer"
                   className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-[0_1px_6px_rgba(32,33,36,0.14)]"

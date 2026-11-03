@@ -182,9 +182,18 @@ export function GuidedTour({ open, onDismiss }: { open: boolean; onDismiss: () =
         <p className="text-xs font-medium text-slate-500">
           Step {step + 1} of {steps.length}
         </p>
-        <h2 id={headingId} className="mt-1 text-lg font-semibold text-slate-900">
+        {/*
+          A <p>, not a heading (a11y cure D1, 2026-11-03): measured on the
+          served production build, this step title was the first heading in
+          DOM order — ahead of the page's h1 — so a screen reader's heading
+          list opened with a tour step instead of the page title. The id
+          stays, so the dialog's aria-labelledby still names it from this
+          text, and the live region below announces the step on advance;
+          nothing but the heading-list entry changes.
+        */}
+        <p id={headingId} className="mt-1 text-lg font-semibold text-slate-900">
           {current.heading}
-        </h2>
+        </p>
         <div id={bodyId} className="mt-2 space-y-2 text-base leading-relaxed text-slate-700">
           {current.body}
         </div>
@@ -276,9 +285,15 @@ export function TourNotice({ onOpen, onDismiss }: { onOpen: () => void; onDismis
       aria-labelledby={headingId}
       className="mb-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"
     >
-      <h2 id={headingId} className="text-base font-semibold text-slate-900">
+      {/*
+        A <p>, not a heading (a11y cure D1, 2026-11-03): same defect as the
+        dialog's step title — a tour heading must not enter the page's
+        heading order. The id stays, so the aside's aria-labelledby still
+        names the landmark "New here" from this text.
+      */}
+      <p id={headingId} className="text-base font-semibold text-slate-900">
         New here
-      </h2>
+      </p>
       <p className="mt-1">
         Looking up a single ZIP code works straight away, with no account. {loadSentence}
       </p>

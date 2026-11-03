@@ -4718,13 +4718,23 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // stage re-materializes through the same seams. A re-ask that
     // throws keeps the first yield untouched — the run is never
     // worse for having asked. Runs that card never re-ask, and a
-    // stage with no extraction record at all has nothing to steer
-    // toward (that is FM-11's and the honest note's ground).
+    // stage whose record is empty in every channel — no extracted
+    // mentions and no claims — has nothing to steer toward (that is
+    // FM-11's and the honest note's ground). The claims disjunct
+    // (2026-11-03, the Texas specimen): a stage can return claims
+    // that demonstrably discuss places while every place name sits
+    // in a form extraction cannot capture (bare mid-sentence, no
+    // state suffix), leaving the extraction record at zero while
+    // the claims carry the steering material — the earlier
+    // extraction-only condition deterministically declined to
+    // re-ask on exactly that shape, and the run terminated in the
+    // flexible lane with no Census figures.
     if (
       m.cappedRows.length === 0 &&
       !firstResearchFailed &&
       !breadthActive &&
-      m.extracted.length + m.bare.ambiguous.length + m.bare.unresolved.length > 0
+      (m.extracted.length + m.bare.ambiguous.length + m.bare.unresolved.length > 0 ||
+        research.claims.length > 0)
     ) {
       try {
         const steered = await researchPerCriterion(

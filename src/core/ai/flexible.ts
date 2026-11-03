@@ -48,6 +48,7 @@
  * the packet builder here, the same split the bookends use.
  */
 import type { AreaRow } from '../plugins/acs'
+import { STATE_NAME_BY_CODE } from '../sweep/states'
 import { findBannedConstruction } from './validator'
 
 /* ------------------------------------------------------------------ */
@@ -279,11 +280,25 @@ export function buildFlexiblePacketText(request: FlexibleDraftRequest): string {
   if (request.criteria.length > 0) {
     lines.push(`STATED CRITERIA: ${request.criteria.join('; ')}`)
   }
-  lines.push(
-    'SCREEN OUTCOME: the cited research named places for the stated criteria, but none of ' +
-      'those places could be matched to Census data in the loaded dataset, so no Census ' +
-      'figures are available for them from the screen.',
-  )
+  // The screen-outcome line states the shape that actually
+  // occurred (2026-11-03 cure): the earlier unconditional wording
+  // asserted "the research named places ... none could be matched"
+  // on EVERY completion — including runs whose extraction record
+  // named no places at all (the Texas specimen), where the premise
+  // was false and the drafting model restated it on the card.
+  if (request.researchPlaces.length > 0) {
+    lines.push(
+      'SCREEN OUTCOME: the cited research named places for the stated criteria, but none of ' +
+        'those places could be matched to Census data in the loaded dataset, so no Census ' +
+        'figures are available for them from the screen.',
+    )
+  } else {
+    lines.push(
+      'SCREEN OUTCOME: the cited research returned findings for the stated criteria, but ' +
+        'no place in those findings could be recorded and matched to Census data in the ' +
+        'loaded dataset, so no Census figures are available for this answer from the screen.',
+    )
+  }
   if (request.researchPlaces.length > 0) {
     lines.push(
       `PLACES THE RESEARCH NAMED: ${request.researchPlaces.slice(0, PACKET_PLACE_LIMIT).join('; ')}`,
@@ -434,6 +449,62 @@ function normalisePlaceName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
+const STATE_CODE_BY_NAME: ReadonlyMap<string, string> = new Map(
+  Object.entries(STATE_NAME_BY_CODE).map(([code, name]) => [
+    name.toLowerCase(),
+    code.toLowerCase(),
+  ]),
+)
+
+interface PlaceNameParts {
+  bare: string
+  /** Lowercase state code when the name carries a state suffix. */
+  state: string | null
+}
+
+/**
+ * A place name split into its bare name and its state suffix,
+ * when the trailing comma segment is a state — a two-letter code
+ * ("austin, tx") or a full state name ("austin, texas", mapped
+ * back to its code). Any other trailing segment is part of the
+ * name and stays.
+ */
+function placeNameParts(name: string): PlaceNameParts {
+  const normalised = normalisePlaceName(name)
+  const comma = normalised.lastIndexOf(',')
+  if (comma > 0) {
+    const suffix = normalised.slice(comma + 1).trim()
+    const state = /^[a-z]{2}$/.test(suffix)
+      ? suffix
+      : (STATE_CODE_BY_NAME.get(suffix) ?? null)
+    if (state !== null) {
+      const bare = normalised.slice(0, comma).trim()
+      if (bare.length > 0) return { bare, state }
+    }
+  }
+  return { bare: normalised, state: null }
+}
+
+/**
+ * Whether a draft place is the place a research record named:
+ * the bare names must be equal, and the states must not disagree
+ * (a missing suffix on either side is not a disagreement).
+ * Measured defect (2026-11-03, the Texas specimen): the extraction
+ * record holds "Austin, TX" while a draft naturally names the
+ * place "Austin"; the earlier exact-string comparison made the
+ * research_named class deterministically unavailable for the bare
+ * form, so the surviving draft flipped the place to
+ * model_knowledge — the label tracked the draft's suffix choice,
+ * not what the research named. The disagreement clause keeps the
+ * equivalence honest: "Austin, MN" is not the record's Austin.
+ */
+function sameResearchPlace(recordName: string, draftName: string): boolean {
+  const record = placeNameParts(recordName)
+  const draft = placeNameParts(draftName)
+  if (record.bare !== draft.bare) return false
+  return record.state === null || draft.state === null || record.state === draft.state
+}
+
 /**
  * The deterministic gate for a flexible completion — verifyAnswer's
  * sibling for this lane, applying the strict lane's provenance rule
@@ -449,8 +520,9 @@ function normalisePlaceName(name: string): string {
  *      Claiming Census provenance without that row fails here.
  *   3. A research_named place must be a place the research in fact
  *      named (the pipeline's extraction record — every name the
- *      research stage pulled from the findings, compared
- *      name-normalised). Claiming research provenance for a place
+ *      research stage pulled from the findings, compared under
+ *      sameResearchPlace: bare names equal, state suffixes not in
+ *      disagreement). Claiming research provenance for a place
  *      the model supplied itself fails here; the model's own places
  *      are welcome under model_knowledge, labelled as such.
  *   4. The prose surfaces (prose, place notes, figure workings)
@@ -470,7 +542,7 @@ export function verifyFlexibleAnswer(
     failures.push('flexible answer carries no prose')
   }
   const rowByZcta = new Map(context.rows.map((row) => [row.zcta, row]))
-  const researchNames = new Set(context.researchNamedPlaces.map(normalisePlaceName))
+  const researchNames = context.researchNamedPlaces
 
   const checkFigure = (figure: FlexibleFigure, where: string) => {
     if (!EVIDENCE_CLASSES.includes(figure.evidenceClass)) {
@@ -510,7 +582,7 @@ export function verifyFlexibleAnswer(
       failures.push(`place without a valid evidence class: ${place.name}`)
     } else if (
       place.evidenceClass === 'research_named' &&
-      !researchNames.has(normalisePlaceName(place.name))
+      !researchNames.some((recorded) => sameResearchPlace(recorded, place.name))
     ) {
       failures.push(`place claims research provenance the research did not name: ${place.name}`)
     }

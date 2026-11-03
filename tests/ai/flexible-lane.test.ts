@@ -9,6 +9,7 @@ import {
   type ComposedAnswer,
 } from '../../src/core/ai/answer'
 import {
+  buildFlexiblePacketText,
   parseFlexibleDraft,
   verifyFlexibleAnswer,
   type FlexibleAnswer,
@@ -244,6 +245,34 @@ describe('verifyFlexibleAnswer', () => {
     // The same place under the model's own label is welcome.
     answer.places[answer.places.length - 1]!.evidenceClass = 'model_knowledge'
     expect(verifyFlexibleAnswer(answer, context).ok).toBe(true)
+  })
+
+  it('research provenance survives a state-suffix difference, and only that', () => {
+    // The Texas specimen (2026-11-03): the extraction record held
+    // "Austin, TX"; a draft naming the place "Austin" claimed
+    // research provenance and the suffix-exact comparison rejected
+    // it, leaving model_knowledge as the only survivable label.
+    const txContext = { rows: ROWS, researchNamedPlaces: ['Austin, TX'] }
+    const bare = valid()
+    bare.places = [{ name: 'Austin', evidenceClass: 'research_named', figures: [] }]
+    expect(verifyFlexibleAnswer(bare, txContext).ok).toBe(true)
+    // Full state name on the record side, code on the draft side:
+    // the same place under its other suffix style.
+    const longContext = { rows: ROWS, researchNamedPlaces: ['Austin, Texas'] }
+    const coded = valid()
+    coded.places = [{ name: 'Austin, TX', evidenceClass: 'research_named', figures: [] }]
+    expect(verifyFlexibleAnswer(coded, longContext).ok).toBe(true)
+    // A different state is a different place: the class does not
+    // travel across the suffix.
+    const otherState = valid()
+    otherState.places = [{ name: 'Austin, MN', evidenceClass: 'research_named', figures: [] }]
+    expect(verifyFlexibleAnswer(otherState, txContext).ok).toBe(false)
+    // And a truncated name is not the recorded name: only a state
+    // suffix is ever set aside.
+    const miContext = { rows: ROWS, researchNamedPlaces: ['Traverse City, MI'] }
+    const truncated = valid()
+    truncated.places = [{ name: 'Traverse', evidenceClass: 'research_named', figures: [] }]
+    expect(verifyFlexibleAnswer(truncated, miContext).ok).toBe(false)
   })
 
   it('rejects steering prose even in criteria-grounded context', () => {
@@ -1094,6 +1123,87 @@ describe('K1 the resolution re-ask', () => {
     expect(stub.calls()).toBe(1)
     expect(answer.status).toBe('verified')
     expect(answer.places.map((p) => p.name)).toContain('Tampa, FL')
+  })
+
+  it('a claims-rich stage with zero extractable names gets the steered re-ask (the Texas shape)', async () => {
+    // The specimen's exact shape (2026-11-03): the research prose
+    // discusses the place in claims, but every mention is bare and
+    // mid-sentence in lowercase — standard extraction needs
+    // "Name, ST", bare extraction needs a sentence-initial lead —
+    // so the extraction record is empty while the stage's claims
+    // are not. Before the cure the re-ask's extraction-only
+    // condition deterministically declined to fire here.
+    const stub = k1ResearchStub([
+      {
+        prose:
+          'The city most often described as the state\u2019s liberal capital is austin, ' +
+          'a university city whose politics the cited guide calls strongly progressive.',
+        claims: ['The cited guide calls austin strongly progressive.'],
+      },
+      {
+        prose: 'Travel guides name Austin, TX as the state\u2019s most liberal city.',
+        claims: ['Austin, TX is named the state\u2019s most liberal city.'],
+      },
+    ])
+    const answer = await runAnswerPipeline({
+      provider: stub.provider,
+      intent: { mode: 'lookup', geographies: ['TX'], metricKeys: [], filters: [], clarificationNeeded: false },
+      rows: K1_ROWS,
+      researchQuery: 'most liberal city in texas',
+      queryText: 'What is the most liberal city in Texas?',
+      researchCriteria: ['most liberal'],
+    })
+    expect(stub.calls()).toBe(2)
+    expect(stub.queries[1]).toContain('incorporated cities or towns')
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name)).toContain('Austin, TX')
+  })
+
+  it('a stage empty in every channel gets no resolution re-ask (FM-11 owns that ground)', async () => {
+    const stub = k1ResearchStub([
+      { prose: '', claims: [] },
+      { prose: '', claims: [] },
+    ])
+    const answer = await runAnswerPipeline({
+      provider: stub.provider,
+      intent: { mode: 'lookup', geographies: ['TX'], metricKeys: [], filters: [], clarificationNeeded: false },
+      rows: K1_ROWS,
+      researchQuery: 'most liberal city in texas',
+      queryText: 'What is the most liberal city in Texas?',
+      researchCriteria: ['most liberal'],
+    })
+    // Two provider calls, both inside the stage's own FM-11
+    // discipline (first attempt + its one re-ask); the pipeline's
+    // steered re-ask never fires — no query carries its steering.
+    expect(stub.calls()).toBe(2)
+    expect(stub.queries.join('\n')).not.toContain('incorporated cities or towns')
+    expect(answer.status).toBe('empty')
+  })
+})
+
+describe('flexible packet screen-outcome line', () => {
+  it('states the shape that occurred: named-but-unmatched vs no recordable place', () => {
+    const named = buildFlexiblePacketText({
+      question: 'What is the most liberal city in Texas?',
+      criteria: ['most liberal'],
+      researchPlaces: ['Austin, TX'],
+      claims: [{ text: 'Austin is described as strongly liberal.', sourceUrls: ['https://example.org/x'] }],
+      sources: [{ title: 'Guide', url: 'https://example.org/x' }],
+    })
+    expect(named).toContain('the cited research named places for the stated criteria')
+    expect(named).toContain('PLACES THE RESEARCH NAMED: Austin, TX')
+    const unrecorded = buildFlexiblePacketText({
+      question: 'What is the most liberal city in Texas?',
+      criteria: ['most liberal'],
+      researchPlaces: [],
+      claims: [{ text: 'The guide calls the capital city strongly progressive.', sourceUrls: ['https://example.org/x'] }],
+      sources: [{ title: 'Guide', url: 'https://example.org/x' }],
+    })
+    expect(unrecorded).toContain('no place in those findings could be recorded')
+    expect(unrecorded).not.toContain('the cited research named places')
+    // No named-places line (the packet's static rules text mentions
+    // the label without the colon; the line itself carries one).
+    expect(unrecorded).not.toContain('PLACES THE RESEARCH NAMED:')
   })
 })
 

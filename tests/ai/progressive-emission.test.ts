@@ -146,9 +146,12 @@ describe('screen-first emission (the Hilo shape)', () => {
     })
     // The screen card carries the terminal (the A5 ladder); the
     // progress record closes with the failure stated, not vanished.
+    // ADAPTED (Lane A9 FM-11): the all-empty stage is re-asked once,
+    // so its two pass boundaries emit twice (5 snapshots, not 3);
+    // the closing snapshot's content is the invariant guarded here.
     expect(answer.status).toBe('verified')
-    expect(snapshots).toHaveLength(3)
-    const end = snapshots[2]!
+    expect(snapshots).toHaveLength(5)
+    const end = snapshots[snapshots.length - 1]!
     expect(end.criteriaDone).toEqual([])
     expect(end.criteriaFailed).toEqual(['School quality', 'Coffee nearby'])
     for (const place of end.places) {

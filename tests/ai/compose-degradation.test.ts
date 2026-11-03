@@ -498,7 +498,12 @@ describe('runner: completion seams under failure (controls)', () => {
         },
       },
     })
-    expect(researchCalls).toBe(2)
+    // ADAPTED (Lane A9 FM-11): the patch re-run's research stage
+    // ends all-empty, so it is re-asked exactly once before the
+    // failure settles — 3 research calls in total (the first
+    // version's one, the re-run's two). The control's invariant is
+    // unchanged: the first version stands.
+    expect(researchCalls).toBe(3)
     expect(answer?.status).toBe('verified')
     expect(answer?.places.map((p) => p.name)).toContain('Stone Mountain, GA')
   })

@@ -536,3 +536,82 @@ describe('A9 pins — render-once scope (FM-7)', () => {
     expect(visibility.get(laterClaim)).toEqual([])
   })
 })
+
+describe('A9 pins — variance (FM-11: one bounded re-ask of an all-empty stage)', () => {
+  const question = 'What town in Vermont has the best beer selection?'
+  const prose =
+    'Burlington, VT has the best beer selection in Vermont, with more craft breweries and taprooms per capita than any other town in the state. Answer: Burlington, VT has the strongest support for the best beer selection in Vermont.'
+
+  function flakyProvider(failuresBeforeSuccess: number, calls: { n: number }) {
+    return createStubProvider({
+      async research() {
+        calls.n++
+        if (calls.n <= failuresBeforeSuccess) throw new Error('provider_down')
+        return { prose, sources: [{ title: 'Findings source', url: 'https://example.com/f' }] }
+      },
+    })
+  }
+
+  it('a stage that fails empty is re-asked once and composes from the re-ask', async () => {
+    const calls = { n: 0 }
+    const answer = await runAnswerPipeline({
+      intent: intent({ geographies: ['VT'], metricKeys: [] }),
+      rows: SCENARIOS.food_drink_beer!.rows,
+      researchQuery: question,
+      researchCriteria: [question],
+      queryText: question,
+      provider: flakyProvider(1, calls),
+    })
+    expect(calls.n).toBe(2)
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name)).toContain('Burlington, VT')
+  })
+
+  it('a stage that stays down is asked exactly twice, and the note states the re-ask', async () => {
+    const calls = { n: 0 }
+    const answer = await runAnswerPipeline({
+      // Placeless: a state-bounded total failure degrades onto the
+      // Census card by the A5 ladder (a different terminal, also
+      // carrying the re-ask record); the note is this shape's.
+      intent: intent({ geographies: [], metricKeys: [] }),
+      rows: SCENARIOS.food_drink_beer!.rows,
+      researchQuery: question,
+      researchCriteria: [question],
+      queryText: question,
+      provider: flakyProvider(Number.POSITIVE_INFINITY, calls),
+    })
+    expect(calls.n).toBe(2)
+    expect(answer.status).toBe('empty')
+    const evidence = answer.criterionEvidence.find((e) => e.kind === 'research')
+    expect(evidence?.detail).toContain('asked twice')
+  })
+
+  it('a stage with material never re-asks: a partial failure keeps its single call set', async () => {
+    // Two named criteria; the first returns, the second fails.
+    // Partial tolerance owns this case — no stage re-ask.
+    const calls = { n: 0 }
+    const provider = createStubProvider({
+      async research() {
+        calls.n++
+        if (calls.n === 1) {
+          return {
+            prose: 'Durango, CO schools are rated above the state average in the cited directory.',
+            sources: [{ title: 'School directory', url: 'https://example.org/schools' }],
+          }
+        }
+        throw new Error('provider_down')
+      },
+    })
+    const text = 'best schools and the most coffee shops'
+    const answer = await runAnswerPipeline({
+      intent: intent({ geographies: [], metricKeys: [] }),
+      rows: SCENARIOS.schools_family!.rows,
+      researchQuery: text,
+      researchCriteria: [text],
+      queryText: text,
+      provider,
+    })
+    expect(calls.n).toBe(2)
+    expect(answer.researchFailures).toContain('Coffee nearby')
+  })
+})

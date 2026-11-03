@@ -1288,6 +1288,18 @@ export interface ResearchStageResult {
    * research had run and found nothing.
    */
   failedCriteria?: readonly string[]
+  /**
+   * True when the stage re-asked once before settling (Lane A9
+   * FM-11): an all-empty stage — every pass failed, or every pass
+   * returned no usable material — is asked exactly once more
+   * in-run, because per-call research variance is the dominant
+   * measured residual (C1: three research-dependent questions
+   * noted in one window while the same questions on another
+   * device, same build, returned full material). The flag rides
+   * the result so the answer's evidence can state the re-ask
+   * where the stage still ends empty.
+   */
+  reAsked?: boolean
 }
 
 /**
@@ -1435,6 +1447,7 @@ export async function researchPerCriterion(
     }
     return failed
   }
+  let stageReAsked = false
   /** The accumulated stage result as an observer may see it (copies). */
   const accumulated = (): ResearchStageResult => {
     const failed = effectiveFailedCriteria()
@@ -1443,9 +1456,30 @@ export async function researchPerCriterion(
       sources: [...sources],
       claims: [...claims],
       ...(failed.length > 0 ? { failedCriteria: failed } : {}),
+      ...(stageReAsked ? { reAsked: true } : {}),
     }
   }
-  for (let pass = 0; pass < groups.length; pass++) {
+  // The one bounded re-ask (Lane A9 FM-11): when the whole stage
+  // ends EMPTY — every pass failed, or every pass returned without
+  // usable material — the stage runs exactly once more before the
+  // caller's honest-note machinery engages. Research variance is
+  // per-call (C1 measured three noted questions in one window
+  // against full material for the same questions in the same
+  // window on another device), so a single in-run re-ask converts
+  // the common flap into material; a second empty settles as
+  // before, with reAsked recorded. A stage with ANY material never
+  // re-asks — partial tolerance above already owns that case.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt === 1) {
+      stageReAsked = true
+      sources.length = 0
+      claims.length = 0
+      proseParts.length = 0
+      failedCriteria.length = 0
+      terminatedGroups = 0
+    }
+    let retryStage = false
+    for (let pass = 0; pass < groups.length; pass++) {
     // Partial tolerance (2026-11-02, flexible-trigger cure): before
     // this, ANY pass failure threw out of the pipeline and discarded
     // every earlier pass's gathered material, so a dual-criteria
@@ -1477,7 +1511,16 @@ export async function researchPerCriterion(
     try {
       result = await provider.research({ queryText: researchQuery, places: [...places] }, signal)
     } catch (err) {
-      if (proseParts.length === 0 && !options?.tolerateTotalFailure) throw err
+      if (proseParts.length === 0 && !options?.tolerateTotalFailure) {
+        // First attempt: the stage has returned nothing at all, so
+        // the failure defers to the one re-ask (FM-11) instead of
+        // throwing; the re-ask's own failure throws as before.
+        if (attempt === 0) {
+          retryStage = true
+          break
+        }
+        throw err
+      }
       for (const criterion of groups[pass]!) failedCriteria.push(criterion.label)
       terminatedGroups++
       await options?.onPass?.(accumulated(), pass, groups.length)
@@ -1494,6 +1537,11 @@ export async function researchPerCriterion(
     }
     terminatedGroups++
     await options?.onPass?.(accumulated(), pass, groups.length)
+    }
+    if (retryStage) continue
+    // Material gathered settles the stage; an empty stage on the
+    // first attempt falls through to the one re-ask.
+    if (claims.length > 0 || proseParts.join('').trim() !== '') break
   }
   const failed = effectiveFailedCriteria()
   return {
@@ -1501,6 +1549,7 @@ export async function researchPerCriterion(
     sources,
     claims,
     ...(failed.length > 0 ? { failedCriteria: failed } : {}),
+    ...(stageReAsked ? { reAsked: true } : {}),
   }
 }
 
@@ -2026,6 +2075,13 @@ export function criterionEvidenceFor(input: {
    * source spoke to the criterion.
    */
   failedResearchCriteria?: readonly string[]
+  /**
+   * True when the research stage re-asked its all-empty first
+   * attempt once (FM-11): a failed criterion's detail then states
+   * the re-ask, so the note does not read as a single unanswered
+   * call.
+   */
+  researchReAsked?: boolean
 }): CriterionEvidence[] {
   const evidence: CriterionEvidence[] = []
   for (const criterion of input.criteria) {
@@ -2174,7 +2230,9 @@ export function criterionEvidenceFor(input: {
         kind: 'research',
         status: 'not_measurable',
         detail: (input.failedResearchCriteria ?? []).includes(criterion.label)
-          ? 'The research lookup for this criterion did not return, so no cited source speaks to it here.'
+          ? input.researchReAsked
+            ? 'The research lookup for this criterion did not return; it was asked twice in this run and neither attempt returned, so no cited source speaks to it here.'
+            : 'The research lookup for this criterion did not return, so no cited source speaks to it here.'
           : 'No cited source available here speaks to this criterion.',
         sourceUrls: [],
       })
@@ -2405,6 +2463,7 @@ export function composeAnswer(input: {
     countyFigureNotMeasurable: input.countyFigureNotMeasurable ?? null,
     queryText: researchCriteria[0]?.text,
     failedResearchCriteria: input.research?.failedCriteria,
+    researchReAsked: input.research?.reAsked,
   })
   // Summary-claim rule (P3 step 4, battery A1/B5/C5/D2): the
   // "meet all of the stated Census criteria" sentence renders ONLY
@@ -3054,6 +3113,10 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           failedCriteria: researchCriteria
             .filter((c) => !c.decomposedMetricKey)
             .map((c) => c.label),
+          // The stage throws only after its one re-ask has also
+          // failed (FM-11), so the synthesized result carries the
+          // re-ask record the evidence lines state.
+          reAsked: true,
         }
         // The research stage is over and every lookup failed: the
         // progress record says so before the honest note composes,

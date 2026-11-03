@@ -68,9 +68,18 @@
    * Fixed rem steps with a tighter line height on headings than on body copy,
    * because the previous version inherited a 1.5 line height everywhere and the
    * section headings looked loose next to dense figures.
+   *
+   * The two bottom steps rose in the 2026-11-02 typography pass. The census
+   * that pass measured (utility-class and arbitrary-size usages across src/):
+   * 313 of 355 sized usages sat at the two smallest Tailwind steps, and the
+   * rendered audit at 412px put the figure label — the text that says what a
+   * figure IS — at 11px, the smallest text in the app. Micro is now 12px and
+   * small 14px, so the token floor matches the smallest size any component
+   * class is allowed to carry; labels stay subordinate to the figures they
+   * name without dropping under the reading floor.
    */
-  --text-micro: 0.6875rem;
-  --text-small: 0.8125rem;
+  --text-micro: 0.75rem;
+  --text-small: 0.875rem;
   --text-body: 0.9375rem;
   --text-lead: 1.0625rem;
 

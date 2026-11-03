@@ -106,7 +106,7 @@ export function SavedSearches({
   return (
     <section aria-labelledby="saved-heading" className="mt-4 panel panel-padded">
       <div className="flex items-center gap-1.5">
-        <h2 id="saved-heading" className="text-sm font-semibold text-slate-900">
+        <h2 id="saved-heading" className="text-base font-semibold text-slate-900">
           Saved comparisons
         </h2>
         <HelpTip label="About saved comparisons">
@@ -160,7 +160,7 @@ export function SavedSearches({
             <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2 py-2">
               <div className="min-w-0">
                 <span className="text-sm font-medium text-slate-900">{entry.name}</span>
-                <span className="ml-2 text-xs text-slate-500">
+                <span className="ml-2 text-sm text-slate-500">
                   {entry.zips.length} ZIP {entry.zips.length === 1 ? 'code' : 'codes'}
                 </span>
               </div>
@@ -184,7 +184,7 @@ export function SavedSearches({
                   type="button"
                   onClick={() => remove(entry.id)}
                   aria-label={`Remove ${entry.name} from the saved list`}
-                  className="min-h-[44px] rounded-md px-2 py-2 text-xs text-slate-600 underline hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+                  className="min-h-[44px] rounded-md px-2 py-2 text-sm text-slate-600 underline hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
                 >
                   Remove
                 </button>
@@ -193,7 +193,7 @@ export function SavedSearches({
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-xs text-slate-500">
+        <p className="mt-2 text-sm text-slate-500">
           Nothing saved yet. Select some areas above, then save to keep the comparison — the name is
           filled in from its ZIP codes unless you type your own.
         </p>

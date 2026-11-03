@@ -43,20 +43,20 @@ export function CityZipBrowser({ place, selectedZctas, onAdd, onDismiss }: CityZ
   return (
     <section aria-labelledby={headingId} className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 id={headingId} className="text-sm font-semibold text-slate-900">
+        <h3 id={headingId} className="text-base font-semibold text-slate-900">
           {place.displayName}, {place.state}
           {!place.isCity && <span className="ml-2 font-normal text-slate-600">county — no incorporated city</span>}
         </h3>
         <button
           type="button"
           onClick={onDismiss}
-          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700"
+          className="rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700"
         >
           Close
         </button>
       </div>
 
-      <p className="mt-1 text-xs text-slate-600">
+      <p className="mt-1 text-sm text-slate-600">
         {total} ZIP {total === 1 ? 'code' : 'codes'} in this {place.isCity ? 'city' : 'county'}. Choose one to add it
         to the comparison.
       </p>

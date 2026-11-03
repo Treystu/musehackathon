@@ -190,7 +190,7 @@ export function KeyPrompt({
         <p id="key-status" role="status" aria-live="polite" className="mt-2 min-h-5 text-slate-700">
           {message}
           {phase === 'invalid' && attempts > 1 && (
-            <span className="mt-1 block text-xs">
+            <span className="mt-1 block text-sm">
               Tried {attempts} times. If the key is definitely correct, the most likely explanation is that
               Census has not activated it yet. New keys can take several minutes. There is nothing wrong with
               your copy of the key.

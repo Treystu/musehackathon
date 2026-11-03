@@ -35,7 +35,7 @@ export function Methodology({
         <h2 id="about-heading" className="section-title">
           How CivicScope works
         </h2>
-        <div className="mt-2 space-y-3 text-sm leading-relaxed text-slate-700">
+        <div className="mt-2 space-y-3 text-base leading-relaxed text-slate-700">
           <p>
             CivicScope fetches data directly from its publishers in your browser. For the data itself there is
             no server between you and the source, no database of our own, and no record of what you searched
@@ -60,7 +60,7 @@ export function Methodology({
         <h2 id="privacy-heading" className="section-title">
           What we collect
         </h2>
-        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-base text-slate-700">
           <li>
             Your browser stores a Census API key only if you add one. It is saved in local storage and sent only
             to Census.gov.
@@ -116,7 +116,7 @@ export function Methodology({
         <h2 id="ai-heading" className="section-title">
           The assistant (Ask and Explain)
         </h2>
-        <div className="mt-2 space-y-3 text-sm leading-relaxed text-slate-700">
+        <div className="mt-2 space-y-3 text-base leading-relaxed text-slate-700">
           <p>
             The AI layer is generated from the same metric registry as the data layer, so the measures the
             assistant can use cannot drift from the measures the site displays. The assistant may only use the{' '}
@@ -198,7 +198,7 @@ export function Methodology({
         <h2 id="county-heading" className="section-title">
           County figures
         </h2>
-        <div className="mt-2 space-y-3 text-sm leading-relaxed text-slate-700">
+        <div className="mt-2 space-y-3 text-base leading-relaxed text-slate-700">
           <p>
             The Census figures this site loads are ZIP-area (ZCTA) figures. When a question asks about
             counties, each ZIP area is assigned to the county it overlaps most by land area, using the
@@ -231,7 +231,7 @@ export function Methodology({
         <h2 id="result-map-heading" className="section-title">
           Maps in answers
         </h2>
-        <div className="mt-2 space-y-3 text-sm leading-relaxed text-slate-700">
+        <div className="mt-2 space-y-3 text-base leading-relaxed text-slate-700">
           <p>
             The country map on the Explore surface is a hexbin, not a choropleth of ZIP boundaries:
             one hexagon per area, colored by the median of its ZIP areas. An answer, though, can
@@ -270,7 +270,7 @@ export function Methodology({
         <h2 id="meter-heading" className="section-title">
           The meter counts; it does not gate
         </h2>
-        <div className="mt-2 space-y-3 text-sm leading-relaxed text-slate-700">
+        <div className="mt-2 space-y-3 text-base leading-relaxed text-slate-700">
           <p>
             Every assistant call through this site&rsquo;s proxy is counted and reported for budget
             accounting: requests, tokens, and modelled spend at flat per-call rates, kept as aggregate
@@ -323,7 +323,7 @@ export function Methodology({
         <h2 id="figures-heading" className="section-title">
           Every figure, and what it means
         </h2>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="mt-1 text-base text-slate-600">
           Every figure this tool shows, from the American Community Survey {VINTAGE} 5-year estimates. Generated from
           the same registry the application renders from, so this list cannot drift from what is on screen. You can
           sort the screening table by five of these figures; the rest are shown for reading only, because ordering
@@ -331,7 +331,7 @@ export function Methodology({
           lives there.
         </p>
         <table className="mt-3 w-full text-left text-sm">
-          <caption className="px-3 py-2 text-left text-xs text-slate-600">
+          <caption className="px-3 py-2 text-left text-sm text-slate-600">
             {METRIC_KEYS.length} figures, each with the Census table it comes from. Any number can be re-fetched from
             that table and checked.
           </caption>
@@ -354,7 +354,7 @@ export function Methodology({
                     {def.label}
                   </th>
                   <td className="px-3 py-2 text-slate-700">{def.note}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-slate-600">{tableOfMetric(key) ?? 'ACS'}</td>
+                  <td className="px-3 py-2 font-mono text-sm text-slate-600">{tableOfMetric(key) ?? 'ACS'}</td>
                   <td className="px-3 py-2 text-slate-700">
                     {sortable ? 'Yes, you choose the order' : 'No, reading only'}
                   </td>
@@ -369,31 +369,31 @@ export function Methodology({
         <h2 id="data-heading" className="section-title">
           Data sources
         </h2>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="mt-1 text-base text-slate-600">
           Every source currently registered, grouped by the kind of question it answers. Adding a source adds it
           here automatically.
         </p>
         <div className="mt-3 space-y-4">
           {[...byCategory.entries()].map(([category, list]) => (
             <div key={category}>
-              <h3 className="text-sm font-semibold capitalize text-slate-800">{category}</h3>
+              <h3 className="text-base font-semibold capitalize text-slate-800">{category}</h3>
               <ul className="mt-1 space-y-2">
                 {list.map((p) => (
                   <li key={p.id} className="rounded-md border border-slate-200 bg-white p-3 text-sm">
                     <p className="font-medium text-slate-900">{p.title}</p>
-                    <p className="mt-0.5 text-xs text-slate-600">
+                    <p className="mt-0.5 text-sm text-slate-600">
                       Geography: {p.geography} · Appears from depth {p.minZoom} and deeper
                       {p.requiresCensusKey ? ' · requires a Census key' : ' · no key required'}
                     </p>
                     {p.legal.notice && <p className="mt-1 text-xs italic text-slate-600">{p.legal.notice}</p>}
                     {p.legal.suppressBelow !== undefined && (
-                      <p className="mt-1 text-xs text-slate-600">
+                      <p className="mt-1 text-sm text-slate-600">
                         Figures below {p.legal.suppressBelow} in a count unit are withheld to protect
                         small-population privacy.
                       </p>
                     )}
                     {p.legal.protectedClassProxy && (
-                      <p className="mt-1 text-xs font-medium text-slate-700">
+                      <p className="mt-1 text-sm font-medium text-slate-700">
                         Can proxy a protected characteristic at area level. Shown in the detail view only and
                         excluded from sorting, filtering, similarity, and composite scores.
                       </p>
@@ -410,7 +410,7 @@ export function Methodology({
         <h2 id="scoring-heading" className="section-title">
           How the indices are calculated
         </h2>
-        <p className="mt-1 text-sm text-slate-700">
+        <p className="mt-1 text-base text-slate-700">
           Version {SCORE_VERSION}. Each component is scaled to 0&ndash;100 against a stated range and combined
           by weight. Components that are unavailable are dropped and the remaining weights are renormalised, so
           the index always states which inputs it actually used.
@@ -430,7 +430,7 @@ export function Methodology({
           ).map(([label, rules]) => (
             <div key={label} className="overflow-x-auto rounded-md border border-slate-200 bg-white">
               <table className="w-full text-left text-sm">
-                <caption className="px-3 pt-2 text-left text-xs text-slate-600">{label} index components</caption>
+                <caption className="px-3 pt-2 text-left text-sm text-slate-600">{label} index components</caption>
                 <thead>
                   <tr className="border-b border-slate-200">
                     <th scope="col" className="px-3 py-2 font-semibold text-slate-800">Component</th>
@@ -444,7 +444,7 @@ export function Methodology({
                     <tr key={r.key} className="border-b border-slate-100 align-top">
                       <th scope="row" className="px-3 py-2 font-normal text-slate-800">
                         {r.label}
-                        <span className="mt-0.5 block text-xs text-slate-500">{r.note}</span>
+                        <span className="mt-0.5 block text-sm text-slate-500">{r.note}</span>
                       </th>
                       <td className="px-3 py-2 tabular-nums text-slate-700">{Math.round(r.weight * 100)}%</td>
                       <td className="px-3 py-2 tabular-nums text-slate-700">
@@ -458,7 +458,7 @@ export function Methodology({
             </div>
           ))}
         </div>
-        <p className="mt-3 text-sm text-slate-700">
+        <p className="mt-3 text-base text-slate-700">
           These ranges describe the plausible span of values across US areas. They are not national averages,
           because computing against a national distribution would require holding national data in your
           browser, which is the thing this design avoids. Compare indices within one search, not across
@@ -470,7 +470,7 @@ export function Methodology({
         <h2 id="fair-heading" className="section-title">
           Fair housing commitments
         </h2>
-        <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-slate-700">
+        <ul className="mt-2 list-disc space-y-1.5 pl-5 text-base leading-relaxed text-slate-700">
           <li>
             This tool does not include race or ethnicity measures. Those measures are not used in filters,
             figure sorts, similarity, or composite scores; protected-class proxies are excluded from those
@@ -503,7 +503,7 @@ export function Methodology({
         <h2 id="attr-heading" className="section-title">
           Attribution
         </h2>
-        <div className="mt-2 space-y-1 text-sm text-slate-700">
+        <div className="mt-2 space-y-1 text-base text-slate-700">
           <p>{CENSUS_ATTRIBUTION}</p>
           <p>
             Contains information from the U.S. Department of Education&rsquo;s NCES Common Core of Data and

@@ -53,7 +53,7 @@ export function OnboardingWizard({
       <h2 id="onboarding-heading" className="text-sm font-semibold text-slate-900">
         Getting started
       </h2>
-      <p role="status" aria-live="polite" className="mt-1 text-xs text-slate-600">
+      <p role="status" aria-live="polite" className="mt-1 text-sm text-slate-600">
         Step {state.stepIndex + 1} of {ONBOARDING_STEPS.length}: {step.title}
       </p>
       <h3 className="mt-2 text-sm font-semibold text-slate-900">{step.title}</h3>
@@ -117,7 +117,7 @@ export function OnboardingWizard({
         </p>
       ) : null}
 
-      <p role="note" className="mt-3 text-xs text-slate-600">
+      <p role="note" className="mt-3 text-sm text-slate-600">
         Independent-run check: {INDEPENDENT_RUN_STATUS}. These setup steps do
         not claim the independent-run bar has passed.
       </p>

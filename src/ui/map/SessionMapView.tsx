@@ -43,7 +43,7 @@ export function SessionMapView({
     return (
       <section aria-label="Map of your results" className="mt-6">
         <h2 className="text-base font-medium text-slate-900">Map of your results</h2>
-        <p className="mt-2 max-w-prose text-sm text-slate-600">
+        <p className="mt-2 max-w-prose text-base text-slate-600">
           Ask a question and its map appears here. When an answer names places, this tab
           draws them on a map, colored by the figure the answer turns on.
         </p>
@@ -66,7 +66,7 @@ export function SessionMapView({
     <section aria-label="Map of your results" className="mt-6">
       <h2 className="text-base font-medium text-slate-900">Map of your results</h2>
       {questionText && (
-        <p className="mt-1 max-w-prose text-sm text-slate-600">
+        <p className="mt-1 max-w-prose text-base text-slate-600">
           For the question: {questionText}
         </p>
       )}

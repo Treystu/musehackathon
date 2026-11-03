@@ -416,7 +416,7 @@ export function ResultMap({
 
   if (load.kind === 'failed') {
     return (
-      <p role="note" className="mt-3 text-xs text-slate-500">
+      <p role="note" className="mt-3 text-sm text-slate-500">
         {FAILURE_LINE}
       </p>
     )
@@ -473,7 +473,7 @@ export function ResultMap({
 
   const placePanel = activePlace && activeAnswerPlace ? (
     <div
-      className="mt-2 max-w-xs rounded-md border border-slate-300 bg-white p-2 text-xs shadow-sm"
+      className="mt-2 max-w-xs rounded-md border border-slate-300 bg-white p-2 text-sm shadow-sm"
       data-testid="result-map-place-panel"
     >
       <p className="font-semibold text-slate-900">
@@ -766,7 +766,7 @@ export function ResultMap({
           <div className="mt-2 text-sm">
             <p className="font-semibold text-slate-900">Legend — {legend.metricLabel}</p>
             {legend.single ? (
-              <p className="mt-1 text-[0.8125rem] text-slate-700">{legend.singleText}</p>
+              <p className="mt-1 text-sm text-slate-700">{legend.singleText}</p>
             ) : (
               <>
                 <div
@@ -774,44 +774,44 @@ export function ResultMap({
                   className="mt-2 h-3 w-full rounded-sm"
                   style={{ background: legendGradientCss() }}
                 />
-                <div className="mt-1 flex justify-between gap-4 text-[0.8125rem] text-slate-700">
+                <div className="mt-1 flex justify-between gap-4 text-sm text-slate-700">
                   <span>{legend.lowest?.text}</span>
                   <span className="text-right">{legend.highest?.text}</span>
                 </div>
               </>
             )}
-            <p className="mt-1 text-[0.8125rem] leading-snug text-slate-600">
+            <p className="mt-1 text-sm leading-snug text-slate-600">
               Darker means a higher figure. Every figure is also in the answer above.
             </p>
           </div>
 
           {coverageLine && (
-            <p role="note" className="mt-2 text-xs text-slate-500">
+            <p role="note" className="mt-2 text-sm text-slate-500">
               {coverageLine}
             </p>
           )}
           {overflow.length > 0 && (
-            <p role="note" className="mt-1 text-xs text-slate-500">
+            <p role="note" className="mt-1 text-sm text-slate-500">
               Also in this answer: {overflow.join(', ')} — shown in the screening table below.
             </p>
           )}
           {dotLine && (
-            <p role="note" className="mt-1 text-xs text-slate-500">
+            <p role="note" className="mt-1 text-sm text-slate-500">
               {dotLine}
             </p>
           )}
           {load.mode === 'county' && answer.countyMethod && (
-            <p role="note" className="mt-1 text-xs text-slate-500">
+            <p role="note" className="mt-1 text-sm text-slate-500">
               {answer.countyMethod} Each county is drawn as one area formed from its ZIP areas; the
               figure is the county&rsquo;s, not any single ZIP area&rsquo;s.
             </p>
           )}
           {(answer.geographyLevel === 'place' || answer.geographyLevel === 'state') && load.mode === 'choropleth' && (
-            <p role="note" className="mt-1 text-xs text-slate-500">
+            <p role="note" className="mt-1 text-sm text-slate-500">
               Each shape is the ZIP area for the place — it is not the place&rsquo;s legal boundary.
             </p>
           )}
-          <p className="mt-1 text-xs leading-snug text-slate-500">
+          <p className="mt-1 text-sm leading-snug text-slate-500">
             {HONESTY_LINE}
             {load.geometry?.simplified ? ' Boundaries simplified for display.' : ''}
           </p>

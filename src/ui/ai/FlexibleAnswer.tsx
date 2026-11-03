@@ -38,12 +38,12 @@ function FigureBlock({ figure }: { figure: FlexibleFigure }) {
           </span>
         )}
       </dd>
-      <dd className="mt-0.5 text-xs text-slate-500">
+      <dd className="mt-0.5 text-sm text-slate-500">
         {EVIDENCE_CLASS_LABELS[figure.evidenceClass]}
         {figure.evidenceClass === 'census_measured' && figure.zcta ? ` · ZIP ${figure.zcta}` : ''}
       </dd>
       {figure.working && (
-        <dd className="mt-0.5 text-xs text-slate-500">Working: {figure.working}</dd>
+        <dd className="mt-0.5 text-sm text-slate-500">Working: {figure.working}</dd>
       )}
     </div>
   )
@@ -66,11 +66,11 @@ export function FlexibleAnswer({
           className="mt-4 border-t border-slate-100 pt-4"
         >
           <h3 className="text-lg font-semibold leading-snug text-slate-900">{place.name}</h3>
-          <p className="mt-0.5 text-xs text-slate-500">
+          <p className="mt-0.5 text-sm text-slate-500">
             {EVIDENCE_CLASS_LABELS[place.evidenceClass]}
           </p>
           {place.note && (
-            <p className="mt-2 text-sm leading-relaxed text-slate-700">{place.note}</p>
+            <p className="mt-2 text-base leading-relaxed text-slate-700">{place.note}</p>
           )}
           {place.figures.length > 0 && (
             <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-3">

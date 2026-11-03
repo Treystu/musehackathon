@@ -46,7 +46,7 @@ export function DecisionModal({
       aria-labelledby={titleId}
       className="anim-rise mx-auto mt-4 max-w-md rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-[0_2px_12px_rgba(32,33,36,0.18)]"
     >
-      <p id={titleId} className="text-sm font-medium text-slate-900">
+      <p id={titleId} className="text-base font-medium text-slate-900">
         {questionText}
       </p>
       <div className="mt-3 flex flex-wrap gap-2">

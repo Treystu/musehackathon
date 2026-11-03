@@ -164,7 +164,7 @@ export function ExplainAction({
   return (
     <section aria-label={`${title} explanation`}>
       {figures.length > MAX_EXPLAIN_VALUES && (
-        <p className="text-xs text-slate-600">
+        <p className="text-sm text-slate-600">
           This explanation uses the first {MAX_EXPLAIN_VALUES} figures in this view.
         </p>
       )}

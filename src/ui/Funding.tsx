@@ -52,11 +52,11 @@ export function FundingSection() {
         and wording unchanged, lives behind the HelpTip.
       */}
       <div className="flex items-center gap-1.5">
-        <h2 id="funding-heading" className="text-sm font-semibold text-slate-900">
+        <h2 id="funding-heading" className="text-base font-semibold text-slate-900">
           This tool is free, and stays free
         </h2>
         <HelpTip label="About funding and donations">
-      <p className="text-sm text-slate-700">
+      <p className="text-base text-slate-700">
         CivicScope carries no advertising, sells no listings, and takes no payment for placement in any result.
         It runs on free hosting and free government data, so there is nothing for a sponsor to buy.
       </p>

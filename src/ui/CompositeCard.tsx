@@ -39,7 +39,7 @@ export function CompositeCard({ composite }: { composite: Composite }) {
       className="rounded-lg border border-slate-300 bg-slate-50 p-4"
       aria-labelledby={`${composite.id}-heading`}
     >
-      <h3 id={`${composite.id}-heading`} className="text-sm font-medium text-slate-700">
+      <h3 id={`${composite.id}-heading`} className="text-base font-semibold text-slate-700">
         {composite.label} index
       </h3>
 
@@ -53,7 +53,7 @@ export function CompositeCard({ composite }: { composite: Composite }) {
             {composite.score}
             <span className="ml-1 text-base font-normal text-slate-500">/ 100</span>
           </p>
-          <p className="mt-1 text-xs text-slate-600">{composite.basis}</p>
+          <p className="mt-1 text-sm text-slate-600">{composite.basis}</p>
         </>
       )}
 
@@ -62,14 +62,14 @@ export function CompositeCard({ composite }: { composite: Composite }) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-controls={panelId}
-        className="mt-3 text-xs font-medium text-slate-700 underline hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700"
+        className="mt-3 text-sm font-medium text-slate-700 underline hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700"
       >
         {open ? 'Hide the components' : 'See the components and weights'}
       </button>
 
       {open && (
         <div id={panelId} className="mt-3">
-          <table className="w-full text-left text-xs">
+          <table className="w-full text-left text-sm">
             <caption className="sr-only">
               Components of the {composite.label} index, with our published weight for each and the raw value
             </caption>
@@ -101,7 +101,7 @@ export function CompositeCard({ composite }: { composite: Composite }) {
             </tbody>
           </table>
           {composite.components.some((c) => c.excluded) && (
-            <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-slate-600">
+            <ul className="mt-2 list-disc space-y-0.5 pl-4 text-sm text-slate-600">
               {composite.components
                 .filter((c) => c.excluded)
                 .map((c) => (
@@ -111,7 +111,7 @@ export function CompositeCard({ composite }: { composite: Composite }) {
                 ))}
             </ul>
           )}
-          <p className="mt-3 text-xs text-slate-500">
+          <p className="mt-3 text-sm text-slate-500">
             Index version {SCORE_VERSION}. Weights are our editorial choice, published so they can be examined
             and challenged. Individual figures are always shown above, unmodified, whatever this index says.
           </p>

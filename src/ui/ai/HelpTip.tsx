@@ -66,7 +66,7 @@ export function HelpTip({
         id={panelId}
         role="note"
         hidden={!open}
-        className={`absolute top-8 z-30 w-72 max-w-[78vw] rounded-lg border border-slate-200 bg-white p-3 text-left text-xs leading-relaxed text-slate-600 shadow-[0_4px_16px_rgba(32,33,36,0.18)] ${
+        className={`absolute top-8 z-30 w-72 max-w-[78vw] rounded-lg border border-slate-200 bg-white p-3 text-left text-sm leading-relaxed text-slate-600 shadow-[0_4px_16px_rgba(32,33,36,0.18)] ${
           align === 'right' ? 'right-0' : 'left-0'
         }`}
       >

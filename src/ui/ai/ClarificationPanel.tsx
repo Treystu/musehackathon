@@ -183,7 +183,7 @@ export function ClarificationPanel({
 
   return (
     <section aria-label="Clarify the request" className="mt-4">
-      <p className="text-sm text-slate-700">
+      <p className="text-base text-slate-700">
         {intent.geographies.length === 0
           ? 'Choose a place and a measure before anything runs — or just a measure, to screen the whole country by it.'
           : 'Choose the place and measure before anything runs.'}

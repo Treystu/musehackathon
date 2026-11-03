@@ -190,11 +190,11 @@ export function SweepTable({
 
   function header(col: (typeof COLUMNS)[number]) {
     if (!col.sort) {
-      return <th scope="col" aria-sort={sortKey === null ? 'ascending' : undefined} className="whitespace-nowrap px-3 py-2 text-left text-[0.8125rem] font-semibold text-slate-700">{col.label}</th>
+      return <th scope="col" aria-sort={sortKey === null ? 'ascending' : undefined} className="whitespace-nowrap px-3 py-2 text-left text-sm font-semibold text-slate-700">{col.label}</th>
     }
     const active = sortKey === col.sort
     return (
-      <th scope="col" className="whitespace-nowrap px-3 py-2 text-right text-[0.8125rem] font-semibold text-slate-700" aria-sort={active ? (ascending ? 'ascending' : 'descending') : 'none'}>
+      <th scope="col" className="whitespace-nowrap px-3 py-2 text-right text-sm font-semibold text-slate-700" aria-sort={active ? (ascending ? 'ascending' : 'descending') : 'none'}>
         <button
           type="button"
           onClick={() => {
@@ -234,7 +234,7 @@ export function SweepTable({
           >
             Export CSV
           </button>
-          <p className="text-xs text-slate-600">
+          <p className="text-sm text-slate-600">
             {formatMetricNumber(visible.length, 'count')} of {formatMetricNumber(rows.length, 'count')} ZIP codes shown.
           </p>
         </div>
@@ -268,8 +268,8 @@ export function SweepTable({
         onScroll={(e) => setStart(Math.floor((e.target as HTMLDivElement).scrollTop / ROW_HEIGHT) - OVERSCAN)}
         className="mt-3 max-h-[560px] overflow-auto panel"
       >
-        <table className="w-full min-w-[760px] text-left text-sm">
-          <caption className="px-3 py-2 text-left text-xs text-slate-600">
+        <table className="w-full min-w-[760px] text-left text-base">
+          <caption className="px-3 py-2 text-left text-sm text-slate-600">
             US ZIP code tabulation areas, American Community Survey 5-year estimates. {formatMetricNumber(visible.length, 'count')}
             areas in total, scrolled rather than truncated, so every ZIP code is reachable.
           </caption>
@@ -302,10 +302,10 @@ export function SweepTable({
                     sideways on a phone, and the two fields are read together every
                     time, so separating them doubles the width for no gain.
                   */}
-                  <th scope="row" className="px-3 py-1.5 text-left text-[0.8125rem] font-medium text-slate-900">
+                  <th scope="row" className="px-3 py-1.5 text-left text-base font-medium text-slate-900">
                     <span className="block font-mono tabular-nums">{r.zcta}</span>
                     {placeLabel?.(r.zcta) && (
-                      <span className="block text-[0.6875rem] font-normal not-italic text-slate-500">
+                      <span className="block text-xs font-normal not-italic text-slate-500">
                         {placeLabel(r.zcta)}
                       </span>
                     )}
@@ -314,7 +314,7 @@ export function SweepTable({
                     const value = r.metrics[c.sort!] ?? null
                     const marginText = fmtMargin(r.moes?.[c.sort!] ?? null)
                     return (
-                      <td key={c.key} className="whitespace-nowrap px-3 py-1.5 text-right text-[0.8125rem] tabular-nums text-slate-700">
+                      <td key={c.key} className="whitespace-nowrap px-3 py-1.5 text-right text-base tabular-nums text-slate-700">
                         {fmt(
                           value,
                           UNIT_OF[c.sort!] ?? 'count',
@@ -328,7 +328,7 @@ export function SweepTable({
                         */}
                         {marginText !== null && value !== null ? (
                           <span
-                            className="ml-1 text-[0.6875rem] tabular-nums text-slate-500"
+                            className="ml-1 text-xs tabular-nums text-slate-500"
                             title={`Margin of error plus or minus ${marginText}`}
                           >
                             &plusmn;{marginText}
@@ -352,7 +352,7 @@ export function SweepTable({
                         type="button"
                         onClick={() => onAdd(r.zcta)}
                         disabled={isSelected}
-                        className="rounded border border-slate-300 px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700"
+                        className="rounded border border-slate-300 px-2 py-0.5 text-sm hover:bg-slate-100 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700"
                       >
                         {isSelected ? 'Added' : 'Compare'}
                       </button>

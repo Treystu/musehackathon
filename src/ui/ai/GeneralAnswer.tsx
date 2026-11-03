@@ -36,7 +36,7 @@ export function GeneralAnswer({ answer }: { answer: GeneralAnswerData }) {
       )}
       {answer.inquiry && (
         <div className="mt-4 border-t border-slate-100 pt-3" data-inquiry={answer.inquiry.kind}>
-          <p className="text-sm leading-relaxed text-slate-700">{answer.inquiry.text}</p>
+          <p className="text-base leading-relaxed text-slate-700">{answer.inquiry.text}</p>
         </div>
       )}
     </section>

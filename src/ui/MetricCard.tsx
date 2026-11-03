@@ -31,7 +31,7 @@ export function MetricCard({ metric, notice }: { metric: MetricValue; notice?: s
     <div className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-sm font-medium text-slate-700">{metric.label}</h3>
+          <h3 className="text-base font-semibold text-slate-700">{metric.label}</h3>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">
             {formatMetricValue(metric, metric.absentReason)}
             {moe !== undefined && isMetricDisplayable(metric.value, metric.unit) && (
@@ -56,13 +56,13 @@ export function MetricCard({ metric, notice }: { metric: MetricValue; notice?: s
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-controls={panelId}
-        className="mt-2 text-xs text-slate-600 underline hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-600"
+        className="mt-2 text-sm text-slate-600 underline hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-600"
       >
         {open ? 'Hide detail' : 'Where this number comes from'}
       </button>
 
       {open && (
-        <div id={panelId} className="mt-2 space-y-2 text-xs text-slate-600">
+        <div id={panelId} className="mt-2 space-y-2 text-sm text-slate-600">
           {metric.geographyContext && (
             <p>
               <span className="font-medium">Geography: </span>
@@ -104,7 +104,7 @@ export function MetricCard({ metric, notice }: { metric: MetricValue; notice?: s
         </div>
       )}
 
-      {notice && <p className="mt-2 border-t border-slate-200 pt-2 text-xs italic text-slate-500">{notice}</p>}
+      {notice && <p className="mt-2 border-t border-slate-200 pt-2 text-sm italic text-slate-500">{notice}</p>}
     </div>
   )
 }

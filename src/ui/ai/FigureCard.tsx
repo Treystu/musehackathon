@@ -90,7 +90,7 @@ export function FigureCard({ figure }: { figure: FigureInput }) {
       {figure.derivation ? (
         <details className="mt-1">
           <summary className="disclosure-summary">How this figure was derived</summary>
-          <p className="text-sm text-slate-700">{figure.derivation}</p>
+          <p className="text-base text-slate-700">{figure.derivation}</p>
         </details>
       ) : null}
     </figure>

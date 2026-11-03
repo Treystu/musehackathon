@@ -41,7 +41,7 @@ export function Comparison({
         <h2 id="comparison-heading" className="section-title">
           Comparison
         </h2>
-        <p className="mt-2 text-sm text-slate-700">
+        <p className="mt-2 text-base text-slate-700">
           No areas selected yet. Look up a ZIP code or a city, or ask a question, and the
           areas you choose will appear here side by side.
         </p>
@@ -80,7 +80,7 @@ export function Comparison({
         {entries.length > 1 && comparableRows.length > 0 && (
           <section aria-labelledby="comparison-matrix-heading" className="panel panel-padded">
             <div className="flex items-center gap-1.5">
-              <h3 id="comparison-matrix-heading" className="text-sm font-semibold text-slate-900">
+              <h3 id="comparison-matrix-heading" className="text-base font-semibold text-slate-900">
                 Compare shared figures side by side
               </h3>
               <HelpTip label="About the comparison table">
@@ -112,7 +112,7 @@ export function Comparison({
                 the row labels a letter at a time below a table min-width
                 that reserved nothing for them.
               */}
-              <table className="table-words w-full min-w-[540px] border-collapse text-left text-sm">
+              <table className="table-words w-full min-w-[540px] border-collapse text-left text-base">
                 <caption className="sr-only">
                   Published measures available for all selected areas from the same source, table, and vintage.
                 </caption>
@@ -135,7 +135,7 @@ export function Comparison({
                     <tr key={row.key} className="border-b border-slate-200 align-top">
                       <th scope="row" className="sticky left-0 min-w-[10rem] max-w-64 bg-white py-3 pr-4 font-medium text-slate-800">
                         {row.label}
-                        {row.note && <span className="mt-1 block text-xs font-normal text-slate-600">{row.note}</span>}
+                        {row.note && <span className="mt-1 block text-sm font-normal text-slate-600">{row.note}</span>}
                       </th>
                       {row.values.map((metric, index) => {
                         const margin = metric.quality.marginOfError
@@ -148,7 +148,7 @@ export function Comparison({
                               </span>
                             )}
                             {metric.geographyContext && (
-                              <span className="mt-1 block text-xs font-normal text-slate-600">
+                              <span className="mt-1 block text-sm font-normal text-slate-600">
                                 <span className="font-medium">Geography: </span>{metric.geographyContext}
                               </span>
                             )}
@@ -206,7 +206,7 @@ export function Comparison({
               <button
                 type="button"
                 onClick={() => onDeselect(d.zcta)}
-                className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700"
+                className="rounded border border-slate-300 px-2 py-1 text-sm text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700"
               >
                 Remove
               </button>
@@ -233,7 +233,7 @@ export function Comparison({
 
             {d.metrics.length > 0 && (
               <>
-                <h4 className="mt-5 text-sm font-semibold text-slate-900">Every figure, unmodified</h4>
+                <h4 className="mt-5 text-base font-semibold text-slate-900">Every figure, unmodified</h4>
                 <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {d.metrics.map((m) => (
                     <MetricCard key={`${d.zcta}-${m.key}-${m.source.tableId}`} metric={m} />
@@ -244,7 +244,7 @@ export function Comparison({
 
             {d.hasSchools && (
               <div className="mt-4 flex items-center gap-1.5 border-t border-slate-100 pt-3">
-                <span className="text-xs font-medium text-slate-700">About school data here</span>
+                <span className="text-sm font-medium text-slate-700">About school data here</span>
                 <HelpTip label="About school data here">
                   <p>
                     District staffing and enrollment figures cover all 50 states. Near this location, the national

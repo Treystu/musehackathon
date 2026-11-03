@@ -1505,7 +1505,7 @@ export default function App() {
     <>
       <section aria-labelledby="search-heading" className="panel panel-padded">
         <div className="flex items-center gap-1.5">
-          <h2 id="search-heading" className="text-sm font-semibold text-slate-900">
+          <h2 id="search-heading" className="text-base font-semibold text-slate-900">
             Look up a ZIP code or a city
           </h2>
           {/* The how-it-resolves paragraph lives behind the help tip
@@ -1651,7 +1651,7 @@ export default function App() {
                 <img src="/favicon.svg" alt="" className="h-8 w-8 shrink-0" />
                 <div className="min-w-0">
                   <h1 className="text-lg font-medium tracking-tight text-slate-900">CivicScope</h1>
-                  <p className="text-xs leading-snug text-slate-600">
+                  <p className="text-sm leading-snug text-slate-600">
                     Every ZIP code in the US, from federal data, in your browser.
                   </p>
                 </div>
@@ -1664,7 +1664,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setTourOpen(true)}
-                  className="shrink-0 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+                  className="shrink-0 rounded-md border border-slate-300 px-2 py-1 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
                 >
                   How this works
                 </button>
@@ -1754,7 +1754,7 @@ export default function App() {
                     />
 
                     {q.sweepFromCache && (
-                      <p className="mt-2 text-xs text-slate-500">
+                      <p className="mt-2 text-sm text-slate-500">
                         Loaded from this browser&rsquo;s local cache. Figures come from the American Community
                         Survey {VINTAGE_LABEL} and update annually; use Refresh in the cache panel to re-fetch.
                       </p>
@@ -2032,8 +2032,8 @@ export default function App() {
             {mode === 'data' && searchPanel}
             {mode === 'data' && showKeylessGuidance && (
               <section className="mt-4 panel panel-padded">
-                <h2 className="text-sm font-semibold text-slate-900">What you can do without a key</h2>
-                <p className="mt-1 text-sm text-slate-700">
+                <h2 className="text-base font-semibold text-slate-900">What you can do without a key</h2>
+                <p className="mt-1 text-base text-slate-700">
                   ZIP lookup, Census-tract boundaries, school district staffing and enrollment, and health measures
                   work without a key. The full country-wide screen needs one.
                 </p>
@@ -2063,7 +2063,7 @@ export default function App() {
             )}
             {mode === 'data' && q.sweepStatus === 'loading' && (
               <section className="mt-4 panel panel-padded" role="status" aria-busy="true">
-                <h2 className="text-sm font-semibold text-slate-900">
+                <h2 className="text-base font-semibold text-slate-900">
                   Loading {q.sweepProgress?.scope ?? 'housing data'}
                 </h2>
                 {q.sweepProgress ? (
@@ -2085,7 +2085,7 @@ export default function App() {
                       {q.sweepProgress.failed > 0 && ` · ${q.sweepProgress.failed} failed`}
                     </p>
                     {q.sweepProgress.budget && (
-                      <p className="mt-1 text-xs text-slate-500">
+                      <p className="mt-1 text-sm text-slate-500">
                         {q.sweepProgress.budget.remaining} of {q.sweepProgress.budget.limit} requests left
                         today. Areas already loaded are cached, so returning to this page costs nothing.
                       </p>
@@ -2102,7 +2102,7 @@ export default function App() {
                   The table is already usable while this runs, so the copy has to
                   say so rather than implying the page is blocked.
                 */}
-                <p className="mt-1 text-sm text-slate-700">
+                <p className="mt-1 text-base text-slate-700">
                   Rows appear below as each area loads; sorting and filtering work on what has arrived.
                 </p>
               </section>
@@ -2128,7 +2128,7 @@ export default function App() {
                     <h2 id="screen-heading" className="section-title">
                       Screen every ZIP code
                     </h2>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-sm text-slate-500">
                       {num.format(q.sweep.length)} areas loaded
                       {q.sweepFromCache ? ' from local cache' : ''} · {q.quota.used} request
                       {q.quota.used === 1 ? '' : 's'} from this browser
@@ -2137,7 +2137,7 @@ export default function App() {
 
                   <fieldset className="mt-3">
                     <legend className="text-sm font-medium text-slate-800">Choose a figure to sort by</legend>
-                    <p className="mt-1 text-xs text-slate-600">
+                    <p className="mt-1 text-sm text-slate-600">
                       The list starts in ZIP code order. Choose one figure, then select its column header again to
                       reverse direction. Every figure stays visible.
                     </p>
@@ -2181,7 +2181,7 @@ export default function App() {
                     <summary className="min-h-[44px] cursor-pointer text-sm font-medium text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900">
                       Narrow by figures (rent, burden, home value, households)
                     </summary>
-                    <p className="mt-1 text-xs text-slate-600">
+                    <p className="mt-1 text-sm text-slate-600">
                       Keeps only the areas inside the bounds you set, in the order you were already viewing. This
                       filters; it does not rank, and an area with no published figure for a bound you set is left
                       out rather than shown.
@@ -2199,7 +2199,7 @@ export default function App() {
                                 : 'Min households'
                         return (
                           <div key={f.metric}>
-                            <label htmlFor={id} className="block text-xs font-medium text-slate-700">
+                            <label htmlFor={id} className="block text-sm font-medium text-slate-700">
                               {label}
                             </label>
                             <input
@@ -2283,7 +2283,7 @@ export default function App() {
                   between a cache that feels fast and one that misleads.
                 */}
                 {q.sweepFromCache && (
-                  <p className="mt-2 text-xs text-slate-500">
+                  <p className="mt-2 text-sm text-slate-500">
                     Loaded from this browser&rsquo;s local cache. Figures come from the American Community
                     Survey {VINTAGE_LABEL} and update annually; use Refresh in the cache panel to re-fetch.
                   </p>
@@ -2358,7 +2358,7 @@ export default function App() {
             three standing statements keep their sentences verbatim —
             the Census non-endorsement sentence in particular — but
             read as footer fine print, not as three body paragraphs. */}
-        <div className="mx-auto max-w-7xl px-6 py-4 text-[11px] leading-relaxed text-slate-500">
+        <div className="mx-auto max-w-7xl px-6 py-4 text-xs leading-relaxed text-slate-500">
           <p>
             CivicScope is free, open, and carries no advertising. It does not sell, broker, or refer listings
             and does not accept payment for placement in any result. Data is fetched directly from its

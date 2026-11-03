@@ -192,7 +192,7 @@ function CriterionEvidenceList({ answer }: { answer: ComposedAnswer }) {
       <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Criteria</h3>
       <ul className="mt-1 space-y-1">
         {answer.criterionEvidence.map((evidence, i) => (
-          <li key={i} className="text-sm text-slate-700">
+          <li key={i} className="text-base text-slate-700">
             {/*
               The stored criterion for a Census entry is its metric
               key, kept as a key because spoken-answer.ts matches it
@@ -228,7 +228,7 @@ function ClaimSources({ claim, answer }: { claim: ResearchedClaim; answer: Compo
             href={source.url}
             target="_blank"
             rel="noreferrer"
-            className="whitespace-nowrap text-xs text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-700"
+            className="whitespace-nowrap text-sm text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-700"
           >
             {source.title}
           </a>
@@ -240,7 +240,7 @@ function ClaimSources({ claim, answer }: { claim: ResearchedClaim; answer: Compo
 
 function ClaimText({ claim, answer }: { claim: ResearchedClaim; answer: ComposedAnswer }) {
   return (
-    <p className="mt-2 text-sm leading-relaxed text-slate-700">
+    <p className="mt-2 text-base leading-relaxed text-slate-700">
       {claim.text}
       <ClaimSources claim={claim} answer={answer} />
     </p>
@@ -338,30 +338,30 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
       </div>
 
       {answer.refinementNote && (
-        <p role="note" className="mt-2 text-sm text-slate-600">
+        <p role="note" className="mt-2 text-base text-slate-600">
           {answer.refinementNote}
         </p>
       )}
       {answer.verification?.wonder === 'concerns' &&
         (answer.verification.wonderConcerns ?? []).map((concern) => (
-          <p key={concern} role="note" className="mt-2 text-sm text-slate-600">
+          <p key={concern} role="note" className="mt-2 text-base text-slate-600">
             {concern}
           </p>
         ))}
       {answer.status === 'withheld' && (
-        <p role="note" className="mt-2 text-sm text-slate-600">
+        <p role="note" className="mt-2 text-base text-slate-600">
           A composed answer was withheld because it did not pass verification. The figures below
           come straight from the data.
         </p>
       )}
       {answer.status === 'blocked' && (
-        <p role="note" className="mt-2 text-sm text-slate-600">
+        <p role="note" className="mt-2 text-base text-slate-600">
           That question could not be screened as asked, so no answer was composed. The data views
           below still work.
         </p>
       )}
       {answer.status === 'empty' && (
-        <p role="note" className="mt-2 text-sm text-slate-600">
+        <p role="note" className="mt-2 text-base text-slate-600">
           {answer.summary}
         </p>
       )}
@@ -398,7 +398,7 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
               <PlaceBlock key={place.zcta} place={place} answer={answer} />
             ))}
           {answer.places.length > ANSWER_CARD_PLACE_LIMIT && (
-            <p className="mt-3 text-sm text-slate-600">
+            <p className="mt-3 text-base text-slate-600">
               {count.format(answer.places.length - ANSWER_CARD_PLACE_LIMIT)} more places meet
               the stated criteria — all of them are in the screening table below.
             </p>
@@ -414,57 +414,57 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
       )}
 
       {capLine && (
-        <p role="note" className="mt-3 text-xs text-slate-500">
+        <p role="note" className="mt-3 text-sm text-slate-500">
           {capLine}
         </p>
       )}
       {shortfallLine && (
-        <p role="note" className="mt-1 text-xs text-slate-500">
+        <p role="note" className="mt-1 text-sm text-slate-500">
           {shortfallLine}
         </p>
       )}
       {unresolvedCandidates && (
-        <p role="note" className="mt-1 text-xs text-slate-500">
+        <p role="note" className="mt-1 text-sm text-slate-500">
           {unresolvedCandidates}
         </p>
       )}
       {unsupportedLine && (
-        <p role="note" className="mt-1 text-xs text-slate-500">
+        <p role="note" className="mt-1 text-sm text-slate-500">
           {unsupportedLine}
         </p>
       )}
       {countyLine && (
-        <p role="note" className="mt-1 text-xs text-slate-500">
+        <p role="note" className="mt-1 text-sm text-slate-500">
           {countyLine}
         </p>
       )}
       {stateLine && (
-        <p role="note" className="mt-1 text-xs text-slate-500">
+        <p role="note" className="mt-1 text-sm text-slate-500">
           {stateLine}
         </p>
       )}
       {disclosureLines.map((line) => (
-        <p key={line} role="note" className="mt-1 text-xs text-slate-500">
+        <p key={line} role="note" className="mt-1 text-sm text-slate-500">
           {line}
         </p>
       ))}
       {notMeasurableLine && (
-        <p role="note" className="mt-1 text-xs text-slate-500">
+        <p role="note" className="mt-1 text-sm text-slate-500">
           {notMeasurableLine}
         </p>
       )}
       {droppedLine && (
-        <p role="note" className="mt-3 text-xs text-slate-500">
+        <p role="note" className="mt-3 text-sm text-slate-500">
           {droppedLine}
         </p>
       )}
       {unresolvedLine && (
-        <p role="note" className="mt-1 text-xs text-slate-500">
+        <p role="note" className="mt-1 text-sm text-slate-500">
           {unresolvedLine}
         </p>
       )}
       {answer.status === 'verified' && droppedClaims && (
-        <p role="note" className="mt-1 text-xs text-slate-500">
+        <p role="note" className="mt-1 text-sm text-slate-500">
           {droppedClaims}
         </p>
       )}

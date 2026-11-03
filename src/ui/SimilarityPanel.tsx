@@ -194,7 +194,7 @@ export function SimilarityPanel({
       {!enabled ? (
         <div className="mt-2">
           <div className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-slate-700">Why this is off</span>
+            <span className="text-sm font-medium text-slate-700">Why this is off</span>
             <HelpTip label="Why similar-ZIP search is off by default">
               <p>
                 This is off because a similarity result is a ranking: it only runs when you ask for it. It starts
@@ -214,7 +214,7 @@ export function SimilarityPanel({
       ) : (
         <div className="mt-2">
           <div className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-slate-700">How matches are found</span>
+            <span className="text-sm font-medium text-slate-700">How matches are found</span>
             <HelpTip label="How similar-ZIP matching works">
               <p>
                 Weighted by the sliders you set, compared against the {sweep.length.toLocaleString('en-US')} areas
@@ -227,7 +227,7 @@ export function SimilarityPanel({
 
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {SIMILARITY_METRICS.map((metric) => (
-              <label key={metric} htmlFor={`weight-${metric}`} className="block text-xs text-slate-700">
+              <label key={metric} htmlFor={`weight-${metric}`} className="block text-sm text-slate-700">
                 <span className="font-medium">{LABELS[metric]}</span>
                 <input
                   id={`weight-${metric}`}
@@ -246,7 +246,7 @@ export function SimilarityPanel({
             ))}
           </div>
 
-          <label htmlFor="similarity-cutoff" className="mt-3 block text-xs text-slate-700">
+          <label htmlFor="similarity-cutoff" className="mt-3 block text-sm text-slate-700">
             <span className="font-medium">Distance cut-off</span>
             <input
               id="similarity-cutoff"
@@ -284,7 +284,7 @@ export function SimilarityPanel({
 
           {origin && originFigs && (
             <div className="mt-3">
-              <p className="text-xs text-slate-600">
+              <p className="text-sm text-slate-600">
                 <strong>{origin.zcta}</strong> carries {SIMILARITY_METRICS.filter((m) => originFigs[m] !== null && originFigs[m] !== undefined).length} of the{' '}
                 {SIMILARITY_METRICS.length} weighted figures. Comparing on {dims.length === SIMILARITY_METRICS.length ? 'all of them' : `${dims.length} of them`}.{' '}
                 {results.length.toLocaleString('en-US')} of {sweep.length.toLocaleString('en-US')} areas are within your cut-off.
@@ -306,13 +306,13 @@ export function SimilarityPanel({
                       >
                         <div className="min-w-0">
                           <span className="font-mono text-sm font-medium text-slate-900">{r.zcta}</span>
-                          <span className="ml-2 text-xs text-slate-500">distance {r.distance.toFixed(2)}</span>
+                          <span className="ml-2 text-sm text-slate-500">distance {r.distance.toFixed(2)}</span>
                         </div>
                         <button
                           type="button"
                           onClick={() => onAdd(r.zcta)}
                           disabled={added}
-                          className="min-h-[44px] rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 hover:bg-slate-100 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+                          className="min-h-[44px] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800 hover:bg-slate-100 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
                         >
                           {added ? 'Added' : 'Compare'}
                         </button>
@@ -320,7 +320,7 @@ export function SimilarityPanel({
                           <button
                             type="button"
                             onClick={() => setExplainZip(r.zcta)}
-                            className="min-h-[44px] rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+                            className="min-h-[44px] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
                           >
                             Explain {r.zcta}
                           </button>

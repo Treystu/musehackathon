@@ -456,7 +456,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
         />
         {activeBin ? (
           <div
-            className="pointer-events-none absolute z-10 max-w-xs rounded-md border border-slate-300 bg-white p-2 text-xs shadow-sm"
+            className="pointer-events-none absolute z-10 max-w-xs rounded-md border border-slate-300 bg-white p-2 text-sm shadow-sm"
             style={{
               left: Math.min(activeBin.cx + 12, viewport.width - 180),
               top: Math.min(activeBin.cy + 12, viewport.height - 90),
@@ -529,7 +529,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
           drag handling never delivered (see map-interactions.ts for why
           pinch stays out).
         */}
-        <p className="pointer-events-none absolute bottom-2 left-2 max-w-[22rem] rounded bg-white/85 px-2 py-1 text-[11px] leading-snug text-slate-600 backdrop-blur">
+        <p className="pointer-events-none absolute bottom-2 left-2 max-w-[22rem] rounded bg-white/85 px-2 py-1 text-xs leading-snug text-slate-600 backdrop-blur">
           Drag to pan, scroll to zoom, or use the buttons. Arrow keys move between areas, Enter selects one,
           + and &minus; zoom, 0 resets. Click an area to compare it.
         </p>
@@ -543,7 +543,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
           {bins.length === 0 ? ' (no figures loaded yet)' : ''}
         </p>
         {bins.length > 0 ? (
-          <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-[0.8125rem] text-slate-700">
+          <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-sm text-slate-700">
             {bins.map((bin) => (
               <li key={bin.color} className="flex items-center gap-1.5">
                 <span
@@ -564,7 +564,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
             </li>
           </ul>
         ) : null}
-        <p className="mt-1 text-[0.8125rem] leading-snug text-slate-600">
+        <p className="mt-1 text-sm leading-snug text-slate-600">
           {loading
             ? 'Still loading. An asterisk marks a hexagon whose ZIP codes are only partly loaded, so its figure is the median of what has arrived so far rather than of everything.'
             : `Loaded ${covered.toLocaleString('en-US')} of ${geoms.length.toLocaleString('en-US')} areas with a figure; areas left blank have no figure published.`}
@@ -618,7 +618,7 @@ export function MapView({ rows, loading, onSelect, selectedZctas, explainProvide
         <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-semibold text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900">
           Schools: current coverage and why there is no combined score
         </summary>
-        <div className="border-t border-slate-200 px-3 py-2.5 text-[0.8125rem] leading-relaxed text-slate-700">
+        <div className="border-t border-slate-200 px-3 py-2.5 text-sm leading-relaxed text-slate-700">
           <p>
             <strong className="text-slate-900">Every area, all 50 states:</strong> the school district covering
             it, with teacher count, students per teacher, enrolled students and school count.

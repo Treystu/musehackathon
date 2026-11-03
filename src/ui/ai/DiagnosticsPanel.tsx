@@ -133,7 +133,7 @@ export function DiagnosticsPanel({
           {message}
         </p>
       </div>
-      <p className="mt-3 text-xs leading-relaxed text-slate-600">
+      <p className="mt-3 text-sm leading-relaxed text-slate-600">
         The download adds route status codes, whether this deployment has a shared key configured,
         aggregate meter counts, and the build commit when the server reports it. Values that cannot
         be observed are named in the file rather than guessed.

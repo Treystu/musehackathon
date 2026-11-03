@@ -185,7 +185,7 @@ export function GuidedTour({ open, onDismiss }: { open: boolean; onDismiss: () =
         <h2 id={headingId} className="mt-1 text-lg font-semibold text-slate-900">
           {current.heading}
         </h2>
-        <div id={bodyId} className="mt-2 space-y-2 text-sm leading-relaxed text-slate-700">
+        <div id={bodyId} className="mt-2 space-y-2 text-base leading-relaxed text-slate-700">
           {current.body}
         </div>
 
@@ -276,7 +276,7 @@ export function TourNotice({ onOpen, onDismiss }: { onOpen: () => void; onDismis
       aria-labelledby={headingId}
       className="mb-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"
     >
-      <h2 id={headingId} className="text-sm font-semibold text-slate-900">
+      <h2 id={headingId} className="text-base font-semibold text-slate-900">
         New here
       </h2>
       <p className="mt-1">

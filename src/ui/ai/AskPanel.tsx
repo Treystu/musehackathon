@@ -1228,7 +1228,7 @@ export function AskPanel({
               setText(example)
               void runQuery(example)
             }}
-            className="min-h-[36px] rounded-full border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 hover:bg-slate-100 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+            className="min-h-[36px] rounded-full border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-800 hover:bg-slate-100 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
           >
             {example}
           </button>
@@ -1277,7 +1277,7 @@ export function AskPanel({
       {research.status === 'done' && (
         <section aria-label="From the web" className="mt-4 border-t border-slate-200 pt-3">
           <div className="flex items-center gap-1.5">
-            <h3 className="text-sm font-semibold text-slate-800">From the web</h3>
+            <h3 className="text-base font-semibold text-slate-800">From the web</h3>
             <HelpTip label="About web findings">
               Web findings via Muse search, with sources. These are not Census figures; the
               Census figures for this question are computed separately and shown with their
@@ -1285,7 +1285,7 @@ export function AskPanel({
             </HelpTip>
           </div>
           {research.prose.split(/\n\n+/).map((para, i) => (
-            <p key={i} className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-700">
+            <p key={i} className="mt-2 whitespace-pre-line text-base leading-relaxed text-slate-700">
               {para}
             </p>
           ))}

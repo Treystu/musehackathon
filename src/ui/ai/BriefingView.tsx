@@ -102,14 +102,14 @@ export async function requestBriefingPack(
 export function BriefingPackView({ pack }: { pack: BriefingPack }) {
   return (
     <section aria-label="Briefing pack" className="mt-4">
-      <h3 className="text-sm font-semibold text-slate-900">Briefing pack</h3>
-      <p className="mt-1 text-sm text-slate-700">{pack.coverLine}</p>
+      <h3 className="text-base font-semibold text-slate-900">Briefing pack</h3>
+      <p className="mt-1 text-base text-slate-700">{pack.coverLine}</p>
       <ExplainBox
         title="Briefing narrative"
         prose={pack.narrative}
         withheld={pack.narrativeWithheld}
       />
-      <ul className="mt-3 space-y-2 text-sm text-slate-700">
+      <ul className="mt-3 space-y-2 text-base text-slate-700">
         {pack.rows.map((row) => (
           <li key={`${row.geography}-${row.key}`}>
             <strong className="text-slate-900">
@@ -122,7 +122,7 @@ export function BriefingPackView({ pack }: { pack: BriefingPack }) {
       </ul>
       <details className="mt-3">
         <summary className="disclosure-summary">Methodology and citations</summary>
-        <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-700">
+        <ul className="mt-1 list-disc space-y-1 pl-5 text-base text-slate-700">
           {pack.appendix.map((line) => (
             <li key={line}>{line}</li>
           ))}
@@ -133,7 +133,7 @@ export function BriefingPackView({ pack }: { pack: BriefingPack }) {
       </p>
       <details className="mt-2">
         <summary className="disclosure-summary">Pack as plain text</summary>
-        <pre className="mt-1 overflow-auto rounded-md bg-slate-50 p-3 text-xs text-slate-800">
+        <pre className="mt-1 overflow-auto rounded-md bg-slate-50 p-3 text-sm text-slate-800">
           {pack.text}
         </pre>
       </details>
@@ -153,7 +153,7 @@ export function MethodologyQa() {
   return (
     <section aria-label="Methodology questions" className="mt-6 border-t border-slate-200 pt-4">
       <div className="flex items-center gap-1.5">
-        <h3 className="text-sm font-semibold text-slate-900">Ask about the data</h3>
+        <h3 className="text-base font-semibold text-slate-900">Ask about the data</h3>
         {/* The figures/wording disclosure (DISCLOSURE_TEXT, pinned
             verbatim in validator tests) sits behind this tip, not as a
             standing paragraph under the box (owner phone review,
@@ -164,7 +164,7 @@ export function MethodologyQa() {
           <p>{DISCLOSURE_TEXT}</p>
         </HelpTip>
       </div>
-      <p className="mt-1 text-sm text-slate-700">
+      <p className="mt-1 text-base text-slate-700">
         Where a figure comes from, how current it is, why it is missing, what is
         covered. Questions about the figures themselves belong to search.
       </p>
@@ -184,7 +184,7 @@ export function MethodologyQa() {
         </button>
       </form>
       {result && (
-        <p role="status" className="mt-2 text-sm text-slate-700">
+        <p role="status" className="mt-2 text-base text-slate-700">
           {result.text}
         </p>
       )}
@@ -245,7 +245,7 @@ export function BriefingView({
   return (
     <section aria-label="Briefing pack and methodology">
       <div className="flex items-center gap-1.5">
-        <h2 className="text-sm font-semibold text-slate-900">Briefing pack</h2>
+        <h2 className="text-base font-semibold text-slate-900">Briefing pack</h2>
         {/* The how-a-pack-is-checked paragraph lives behind the help
             tip at the heading (owner phone review, 2026-11-02): the
             briefing section is a task surface, so its explanation is on

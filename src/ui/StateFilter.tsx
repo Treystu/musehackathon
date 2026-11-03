@@ -96,8 +96,8 @@ export function StateFilter({
     <div className="panel panel-padded">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold text-slate-900">Narrow to a state or several</h2>
-          <p className="mt-1 text-xs text-slate-600">
+          <h2 className="text-base font-semibold text-slate-900">Narrow to a state or several</h2>
+          <p className="mt-1 text-sm text-slate-600">
             The whole country loads in {totalChunks} small requests and takes a couple of minutes. Choosing
             states first fetches far less and finishes in seconds.
           </p>

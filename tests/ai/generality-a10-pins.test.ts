@@ -3,9 +3,11 @@ import {
   bindResolvedCandidates,
   candidateBoundForInput,
   claimMentionsPlace,
+  criterionEvidenceFor,
   extractBareCandidateNames,
   runAnswerPipeline,
   type ComposedAnswer,
+  type ResearchedClaim,
   type ResolvedCandidate,
   type RunProgressSnapshot,
 } from '../../src/core/ai/answer'
@@ -566,5 +568,102 @@ describe('FM-19 claim-place attribution (the sheet-B specimen, hermetic)', () =>
     expect(answer.droppedClaims.map((c) => c.text)).toContain(
       'Early, TX is the worst town in the state for a liberal household, by every account.',
     )
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* FM-18: no-place criterion status                                    */
+/* ------------------------------------------------------------------ */
+
+const VA_Q = 'Which town in Virginia has the best healthcare access?'
+const VA_ROWS: AreaRow[] = [
+  row('23219', 'Richmond, VA', 1250),
+  row('22903', 'Charlottesville, VA', 1400),
+  row('23507', 'Norfolk, VA', 1150),
+  row('24060', 'Blacksburg, VA', 1100),
+  row('22801', 'Harrisonburg, VA', 1050),
+  row('24501', 'Lynchburg, VA', 950),
+  row('22401', 'Fredericksburg, VA', 1350),
+  row('22601', 'Winchester, VA', 1200),
+  row('22911', 'Pantops, VA', 1300),
+  row('24018', 'Cave Spring, VA', 1000),
+]
+
+describe('FM-18 no-place criterion status (unit)', () => {
+  const criterion = { id: 'combined', label: 'Healthcare access', text: VA_Q }
+  const servingClaim: ResearchedClaim = {
+    text: 'Wintergreen, VA is described as having strong healthcare access, with a clinic network rated among the best in the state.',
+    sourceUrls: ['https://example.com/f'],
+  }
+
+  it('serving research + zero places: the status states the lookup outcome, not "met"', () => {
+    const evidence = criterionEvidenceFor({
+      criteria: [],
+      droppedCriteria: [],
+      researchCriteria: [criterion],
+      places: [],
+      claims: [servingClaim],
+      unsupportedGeography: null,
+    })
+    const entry = evidence.find((e) => e.criterion === 'Healthcare access')!
+    expect(entry.status).toBe('not_measurable')
+    expect(entry.detail).toBe(
+      'Research returned material for this, but none of the places it named could be matched to Census data, so no place is shown for it.',
+    )
+    expect(entry.sourceUrls).toEqual(['https://example.com/f'])
+  })
+
+  it('no serving research + zero places: the pre-existing no-source wording stands (the branch keys on serving)', () => {
+    const evidence = criterionEvidenceFor({
+      criteria: [],
+      droppedCriteria: [],
+      researchCriteria: [criterion],
+      places: [],
+      claims: [],
+      unsupportedGeography: null,
+    })
+    const entry = evidence.find((e) => e.criterion === 'Healthcare access')!
+    expect(entry.status).toBe('not_measurable')
+    expect(entry.detail).toBe('No cited source available here speaks to this criterion.')
+  })
+})
+
+describe('FM-18 no-place criterion status (the VA healthcare specimen, sheet A)', () => {
+  it('research serves the criterion, nothing it names resolves: the did-not-name terminal carries the lookup outcome', async () => {
+    const prose =
+      'Wintergreen, VA is described as having strong healthcare access, with a clinic network rated among the best in the state. ' +
+      'Falling Spring, VA is described as well served by its regional hospital system and visiting specialists.'
+    const answer = await runPipeline({
+      q: VA_Q,
+      intent: { geographies: ['Virginia'], metricKeys: [] },
+      rows: VA_ROWS,
+      prose,
+    })
+    expect(answer.status).toBe('empty')
+    expect(answer.places).toEqual([])
+    expect(answer.unresolvedCandidates).toEqual(
+      expect.arrayContaining(['Wintergreen, VA', 'Falling Spring, VA']),
+    )
+    const entry = answer.criterionEvidence.find((e) => e.kind === 'research')!
+    expect(entry.status).toBe('not_measurable')
+    expect(entry.detail).toBe(
+      'Research returned material for this, but none of the places it named could be matched to Census data, so no place is shown for it.',
+    )
+  })
+
+  it('the same run with one resolvable place keeps the "met" stamp verbatim', async () => {
+    const prose =
+      'Richmond, VA is described as having the strongest healthcare access in the state, anchored by its academic medical center. ' +
+      'Wintergreen, VA is described as having strong healthcare access, with a clinic network rated among the best in the state.'
+    const answer = await runPipeline({
+      q: VA_Q,
+      intent: { geographies: ['Virginia'], metricKeys: [] },
+      rows: VA_ROWS,
+      prose,
+    })
+    expect(answer.places.map((p) => p.name)).toEqual(['Richmond, VA'])
+    const entry = answer.criterionEvidence.find((e) => e.kind === 'research')!
+    expect(entry.status).toBe('met')
+    expect(entry.detail).toBe('Served by the cited sources shown with the places.')
   })
 })

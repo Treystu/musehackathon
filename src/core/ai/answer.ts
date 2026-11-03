@@ -2558,6 +2558,27 @@ export function criterionEvidenceFor(input: {
           : 'No cited source available here speaks to this criterion.',
         sourceUrls: [],
       })
+    } else if (input.places.length === 0) {
+      // No-place lookup outcome (Lane A10 FM-18): the research
+      // returned material that serves this criterion, but the
+      // answer names no places — on the sheet-A specimens
+      // (VA healthcare, FL weather) none of the places the
+      // research named could be matched to Census data, so the
+      // terminal is the did-not-name card. The "met" stamp
+      // ("shown with the places") would describe an answer that
+      // does not exist; the honest status is the lookup outcome.
+      // Cards that name places keep the "met" stamp below. This
+      // branch reads the same pre-partition places the census
+      // branch above reads — evidence is composed before the
+      // FM-4 direction partition, by design.
+      evidence.push({
+        criterion: criterion.label,
+        kind: 'research',
+        status: 'not_measurable',
+        detail:
+          'Research returned material for this, but none of the places it named could be matched to Census data, so no place is shown for it.',
+        sourceUrls,
+      })
     } else if (criterion.id === 'safety' && !serving.some((claim) => SAFETY_DIRECTION_RE.test(claim.text))) {
       // Direction-of-fit (P3 step 5, battery D7): "low crime" is
       // measured only by evidence about crime LEVELS — a source

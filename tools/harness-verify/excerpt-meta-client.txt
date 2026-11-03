@@ -1,5 +1,3 @@
-import { VALIDATOR_FAILURES, findBannedConstruction, type ValidatorFailure } from './validator'
-
 /** Meta Model API origin and shape (dev.meta.ai docs, verified 2026-10-29). */
 export const META_API_BASE = 'https://api.meta.ai/v1'
 
@@ -9,13 +7,22 @@ export const META_API_BASE = 'https://api.meta.ai/v1'
  */
 export const MUSE_SPARK_MODEL = 'muse-spark-1.3'
 
-/** Ceiling mirrored from the proxy's intent parser, so the two cannot drift. */
-export const MAX_INTENT_QUERY_CHARS = 500
-
-/** Errors after which the BYO path is the honest next attempt. */
+/**
+ * Candidate direct-API id for Muse Wonder, the hourglass bookend
+ * model (conversational stack C1, 2026-11-02). Recorded as a preview
+ * roster id in the October homework; the in-build probe through a
+ * Preview deployment could not confirm it (the Preview deployment
+ * never served and the production key cannot be copied into the
+ * Preview env, because Cloudflare never returns secret values), so
+ * this id is a candidate, not a verified roster entry. The bookend
+ * routes treat a failed call under this id as a degradation, never
+ * as a verdict, so an unreachable Wonder cannot fabricate a result.
+ */
+export const MUSE_WONDER_MODEL = 'muse-wonder-1.0'
 
 /**
- * Transcription (Item 12, un-cut by the owner 2026-11-01: voice ships
+ * Every model id a proxy request may name (C1 per-call selection).
+ * The gate in muse-proxy rejects any other model string before a
  * because it works, per the standing ship-gate — see
  * docs/s12-voice-cut.md's reversal note). Muse Spark takes no audio
  * input at all — measured live 2026-11-01: an input_audio chat part
@@ -34,22 +41,6 @@ export const MAX_INTENT_QUERY_CHARS = 500
 export const ASR_MODEL = 'muse-voice-transcribe-1.0'
 
 /** Container format for the input_audio part, or null when unsupported. */
-export function audioFormatForMime(mimeType: string): string | null {
-  const base = mimeType.split(';')[0]?.trim().toLowerCase() ?? ''
-          temperature: 0.2,
-        },
-        signal,
-      )
-      const text = contentOf(reply)
-      if (!text) throw new ProviderCallError('provider_down')
-      return { prose: text.trim() }
-    },
-
-    async research(req: ResearchRequest, signal: AbortSignal): Promise<ResearchResult> {
-      const places =
-        req.places && req.places.length > 0
-          ? `\nPlaces the question names: ${req.places.join(', ')}`
-          : ''
       const reply = await respond(
         {
           input: [
@@ -62,31 +53,20 @@ export function audioFormatForMime(mimeType: string): string | null {
         },
         signal,
       )
-      const { prose, sources } = parseResearchResult(reply)
+      const { prose, sources, searchCalls } = parseResearchResult(reply)
       // The citation gate: ungrounded prose is not a research result.
       if (!prose || sources.length === 0) throw new ProviderCallError('provider_down')
-      // The fair-housing gate (2026-11-02): the banned-construction
-      // scan applies to research prose on this direct path too (the
-      // proxy route re-checks it and records the class; here the
-      // failure lands on the same unavailable state the UI already
-      // uses for ungrounded research, rather than rendering prose
-      // the figure surfaces would have withheld). Criteria-grounded
-      // context (rescoped 2026-11-02): the prose names screened
-      // places against the reader's stated criteria; protected-class
-      // steering, recommendation, and superlatives still withhold.
-      if (findBannedConstruction(prose, { criteriaGrounded: true })) {
-        throw new ProviderCallError('provider_down')
-      }
-      return { prose, sources }
+      // Claim-level prose refusal (P3 step 9): the banned-construction
+      // scan drops the offending sentence, not the whole result, when
+      // the rest verifies — the shipped word-level scan refused an
+      // entire result over "avoid the worst of the Highway 17 peak"
+      // (battery A-cluster note). Only a result with no surviving
+      // sentence lands on the unavailable state.
+      const filtered = filterBannedSentences(prose)
+      if (!filtered.prose) throw new ProviderCallError('provider_down')
+      return { prose: filtered.prose, sources, searchCalls }
     },
 
-    async transcribe(req: TranscribeRequest, signal: AbortSignal): Promise<TranscribeResult> {
-      // The ASR endpoint accepts mono PCM WAV only; anything else is
-      // a shape failure here rather than a bare 400 upstream. The mic
-      // converts before sending, so production traffic is WAV.
-      if (audioFormatForMime(req.mimeType) !== 'wav') {
-        throw new ProviderCallError('shape_invalid')
-      }
       const attempt = async (): Promise<TranscribeResult> => {
         const key = options.getApiKey()
         if (!key) throw new ProviderCallError('bad_key')
@@ -121,14 +101,3 @@ export function audioFormatForMime(mimeType: string): string | null {
         }
         const parsed = (await res.json().catch(() => null)) as {
           transcript?: unknown
-        } | null
-        if (!res.ok) throw new ProviderCallError(mapMetaFailure(res.status, parsed))
-        const transcript =
-          typeof parsed?.transcript === 'string' ? parsed.transcript.trim() : ''
-        // No confidence exists upstream (documented); see the note at
-        // ASR_MODEL. Empty transcript = nothing heard = unusable.
-        return { transcript, confidence: transcript ? 1 : 0 }
-      }
-      try {
-        return await attempt()
-      } catch (e) {

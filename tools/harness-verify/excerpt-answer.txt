@@ -1,3 +1,14 @@
+/* ------------------------------------------------------------------ */
+/* Stage 5: verify                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The stage gate. Figure equality is exact (===) against the screened
+ * rows the caller supplies — the same rows compose read — so a figure
+ * altered anywhere between screen and render fails here. Claims must
+ * cite a source the answer carries, and all prose on the answer must
+ * pass the validator in criteria-grounded context.
+ */
 export function verifyAnswer(
   answer: ComposedAnswer,
   screenedRows: readonly AreaRow[],
@@ -46,7 +57,10 @@ export function verifyAnswer(
     } else if (!claim.sourceUrls.every((url) => carriedUrls.has(url))) {
       failures.push(`claim cites a source the answer does not carry: ${claim.text}`)
     }
-    const banned = findBannedConstruction(claim.text, { criteriaGrounded: true })
+    // Claim-level scan (P3 step 9): the same idiom exemption compose
+    // applies, so a surviving non-ranking "worst of the peak" claim
+    // verifies instead of withholding the whole answer.
+    const banned = claimBannedLabel(claim.text)
     if (banned) failures.push(`banned construction in claim (${banned}): ${claim.text}`)
   }
 
@@ -65,17 +79,25 @@ export function verifyAnswer(
   if (!verdict.pass) {
     // The summary is composed by code and numeral-free, so a failure
     // here is a defect in compose, reported like any other.
-      candidateCapApplied,
-      unresolvedCandidates,
-      geographyLevel,
-      unsupportedGeography,
-      pullMode: true,
-      summaryOverride:
-        cappedRows.length === 0
-          ? 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
-          : undefined,
-    })
+    failures.push(`summary failed validator: ${verdict.failure}: ${verdict.detail}`)
+  }
+
+  return { ok: failures.length === 0, failures }
+}
+
+/* ------------------------------------------------------------------ */
+/* The staged flow                                                     */
+/* ------------------------------------------------------------------ */
+
+export interface AnswerPipelineInput {
+  intent: ValidatedIntent
+  rows: readonly AreaRow[]
+  /** Caller-resolved ZCTAs for non-ZIP geographies (place index seam). */
+    const composed = input.unresolvedGeographies
+      ? { ...composedRaw, unresolvedGeographies: [...input.unresolvedGeographies] }
+      : composedRaw
     if (composed.status === 'empty') return { ...composed, stage: 'verify' }
+    input.onStage?.('verify')
     const verdict = verifyAnswer(composed, cappedRows)
     if (!verdict.ok) {
       return { ...composed, status: 'withheld', stage: 'verify', failures: verdict.failures }
@@ -84,44 +106,13 @@ export function verifyAnswer(
   }
 
   // Stage 2: deterministic Census screen.
-  const screen = screenRows(input.intent, input.rows, input.geographyZctas)
-
-  // Stage 3: research over the screened subset only, one pass per
-  // decomposed criterion, capped at SCREENED_RESEARCH_CANDIDATE_CAP
-  // places. An empty screen researches nothing — there is no subset
-  // to research. A question with a research query but no catalog
-  // criterion still decomposes to the one combined criterion, so the
-  // legacy single-pass shape is the one-criterion case of this loop.
-  let research: ResearchStageResult | null = null
-  const candidateCapApplied = screen.rows.length > SCREENED_RESEARCH_CANDIDATE_CAP
-  if (input.researchQuery && input.provider && screen.rows.length > 0) {
-    const capped = screen.rows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
-    research =
-      researchCriteria.length > 0
-        ? await researchPerCriterion(
-            input.provider,
-            capped.map((row) => row.name),
-            researchCriteria,
-            input.researchQuery,
-            signal,
-          )
-        : await researchScreened(input.provider, capped, input.researchQuery, signal)
-  }
-
-  // Stage 4: compose.
-  const composed = composeAnswer({
-    intent: input.intent,
-    screen,
-    research,
-    researchCriteria: input.researchQuery ? researchCriteria : [],
-    candidateCapApplied: research ? candidateCapApplied : false,
-    geographyLevel,
-    unsupportedGeography,
-  })
   if (composed.status === 'empty') return { ...composed, stage: 'verify' }
 
-  // Stage 5: verify, fail-closed.
-  const verdict = verifyAnswer(composed, screen.rows)
+  // Stage 5: verify, fail-closed. On the county path the figures are
+  // checked against the aggregate rows compose read — the same
+  // exact-equality gate, over the aggregated figures.
+  input.onStage?.('verify')
+  const verdict = verifyAnswer(composed, effectiveScreen.rows)
   if (!verdict.ok) {
     return { ...composed, status: 'withheld', stage: 'verify', failures: verdict.failures }
   }

@@ -18,7 +18,7 @@ from pathlib import Path
 TARGETS = {
     "meta-client": (
         "src/core/ai/meta-client.ts",
-        [(36, 50), (240, 262), (555, 650)],
+        [(44, 68), (295, 312), (703, 728), (759, 792)],
         [
             {
                 "id": "mc-model",
@@ -33,7 +33,7 @@ TARGETS = {
             {
                 "id": "mc-research-unscanned",
                 "text": "DEFECT: research prose reaches the caller with no banned-construction (fair-housing) scan on this direct provider path",
-                "anchors": ["if (findBannedConstruction(prose, { criteriaGrounded: true }))"],
+                "anchors": ["const filtered = filterBannedSentences(prose)"],
             },
             {
                 "id": "mc-asr-chat-model",
@@ -44,7 +44,7 @@ TARGETS = {
     ),
     "answer": (
         "src/core/ai/answer.ts",
-        [(884, 950), (1105, 1166)],
+        [(1511, 1605), (1888, 1900), (2108, 2119)],
         [
             {
                 "id": "ans-figure-drift",

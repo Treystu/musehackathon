@@ -17,6 +17,7 @@ import { diagnostics } from '../../core/ai/diagnostics'
 import {
   SALARY_FIGURE_RE,
   decomposeResearchCriteria,
+  hasUnclaimedCriterionContent,
   type ResearchCriterion,
 } from '../../core/ai/answer'
 import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
@@ -90,29 +91,75 @@ export function politicsCoverageNote(queryText: string | undefined): string {
  * remains the fallback when research itself cannot be reached.
  */
 /**
- * Plural / superlative tolerance is morphological (P3 step 1), not a
- * longer word list: stems carry optional plural -s and superlative
- * -est forms. Measured misses in the battery register: "hospitals"
- * and "Republicans" matched neither trigger (A3, D8 — \b(singular)\b
- * forms), and "safest" matched neither this trigger nor the safety
- * criterion pattern (B5 — \bsafe\b does not match "safest").
- * The current-events arm (P3 step 7, battery E4) routes news phrasing
- * to research instead of stranding it in clarification.
+ * The politics-characterization arm of the shipped lexicon, kept as
+ * an engagement HINT (see needsResearch): political character is
+ * research-servable content with no catalog entry and no measure
+ * reading, and a non-superlative phrasing ("towns that are
+ * liberal") can leave decomposition with nothing while the question
+ * plainly asks research a question. The characterization FENCES
+ * (politicsCoverageNote, PROTECTED_CHARACTERIZATION_RE) are a
+ * separate posture and stay exactly where they are — this arm
+ * engages the research call, never the handoff.
  */
-const OUTSIDE_KNOWLEDGE_RE =
-  /\b(schools?|starbucks|coffee shops?|grocer(?:y|ies)|gyms?|nightlife|walkable|walkability|restaurants?|playgrounds?|hospitals?|clinics?|doctors?|airports?|transit|commute|saf\w*|crime|dangerous|families|kids|children|liberals?|conservatives?|republicans?|democrats?|democratic|political|politics|voter|voting|red state|blue state|farmers?\s+markets?|warm|climate|nature|outdoors?|scenery|scenic|greenery|wilderness|news|current events|headlines?)\b/i
+const POLITICS_CHARACTERIZATION_RE =
+  /\b(liberals?|conservatives?|republicans?|democrats?|democratic|political|politics|voter|voting|red state|blue state)\b/i
 
+/**
+ * Whether the question carries criteria the Census screen cannot
+ * serve, and so engages the research stage (Lane A9 FM-1 — the
+ * generality program's primary cure). The derivation is from
+ * CRITERION CONTENT, not from a hand-maintained word list: the
+ * question engages exactly when its decomposition
+ * (decomposeResearchCriteria) yields a criterion no Census measure
+ * serves — a named research-class catalog entry, or the combined
+ * class (the whole-question carry and per-segment residue
+ * criteria), which decomposition now emits only for criterion
+ * content no layer claims. The shipped word list decided
+ * engagement on its own, and every criterion word it happened not
+ * to contain failed the same way (measured by the phase-1 battery:
+ * "best weather", "best beer selection", "strongest job market",
+ * "most fun things to do", "lowest flood risk", "most charming"
+ * all read needsResearch false, the combined criterion was dropped
+ * with it, and the terminal was a Census screen stamped not
+ * measurable — while the same questions, engaged by hand, served
+ * through the general path every time). The lexicon demotes to
+ * accelerator hints for the two arms decomposition cannot see: a
+ * stated salary (the catalog's own SALARY_FIGURE_RE — its entry is
+ * research-class, and the figure test is decomposition's own
+ * pattern, shared so the layers cannot drift) and political
+ * characterization (POLITICS_CHARACTERIZATION_RE above). Audience
+ * words the old list carried (families, kids, children) engage
+ * nothing on their own: they state who is asking, not a criterion,
+ * and letting them engage was the FM-3c spurious-combined family.
+ * A criterion decomposed onto a Census metric (cost of living,
+ * internet access) does NOT engage: the metric serves it, and a
+ * web pass would spend research on a criterion the data answers.
+ */
 export function needsResearch(queryText: string | undefined): boolean {
   if (!queryText) return false
-  if (OUTSIDE_KNOWLEDGE_RE.test(queryText)) return true
-  // Salary arm (P3b cure 3, battery A4): a stated salary is an
-  // outside-Census criterion with a decomposition entry, but this
-  // word list had no arm for it, so the research call — and with it
-  // the research-first handoff's pipeline path — never fired and
-  // the question dead-ended in clarification. The arm is the
-  // catalog's own SALARY_FIGURE_RE (a figure beside a salary word),
-  // not a second hand-maintained pattern that could drift from it.
-  return SALARY_FIGURE_RE.test(queryText)
+  if (SALARY_FIGURE_RE.test(queryText)) return true
+  if (POLITICS_CHARACTERIZATION_RE.test(queryText)) return true
+  // Commute-duration arm: "shortest commute" is research-servable
+  // content decomposition cannot see — the superlative scan claims
+  // "commute" as a measure head, yet the registry carries no
+  // commute-duration metric for the screen to serve it with (the
+  // handoff battery carries these questions as combined-criterion
+  // research questions). A duration word beside "commute" is the
+  // arm; a bare "commuting workers" count is a Census measure and
+  // does not fire it.
+  if (/\bcommut\w*\b[^.!?]{0,25}\b(?:short|long|duration|time|length|minutes?|hours?)\b|\b(?:shortest|longest|quickest)\s+commut\w*\b/i.test(queryText)) return true
+  const decomposed = decomposeResearchCriteria(queryText)
+  // A named research-class criterion engages on its own content.
+  if (decomposed.some((c) => c.id !== 'combined' && !c.decomposedMetricKey)) return true
+  // The combined class engages only when the question carries
+  // criterion content no layer claims — NOT for the criteria-less
+  // total-miss fallback ("best place to raise a family" decomposes
+  // to the combined carry yet states no parseable criterion, and
+  // its shipped posture is to keep clarifying, not to research).
+  if (decomposed.some((c) => c.id === 'combined')) {
+    return hasUnclaimedCriterionContent(queryText, decomposed)
+  }
+  return false
 }
 
 /**

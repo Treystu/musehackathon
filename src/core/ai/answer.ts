@@ -794,7 +794,7 @@ const COUNT_SEEKING_RE = /\bfewest\b|\bleast\b|\bnumber of\b|\bcount\b|\bdensity
  * (see hasUnclaimedCriterionPhrase).
  */
 const CRITERION_SUPERLATIVE_RE =
-  /\b(?:best|worst|most|least|fewest|greatest|finest|largest|smallest|highest|lowest|quietest|prettiest|nicest|cheapest|safest|warmest|coldest)\s+([a-z]+(?:\s[a-z]+)?)/gi
+  /\b(?:best|worst|most|least|fewest|greatest|finest|largest|smallest|highest|lowest|quietest|prettiest|nicest|cheapest|safest|warmest|coldest|strongest)\s+([a-z]+(?:\s[a-z]+)?)/gi
 
 /**
  * Head words that make a superlative phrase a Census-measure reading
@@ -850,14 +850,256 @@ export function hasUnclaimedCriterionPhrase(
 }
 
 /**
+ * Words that carry the question's scaffolding rather than a
+ * criterion: question words, auxiliaries, articles, prepositions,
+ * and the verbs of asking. A segment reduced to these alone states
+ * no criterion (see unclaimedCriterionSegments).
+ */
+const SEGMENT_SCAFFOLD_WORDS: ReadonlySet<string> = new Set([
+  'what', 'which', 'where', 'who', 'whom', 'is', 'are', 'was', 'were', 'has', 'have', 'had',
+  'do', 'does', 'did', 'can', 'could', 'would', 'should', 'i', 'me', 'my', 'we', 'you', 'your',
+  'the', 'a', 'an', 'in', 'of', 'for', 'to', 'on', 'at', 'by', 'from', 'there', 'it', 'its',
+  'and', 'or', 'than', 'then', 'so', 'with', 'without', 'about', 'into', 'over', 'under',
+  'near', 'nearby', 'around', 'per', 'that', 'this', 'any', 'some', 'all', 'get', 'find',
+  'show', 'give', 'list', 'tell', 'please', 'look', 'looking', 'want', 'need', 'like',
+])
+
+/** Whether one superlative phrase is claimed (measure head, ranking
+ * frame, or a matched catalog entry's own phrase) — the per-phrase
+ * half of hasUnclaimedCriterionPhrase, shared with the segment scan. */
+function superlativePhraseClaimed(
+  phrase: string,
+  matchedEntries: readonly (typeof RESEARCH_CRITERION_CATALOG)[number][],
+): boolean {
+  const words = phrase.toLowerCase().split(/\s+/).filter((w) => w.length > 0)
+  if (words.length === 0) return true
+  if (PLACE_FRAME_WORDS.has(words[0]!)) return true
+  if (words.some((w) => MEASURE_HEAD_WORDS.has(w))) return true
+  return matchedEntries.some((entry) => entry.pattern.test(phrase))
+}
+
+/**
+ * Audience / life-frame words for the segment scan: they state who
+ * is asking or the life the question imagines ("raise a family",
+ * "for families", "good for kids"), never a criterion a source
+ * could measure — the same reading FM-1 applies to the engagement
+ * lexicon. A segment reduced to these plus scaffolding is the
+ * criteria-less shape ("best place to raise a family"), whose
+ * shipped posture is to keep clarifying.
+ */
+const SEGMENT_FRAME_WORDS: ReadonlySet<string> = new Set([
+  'family', 'families', 'kid', 'kids', 'children', 'child', 'raise', 'raising', 'raised',
+  'live', 'living',
+])
+
+/** One unclaimed criterion segment: the segment's own words, kept so
+ * the criterion built from it can carry them as its label and its
+ * text (the reader's words, not a paraphrase). */
+export interface CriterionSegment {
+  /** The segment as written, trimmed of outer punctuation. */
+  text: string
+}
+
+/**
+ * The question's criterion segments that NO layer claims (Lane A9
+ * FM-2, measured by probe P15: "good schools and a thriving arts
+ * scene" decomposed to [schools] only — the arts scene, a stated
+ * criterion in plain words, had no accounting path beside a match
+ * because hasUnclaimedCriterionPhrase scans superlative phrases
+ * only and "a thriving arts scene" carries none). The scan: split
+ * the question on conjunction / comma boundaries; a segment is
+ * claimed when a catalog pattern reads it, when it states a figure
+ * or a Census measure reading, or when what remains after removing
+ * its claimed superlative phrases, scaffolding words, place-frame
+ * words, measure heads, and proper nouns (geography names) is too
+ * thin to state a criterion — no words, one short word ("to live"
+ * in "cheapest place to live"), or a lone hyphenated modifier
+ * ("year-round"). A segment carrying an unclaimed superlative
+ * phrase is unclaimed by that phrase alone. Everything else that
+ * remains — two or more content words, or one content word of five
+ * letters or more ("liberal" in "towns that are liberal") — is a
+ * stated criterion no layer serves, and it comes back here so
+ * decomposition can carry it as its own criterion instead of
+ * dropping it without a line anywhere.
+ */
+export function unclaimedCriterionSegments(
+  queryText: string,
+  matched: readonly ResearchCriterion[],
+): CriterionSegment[] {
+  const matchedEntries = RESEARCH_CRITERION_CATALOG.filter((entry) =>
+    matched.some((criterion) => criterion.id === entry.id),
+  )
+  interface SegmentRecord {
+    text: string
+    /** Claimed outright: a catalog pattern, a stated figure, or a measure reading. */
+    claimedDirect: boolean
+    /** Carries a superlative phrase no layer claims. */
+    unclaimedSuperlative: boolean
+    /** The unclaimed phrase names no content noun ("best access to"). */
+    phraseContentFree: boolean
+    /** Content words beyond every superlative phrase. */
+    residueBeyond: string[]
+    /** Content words beyond the CLAIMED superlative phrases. */
+    residue: string[]
+  }
+  const records: SegmentRecord[] = []
+  for (const raw of queryText.split(/\s+and\s+|,\s*/i)) {
+    const segment = raw.trim().replace(/[?.!]+$/, '').trim()
+    if (segment.length === 0) continue
+    const claimedDirect =
+      RESEARCH_CRITERION_CATALOG.some((entry) => entry.pattern.test(segment)) ||
+      /\$\s?\d/.test(segment) ||
+      segment
+        .toLowerCase()
+        .split(/[^a-z'-]+/)
+        .some((w) => MEASURE_HEAD_WORDS.has(w))
+    // Superlative phrases: claimed ones are removed before the
+    // residue count so the frame they ride on cannot inflate it;
+    // an unclaimed one marks the segment, and its captured words
+    // are read for whether the phrase itself names the criterion
+    // ("best beer selection" — the phrase IS the criterion) or only
+    // points at one ("best access to" — the criterion noun sits
+    // outside the phrase, in the compound the next segment may
+    // complete).
+    let residueText = segment
+    let residueBeyondText = segment
+    let unclaimedSuperlative = false
+    let phraseContentFree = true
+    for (const match of segment.matchAll(CRITERION_SUPERLATIVE_RE)) {
+      const phrase = (match[1] ?? '').toLowerCase()
+      residueBeyondText = residueBeyondText.replace(match[0], ' ')
+      if (superlativePhraseClaimed(phrase, matchedEntries)) {
+        residueText = residueText.replace(match[0], ' ')
+      } else {
+        unclaimedSuperlative = true
+        const contentWords = phrase
+          .split(/\s+/)
+          .filter((w) => !['access', 'to', 'of', 'the', 'a', 'an', 'for', 'with', 'in', 'on'].includes(w))
+        if (contentWords.length > 0) phraseContentFree = false
+      }
+    }
+    const originalTokens = segment.split(/\s+/).filter((w) => w.length > 0)
+    const contentWords = (text: string): string[] =>
+      text
+        .toLowerCase()
+        .split(/[^a-z'-]+/)
+        .filter((w) => w.length > 0)
+        .filter((w) => !SEGMENT_SCAFFOLD_WORDS.has(w))
+        .filter((w) => !SEGMENT_FRAME_WORDS.has(w))
+        .filter((w) => !PLACE_FRAME_WORDS.has(w))
+        .filter((w) => !MEASURE_HEAD_WORDS.has(w))
+        // Proper nouns are geography or place names, not criteria:
+        // a token capitalized in the written segment (other than
+        // the segment's first token, whose case is positional).
+        .filter((w) => {
+          const idx = originalTokens.findIndex(
+            (t) => t.toLowerCase().replace(/[^a-z'-]/g, '') === w,
+          )
+          if (idx <= 0) return true
+          return !/^[A-Z]/.test(originalTokens[idx]!)
+        })
+    records.push({
+      text: segment,
+      claimedDirect,
+      unclaimedSuperlative,
+      phraseContentFree,
+      residueBeyond: contentWords(residueBeyondText),
+      residue: contentWords(residueText),
+    })
+  }
+  const segments: CriterionSegment[] = []
+  records.forEach((record, i) => {
+    if (record.claimedDirect) return
+    const adjacentClaimed =
+      (i > 0 && records[i - 1]!.claimedDirect) || (i < records.length - 1 && records[i + 1]!.claimedDirect)
+    if (record.unclaimedSuperlative) {
+      // Continuation head: the phrase names no criterion noun, the
+      // words beyond it are at most the one noun the compound
+      // needs, and an adjacent segment is catalog-claimed — the
+      // phrase is the head of THAT criterion's compound phrase
+      // ("best access to hiking | and wilderness": one nature
+      // criterion across the conjunction), not a second criterion.
+      if (record.phraseContentFree && record.residueBeyond.length <= 1 && adjacentClaimed) return
+      segments.push({ text: record.text })
+      return
+    }
+    if (record.residue.length >= 2) {
+      segments.push({ text: record.text })
+      return
+    }
+    if (record.residue.length === 1) {
+      const only = record.residue[0]!
+      // A one-word residue beside an accounted segment is a
+      // noun-phrase continuation ("hospitals | and doctors" — one
+      // amenities criterion; "doctors" is its completion). A
+      // one-word residue standing first ("towns that are liberal")
+      // is a stated criterion in one word and stays unclaimed.
+      if (i === 0 && only.length >= 5 && !only.includes('-')) {
+        segments.push({ text: record.text })
+      }
+    }
+  })
+  return segments
+}
+
+/**
+ * The reader-facing label for a residue segment's criterion: the
+ * segment's own words with a leading question frame removed, first
+ * letter capitalized. "a thriving arts scene" reads on the card as
+ * "A thriving arts scene" — the reader's phrase, labelled as
+ * itself, so the evidence line names the criterion the reader
+ * actually stated.
+ */
+function segmentCriterionLabel(segmentText: string): string {
+  const stripped = segmentText
+    .replace(
+      /^(?:what|which|where|who)\s+(?:\w+\s+){0,3}?(?:is|are|has|have)\s+(?:the\s+|a\s+|an\s+)?/i,
+      '',
+    )
+    .trim()
+  const label = stripped.length > 0 ? stripped : segmentText
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+/**
+ * Whether the question carries criterion content no layer claims:
+ * an unclaimed superlative phrase (hasUnclaimedCriterionPhrase) or
+ * an unclaimed criterion segment (unclaimedCriterionSegments). The
+ * engagement derivation (AskPanel's needsResearch) and the combined
+ * carry in decomposition both read this single test, so the layers
+ * cannot drift into engaging different questions — the drift
+ * between layers is the seam family the generality battery keeps
+ * finding.
+ */
+export function hasUnclaimedCriterionContent(
+  queryText: string,
+  matched: readonly ResearchCriterion[],
+): boolean {
+  return (
+    hasUnclaimedCriterionPhrase(queryText, matched) ||
+    unclaimedCriterionSegments(queryText, matched).length > 0
+  )
+}
+
+/**
  * Decompose a question's outside-Census criteria. Every catalog
- * criterion the words carry becomes its own criterion; when none
+ * criterion the words carry becomes its own criterion. Residue the
+ * catalog does not name rides as its own criterion per segment
+ * (unclaimedCriterionSegments), labelled with the segment's own
+ * words — a partial match never silently drops the rest of the
+ * question (the accounting invariant: every parsed criterion
+ * yields exactly one evidence line). When NO catalog entry
  * matches, the outside criteria are carried as one combined
- * criterion (the honest shape — see the header). When SOME match,
- * an unclaimed superlative criterion rides as the combined
- * criterion beside them (hasUnclaimedCriterionPhrase) — a partial
- * match never silently drops the rest of the question. An empty or
- * absent query decomposes to nothing: no research was asked for.
+ * criterion when the question states criterion content no layer
+ * claims, and for a criteria-less question (the ranking frame
+ * alone) as the shipped total-miss fallback. A question that
+ * states Census content and nothing else ("rent under $900")
+ * decomposes to nothing and carries no spurious combined line
+ * onto its pure-Census card (Lane A9 FM-3c, measured on the
+ * cost-of-housing bucket: the shipped fallback stamped
+ * "Outside-Census criteria — not measurable" on a question that
+ * stated no outside criterion). An empty or absent query
+ * decomposes to nothing.
  */
 export function decomposeResearchCriteria(queryText: string | undefined): ResearchCriterion[] {
   if (!queryText || queryText.trim() === '') return []
@@ -876,12 +1118,59 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
     })
   }
   if (found.length > 0) {
-    if (hasUnclaimedCriterionPhrase(queryText, found)) {
+    const residueSegments = unclaimedCriterionSegments(queryText, found)
+    // A single unclaimed segment spanning the whole question is
+    // the classic combined carry, not a per-segment criterion: its
+    // "segment" is the question itself (the safety shape — "the
+    // safest for families" reads as Outside-Census criteria, the
+    // shipped label), and a segment label derived from it would
+    // name the question back at the reader. Per-segment criteria
+    // are for residue beside other content — the segment is one
+    // part of the question, and its own words name it.
+    const wholeQuestion =
+      residueSegments.length === 1 &&
+      residueSegments[0]!.text.replace(/[?.!]+$/, '').trim().toLowerCase() ===
+        queryText.replace(/[?.!]+$/, '').trim().toLowerCase()
+    if (wholeQuestion) {
       found.push({ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative })
+    } else {
+      for (const segment of residueSegments) {
+        found.push({
+          id: 'combined',
+          label: segmentCriterionLabel(segment.text),
+          text: segment.text,
+          quantitative,
+        })
+      }
     }
     return found
   }
-  return [{ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative }]
+  if (hasUnclaimedCriterionContent(queryText, found)) {
+    return [{ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative }]
+  }
+  // The total-miss fallback survives for a CRITERIA-LESS question
+  // (the ranking frame alone: "cheapest place to live" — pinned by
+  // the Colorado battery): the combined criterion is the honest
+  // carry for a question research may still speak to. A question
+  // that states Census content — a measure reading or a stated
+  // figure — and nothing else is a Census question: it decomposes
+  // to nothing, and no combined line rides its card (FM-3c). The
+  // measure heads here are the ones a registry metric can serve:
+  // "commute" is a measure head for the superlative scan, but the
+  // registry carries no commute-duration metric (commuting_workers
+  // is a worker count), so a shortest-commute question states no
+  // servable Census content and keeps the combined carry — the
+  // research-first handoff battery's pinned reading.
+  const statesCensusContent =
+    /\$\s?\d/.test(queryText) ||
+    queryText
+      .toLowerCase()
+      .split(/[^a-z'-]+/)
+      .some((w) => w !== 'commute' && MEASURE_HEAD_WORDS.has(w))
+  if (!statesCensusContent) {
+    return [{ id: 'combined', label: 'Outside-Census criteria', text: queryText, quantitative }]
+  }
+  return []
 }
 
 /** Whether the question asks for a county-level answer. */
@@ -1007,13 +1296,43 @@ export async function researchScreened(
 }
 
 /**
- * One research pass per decomposed criterion, over the same places.
- * The question text is the query for every pass (the question itself
- * states every criterion; the passes are separated so each
- * criterion's sources are collected under its own call, and a
- * provider that answers criteria differently per call is honoured).
- * Identical claim texts returned by more than one pass are kept
- * once — the same finding cited twice is one finding.
+ * The pass plan for a criterion list: which criteria actually take
+ * a research pass, grouped by the pass that serves them (Lane A9
+ * FM-3b). Every pass queries the reader's whole question, so a
+ * named criterion's pass has already gathered whole-question
+ * material when it returns — the combined-class criteria (the
+ * whole-question combined carry and per-segment residue criteria)
+ * are therefore ACCOUNTED from the gathered material and take no
+ * pass of their own beside a named criterion: the shipped shape
+ * ran a second, identical whole-question call for them and the
+ * card carried two lines claiming the same service (measured on
+ * the safety, nature, and health buckets — two research calls,
+ * "Safety = met" beside "Outside-Census criteria = met", for one
+ * gathering). When no named criterion takes a pass, the combined
+ * class takes exactly one shared pass. A criterion decomposed onto
+ * a Census metric takes no pass — its figures are the service.
+ * The pipeline's progress denominators read this same plan (the
+ * A7 contract: the pass count is fixed before research starts),
+ * so the percent and the calls can never disagree.
+ */
+export function researchPassGroups(
+  criteria: readonly ResearchCriterion[],
+): ResearchCriterion[][] {
+  const researched = criteria.filter((c) => !c.decomposedMetricKey)
+  const named = researched.filter((c) => c.id !== 'combined')
+  if (named.length > 0) return named.map((c) => [c])
+  const combinedClass = researched.filter((c) => c.id === 'combined')
+  return combinedClass.length > 0 ? [combinedClass] : []
+}
+
+/**
+ * One research pass per pass group (researchPassGroups), over the
+ * same places. The question text is the query for every pass (the
+ * question itself states every criterion; the passes are separated
+ * so each named criterion's sources are collected under its own
+ * call, and a provider that answers criteria differently per call
+ * is honoured). Identical claim texts returned by more than one
+ * pass are kept once — the same finding cited twice is one finding.
  */
 export async function researchPerCriterion(
   provider: MuseProvider,
@@ -1057,20 +1376,42 @@ export async function researchPerCriterion(
   const claims: ResearchedClaim[] = []
   const proseParts: string[] = []
   const failedCriteria: string[] = []
+  // The pass plan (researchPassGroups): named criteria take one
+  // pass each; the combined class shares one pass when it rides
+  // alone and takes none beside a named criterion — it is accounted
+  // from the gathered material instead. When every pass has
+  // terminated and no material was gathered, the combined class's
+  // labels join the failures: the lookups that would have served
+  // them did not return, and their evidence lines say exactly that.
+  const groups = researchPassGroups(criteria)
+  const combinedLabels = criteria
+    .filter((c) => !c.decomposedMetricKey && c.id === 'combined')
+    .map((c) => c.label)
+  let terminatedGroups = 0
+  const effectiveFailedCriteria = (): string[] => {
+    const failed = [...failedCriteria]
+    if (
+      groups.length > 0 &&
+      terminatedGroups === groups.length &&
+      proseParts.length === 0
+    ) {
+      for (const label of combinedLabels) {
+        if (!failed.includes(label)) failed.push(label)
+      }
+    }
+    return failed
+  }
   /** The accumulated stage result as an observer may see it (copies). */
-  const accumulated = (): ResearchStageResult => ({
-    prose: proseParts.join('\n'),
-    sources: [...sources],
-    claims: [...claims],
-    ...(failedCriteria.length > 0 ? { failedCriteria: [...failedCriteria] } : {}),
-  })
-  // One pass per criterion; the loop count is the contract, the
-  // query is the reader's whole question for every pass. A criterion
-  // decomposed onto a Census metric takes no pass — its figures are
-  // the service, and a web pass over it would spend research on a
-  // criterion the data already answers (P3 step 3).
-  const researched = criteria.filter((c) => !c.decomposedMetricKey)
-  for (let pass = 0; pass < researched.length; pass++) {
+  const accumulated = (): ResearchStageResult => {
+    const failed = effectiveFailedCriteria()
+    return {
+      prose: proseParts.join('\n'),
+      sources: [...sources],
+      claims: [...claims],
+      ...(failed.length > 0 ? { failedCriteria: failed } : {}),
+    }
+  }
+  for (let pass = 0; pass < groups.length; pass++) {
     // Partial tolerance (2026-11-02, flexible-trigger cure): before
     // this, ANY pass failure threw out of the pipeline and discarded
     // every earlier pass's gathered material, so a dual-criteria
@@ -1103,8 +1444,9 @@ export async function researchPerCriterion(
       result = await provider.research({ queryText: researchQuery, places: [...places] }, signal)
     } catch (err) {
       if (proseParts.length === 0 && !options?.tolerateTotalFailure) throw err
-      failedCriteria.push(researched[pass]!.label)
-      await options?.onPass?.(accumulated(), pass, researched.length)
+      for (const criterion of groups[pass]!) failedCriteria.push(criterion.label)
+      terminatedGroups++
+      await options?.onPass?.(accumulated(), pass, groups.length)
       continue
     }
     proseParts.push(result.prose)
@@ -1116,13 +1458,15 @@ export async function researchPerCriterion(
     for (const claim of claimsFromResearch(result)) {
       if (!claims.some((c) => c.text === claim.text)) claims.push(claim)
     }
-    await options?.onPass?.(accumulated(), pass, researched.length)
+    terminatedGroups++
+    await options?.onPass?.(accumulated(), pass, groups.length)
   }
+  const failed = effectiveFailedCriteria()
   return {
     prose: proseParts.join('\n'),
     sources,
     claims,
-    ...(failedCriteria.length > 0 ? { failedCriteria } : {}),
+    ...(failed.length > 0 ? { failedCriteria: failed } : {}),
   }
 }
 
@@ -2308,6 +2652,29 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // the interim standing is the terminal evidence's judgment,
   // rendered early — never a second, divergent scoring.
   const researchPassCriteria = researchCriteria.filter((c) => !c.decomposedMetricKey)
+  // The pass plan (FM-3b): totalUnits counts PASSES, which is the
+  // pass-group count — beside a named criterion the combined class
+  // takes no pass of its own, so the denominator is the group
+  // count, not the criterion count. criteriaTotal keeps counting
+  // criteria: the verdict derivation covers every researched
+  // criterion, combined class included (it is assessed from the
+  // first terminated pass's whole-question material).
+  const passGroups = researchPassGroups(researchCriteria)
+  const combinedClassLabels = researchPassCriteria
+    .filter((c) => c.id === 'combined')
+    .map((c) => c.label)
+  const combinedHasOwnGroup = passGroups.some((g) => g.some((c) => c.id === 'combined'))
+  const assessedThrough = (doneCount: number): string[] => {
+    const labels = passGroups
+      .slice(0, doneCount)
+      .flatMap((g) => g.map((c) => c.label))
+    if (doneCount > 0 && !combinedHasOwnGroup) {
+      for (const label of combinedClassLabels) {
+        if (!labels.includes(label)) labels.push(label)
+      }
+    }
+    return labels
+  }
   const buildProgress = (
     doneUnits: number,
     assessedLabels: readonly string[],
@@ -2316,7 +2683,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     claims: readonly ResearchedClaim[],
   ): RunProgressSnapshot => ({
     doneUnits,
-    totalUnits: researchPassCriteria.length,
+    totalUnits: passGroups.length,
     criteriaTotal: researchPassCriteria.length,
     criteriaDone: researchPassCriteria
       .filter((c) => assessedLabels.includes(c.label) && !failedLabels.includes(c.label))
@@ -2338,7 +2705,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     candidates: readonly { name: string; zcta: string }[],
   ): RunProgressSnapshot => {
     const allLabels = researchPassCriteria.map((c) => c.label)
-    return buildProgress(researchPassCriteria.length, allLabels, allLabels, candidates, [])
+    return buildProgress(passGroups.length, allLabels, allLabels, candidates, [])
   }
 
   // The widened arm, identified structurally: state bound + a named
@@ -2423,7 +2790,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
                 input.onProgress!(
                   buildProgress(
                     passIndex + 1,
-                    researchPassCriteria.slice(0, passIndex + 1).map((c) => c.label),
+                    assessedThrough(passIndex + 1),
                     accumulated.failedCriteria ?? [],
                     candidates,
                     accumulated.claims,
@@ -2791,7 +3158,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
                       input.onProgress!(
                         buildProgress(
                           passIndex + 1,
-                          researchPassCriteria.slice(0, passIndex + 1).map((c) => c.label),
+                          assessedThrough(passIndex + 1),
                           accumulated.failedCriteria ?? [],
                           capped,
                           accumulated.claims,

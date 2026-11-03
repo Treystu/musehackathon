@@ -36,6 +36,21 @@ import type { FigureInput } from './ai/FigureCard'
 
 const num = new Intl.NumberFormat('en-US')
 
+/**
+ * The name a save gets when the reader does not type one (item-16
+ * cure C8): the first ZIP code plus how many more the set holds.
+ * The system already holds the exact list being saved, so asking
+ * the reader to re-supply a name for it was a step standing between
+ * them and a save of state the system had — blank-name saves were
+ * refused outright. The field stays editable; this is only the
+ * pre-fill.
+ */
+export function defaultSavedName(zips: readonly string[]): string {
+  const first = zips[0] ?? ''
+  if (zips.length <= 1) return first
+  return `${first} + ${num.format(zips.length - 1)} more`
+}
+
 export function SavedSearches({
   selectedZctas,
   onRestore,
@@ -50,12 +65,16 @@ export function SavedSearches({
 }) {
   const [list, setList] = useState<SavedSearch[]>(() => readSaved())
   const [name, setName] = useState('')
+  // Until the reader types in the field, the name shown — and used
+  // by Save — is the default derived from the ZIP list (cure C8).
+  const [nameEdited, setNameEdited] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
   const canSave = selectedZctas.length > 0 && !isFull()
+  const shownName = nameEdited ? name : defaultSavedName(selectedZctas)
 
   function save() {
-    const entry = saveSearch(name, selectedZctas)
+    const entry = saveSearch(shownName, selectedZctas)
     if (!entry) {
       // Refused: full drawer, blank name, or storage unavailable. All three are
       // ordinary states this panel must describe rather than swallow.
@@ -67,6 +86,7 @@ export function SavedSearches({
       return
     }
     setName('')
+    setNameEdited(false)
     setNote(null)
     setList(readSaved())
   }
@@ -111,8 +131,11 @@ export function SavedSearches({
           <input
             id="saved-name"
             type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={shownName}
+            onChange={(e) => {
+              setName(e.target.value)
+              setNameEdited(true)
+            }}
             placeholder={`Name these ${num.format(selectedZctas.length)} areas`}
             className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
           />
@@ -171,7 +194,8 @@ export function SavedSearches({
         </ul>
       ) : (
         <p className="mt-2 text-xs text-slate-500">
-          Nothing saved yet. Select some areas above, then name the comparison to keep it.
+          Nothing saved yet. Select some areas above, then save to keep the comparison — the name is
+          filled in from its ZIP codes unless you type your own.
         </p>
       )}
     </section>

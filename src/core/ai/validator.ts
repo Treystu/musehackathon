@@ -72,8 +72,20 @@ export function isSuppressedFigure(figure: FigureForValidation): boolean {
   return Math.abs(figure.value) < SMALL_COUNT_SUPPRESSION_THRESHOLD
 }
 
-function usableFigures(figures: FigureForValidation[]): FigureForValidation[] {
-  return figures.filter((f) => !isSuppressedFigure(f))
+function usableFigures(
+  figures: FigureForValidation[],
+  smallCountSuppression = true,
+): FigureForValidation[] {
+  if (smallCountSuppression) return figures.filter((f) => !isSuppressedFigure(f))
+  // Without the small-count rule, a figure is unusable only when it is
+  // explicitly suppressed or carries no finite value. The distinction
+  // matters for figures the reader stated themselves (see
+  // checkNumeralProvenance): suppression exists to keep tiny Census
+  // counts out of generated prose, and a stated figure is provenance
+  // by definition — suppressing it would manufacture a mismatch.
+  return figures.filter(
+    (f) => !f.suppressed && f.value !== null && Number.isFinite(f.value),
+  )
 }
 
 /* ------------------------------------------------------------------ */
@@ -221,9 +233,12 @@ function isPercentKey(key: string): boolean {
   return /(pct|percent)/i.test(key)
 }
 
-function buildAllowedSet(figures: FigureForValidation[]): AllowedNumeral[] {
+function buildAllowedSet(
+  figures: FigureForValidation[],
+  opts?: { suppressSmallCounts?: boolean },
+): AllowedNumeral[] {
   const allowed: AllowedNumeral[] = []
-  for (const f of usableFigures(figures)) {
+  for (const f of usableFigures(figures, opts?.suppressSmallCounts !== false)) {
     const value = f.value as number
     const pct = isPercentKey(f.key)
     allowed.push({ value, isPercent: pct, key: f.key })
@@ -244,7 +259,7 @@ function buildAllowedSet(figures: FigureForValidation[]): AllowedNumeral[] {
   return allowed
 }
 
-interface FoundNumeral {
+export interface FoundNumeral {
   raw: string
   value: number
   isPercent: boolean
@@ -350,7 +365,7 @@ function scanWordNumerals(prose: string, out: FoundNumeral[]): void {
   }
 }
 
-function scanNumerals(prose: string): FoundNumeral[] {
+export function scanNumerals(prose: string): FoundNumeral[] {
   const out: FoundNumeral[] = []
   scanDigitNumerals(prose, out)
   scanWordNumerals(prose, out)
@@ -370,6 +385,54 @@ function matchesAllowed(found: FoundNumeral, allowed: AllowedNumeral[]): boolean
     if (found.isPercent && !a.isPercent) return false
     return true
   })
+}
+
+/**
+ * Numeral provenance ONLY — steps 1-3 without the precision step or
+ * the banned-construction scan. This is the check for text the reader
+ * supplied themselves (a speech transcript): the question it answers
+ * is exactly "does every numeral in these words match a supplied
+ * figure". The full validate() below judges GENERATED prose, where
+ * precision and construction rules police what the model may say; a
+ * reader asking for "the best schools" is stating their criterion,
+ * not making a ranking claim, and running the prose scan over their
+ * words hard-blocked ordinary spoken questions on a failure class
+ * that had nothing to do with numerals (measured 2026-11-02: the
+ * transcript "what city has the best schools but also has", against
+ * an intent carrying no figures at all, failed banned_construction
+ * on the word "best" and the run dead-ended under a note blaming a
+ * numeral). Small-count suppression does not apply here: the figures
+ * supplied on this path are the reader's own stated request values,
+ * provenance by definition.
+ */
+export function checkNumeralProvenance(
+  prose: string,
+  figures: FigureForValidation[],
+): ValidatorVerdict {
+  if (!prose || !prose.trim()) return { pass: true }
+  const safeFigures = Array.isArray(figures) ? figures : []
+  const allowed = buildAllowedSet(safeFigures, { suppressSmallCounts: false })
+  const found = scanNumerals(prose)
+  for (const n of found) {
+    if (!matchesAllowed(n, allowed)) {
+      return {
+        pass: false, failure: 'invented_numeral',
+        detail: `numeral not in supplied figures: ${n.raw} (${n.value})`,
+      }
+    }
+  }
+  return { pass: true }
+}
+
+/** True when one scanned numeral cites one supplied figure (same tolerance and percent rules as the provenance check). */
+export function numeralMatchesFigure(
+  found: FoundNumeral,
+  figure: FigureForValidation,
+): boolean {
+  return matchesAllowed(
+    found,
+    buildAllowedSet([figure], { suppressSmallCounts: false }),
+  )
 }
 
 /* ------------------------------------------------------------------ */

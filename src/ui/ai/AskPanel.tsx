@@ -3,7 +3,7 @@ import { decideAskPath } from '../../core/ai/byo'
 import { hasMetaKey } from '../../core/ai/meta-key'
 import {
   assessTranscript,
-  checkSpokenNumbers,
+  reconcileSpokenIntent,
   type MicStorage,
 } from '../../core/ai/mic'
 import type {
@@ -48,8 +48,8 @@ import { pickAckOpener, researchAck } from './ack'
 import type { ExplanationState } from './ExplainBox'
 import type { FigureInput } from './FigureCard'
 
-export const SPOKEN_NUMBER_MISMATCH_NOTE =
-  'A number in what was heard does not match the understood request, so nothing was run. The words stand in the box above, where they can be corrected; a request runs only on the numbers actually said.'
+export const SPOKEN_NUMBER_CORRECTION_NOTE =
+  'A figure in the understood request did not match the numbers actually said, so it was taken out; the request below runs on the numbers that were said. The words stand in the box above, where they can be corrected.'
 
 export const EMPTY_TRANSCRIPT_NOTE =
   'No speech was captured. The typed box above still works fully, or try speaking again.'
@@ -764,16 +764,22 @@ export function AskPanel({
       handedOff = researchFirstHandoff(parsed, queryText)
       if (handedOff) parsed = handedOff
     }
-    // Spoken-number validation (mic path): every numeral heard must
-    // match a number in the understood request. A mismatch fails
-    // closed, the same way failed prose is withheld: the understood
-    // request is not offered for execution, the words stay in the
-    // editable text box, and nothing runs on a substituted number.
+    // Spoken-number reconciliation (mic path): a divergence between
+    // the numbers heard and the understood request resolves in
+    // favour of what was heard, and the run proceeds — the voice
+    // path never blocks (atomic ruling, 2026-11-02; cure for the
+    // 23:39 live failure, where a numeral-free spoken question
+    // dead-ended because this check ran the generated-prose
+    // validator over the reader's words and its ranking scan failed
+    // the word "best"). Figures the parse introduced or altered come
+    // out of the request here; the correction is disclosed with the
+    // run's note below and stands in the understood request itself.
+    let spokenCorrection = false
     if (spokenTranscript !== undefined) {
-      const verdict = checkSpokenNumbers(spokenTranscript, parsed, validator)
-      if (!verdict.pass) {
-        setNote(SPOKEN_NUMBER_MISMATCH_NOTE)
-        return null
+      const reconciliation = reconcileSpokenIntent(spokenTranscript, parsed)
+      if (reconciliation.dropped.length > 0) {
+        parsed = withRunnability(reconciliation.intent)
+        spokenCorrection = true
       }
     }
     if (result.prose) {
@@ -800,22 +806,29 @@ export function AskPanel({
         setIntent(dataIntent)
         if (canRun(dataIntent)) executeNow(dataIntent, queryText)
       }
+      if (spokenCorrection) setNote(SPOKEN_NUMBER_CORRECTION_NOTE)
       return parsed
     }
     setIntent(parsed)
+    let flowNote: string | null = null
     if (rescued) {
       const label = NATIONAL_SCREEN_LABELS[rescued.metricKeys[0]!] ?? 'that measure'
-      setNote(
+      flowNote =
         rescued.geographies.length === 0
           ? `No place was named, so this screens the whole country by ${label}, lowest first. The understood request is below.`
-          : `This screens ${rescued.geographies.join(', ')} by ${label}, lowest first. The understood request is below.`,
-      )
+          : `This screens ${rescued.geographies.join(', ')} by ${label}, lowest first. The understood request is below.`
     } else if (handedOff) {
-      setNote(
-        'That question is answered from research first: the places the cited findings name are shown with their Census figures in the answer below.',
-      )
+      flowNote =
+        'That question is answered from research first: the places the cited findings name are shown with their Census figures in the answer below.'
     } else if (parsed.clarificationNeeded) {
-      setNote('More detail is needed before anything runs. Check the understood request below.')
+      flowNote = 'More detail is needed before anything runs. Check the understood request below.'
+    }
+    if (flowNote || spokenCorrection) {
+      setNote(
+        [flowNote, spokenCorrection ? SPOKEN_NUMBER_CORRECTION_NOTE : null]
+          .filter((part): part is string => part !== null)
+          .join(' '),
+      )
     }
     if (canRun(parsed) || handedOff) executeNow(parsed, queryText)
     return parsed

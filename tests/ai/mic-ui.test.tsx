@@ -18,7 +18,7 @@ import {
 import {
   AskPanel,
   EMPTY_TRANSCRIPT_NOTE,
-  SPOKEN_NUMBER_MISMATCH_NOTE,
+  SPOKEN_NUMBER_CORRECTION_NOTE,
 } from '../../src/ui/ai/AskPanel'
 import type {
   MicRecognitionHandlers,
@@ -500,12 +500,17 @@ describe('voice atomic submission (Item 16, owner ruling 2026-11-02)', () => {
     expect(voiceIcon()).not.toBeNull()
   })
 
-  it('a spoken number the parse altered still fails closed: no chips, no run, words kept for correction', async () => {
-    // Kept with reason: this is the load-bearing numeral guard, not a
-    // verify click. The transcript submitted atomically; the request
-    // simply never runs on a number the reader did not say, and the
-    // words stand in the box for the existing edit/re-ask correction.
+  it('a spoken number the parse altered no longer blocks: the invented figure comes out and the run proceeds', async () => {
+    // Adapted with reason (2026-11-02, the 23:39 live failure): this
+    // pin previously asserted the fail-closed block. The owner's
+    // atomic ruling supersedes that disposition — on the voice path
+    // a numeral divergence resolves in favour of what was heard: the
+    // figure the parse substituted comes out of the request, the
+    // correction is disclosed, and the run proceeds on the numbers
+    // actually said. The numeral verdict itself still fails on this
+    // divergence (pinned in mic-core.test.ts); only the block is gone.
     const intentCalls = { n: 0, lastText: undefined as string | undefined }
+    const executed: ValidatedIntent[] = []
     const fake = fakeRecognizer()
     render(
       <AskPanel
@@ -513,17 +518,149 @@ describe('voice atomic submission (Item 16, owner ruling 2026-11-02)', () => {
         provider={spokenProvider('rent in Hilo under five thousand', 0.97, intentCalls)}
         micRecognizer={fake.recognizer}
         micStorage={fakeStorage()}
-        onExecute={() => {}}
+        onExecute={(intent) => void executed.push(intent)}
       />,
     )
     await speakTap()
     await fake.emit.final({ transcript: 'rent in Hilo under five thousand', confidence: 0.97 })
     expect(intentCalls.n).toBe(1)
-    expect(statusTexts().join(' ')).toContain(SPOKEN_NUMBER_MISMATCH_NOTE)
-    expect(container.querySelector('[aria-label="What was understood"]')).toBeNull()
-    expect(maybeButton('Run this request')).toBeNull()
+    expect(statusTexts().join(' ')).not.toContain('so nothing was run')
+    expect(statusTexts().join(' ')).toContain(SPOKEN_NUMBER_CORRECTION_NOTE)
+    expect(container.querySelector('[aria-label="What was understood"]')).not.toBeNull()
+    // The run proceeded, and the executed request carries no 2000:
+    // the substituted figure was taken out, not run on.
+    expect(executed).toHaveLength(1)
+    expect(executed[0]?.filters).toEqual([])
     const input = container.querySelector('#ask-input') as HTMLInputElement
     expect(input.value).toBe('rent in Hilo under five thousand')
+  })
+
+  it('the owner transcript runs: a numeral-free spoken schools question is not gated by the numeral guard', async () => {
+    // The 2026-11-02 23:39 live failure, verbatim: he spoke the
+    // schools question, the transcript carried no numeral, and the
+    // run dead-ended under a note blaming a number — the prose
+    // validator's ranking scan had failed his word "best". The stub
+    // returns the filter-free clarification intent, the shape the
+    // real parse gives this question; reaching the clarification
+    // state at all (understood request shown, clarification note up)
+    // is exactly what the block prevented.
+    const intentCalls = { n: 0, lastText: undefined as string | undefined }
+    const fake = fakeRecognizer()
+    const provider = createStubProvider({
+      async intent(req) {
+        intentCalls.n++
+        intentCalls.lastText = req.queryText
+        return {
+          intent: {
+            mode: 'lookup',
+            geographies: [],
+            metricKeys: [],
+            filters: [],
+            clarificationNeeded: true,
+          },
+        }
+      },
+    })
+    render(
+      <AskPanel
+        provider={provider}
+        micRecognizer={fake.recognizer}
+        micStorage={fakeStorage()}
+      />,
+    )
+    await speakTap()
+    await fake.emit.final({
+      transcript: 'what city has the best schools but also has',
+      confidence: 0.92,
+    })
+    expect(intentCalls.n).toBe(1)
+    expect(intentCalls.lastText).toBe('what city has the best schools but also has')
+    expect(container.textContent ?? '').not.toContain('so nothing was run')
+    expect(statusTexts().join(' ')).not.toContain('does not match the understood request')
+    expect(statusTexts().join(' ')).not.toContain(SPOKEN_NUMBER_CORRECTION_NOTE)
+    expect(container.querySelector('[aria-label="What was understood"]')).not.toBeNull()
+    const input = container.querySelector('#ask-input') as HTMLInputElement
+    expect(input.value).toBe('what city has the best schools but also has')
+  })
+
+  it('the full schools + cost-of-living form runs too (no guard note, a run starts)', async () => {
+    const intentCalls = { n: 0, lastText: undefined as string | undefined }
+    const executed: ValidatedIntent[] = []
+    const fake = fakeRecognizer()
+    const provider = createStubProvider({
+      async intent(req) {
+        intentCalls.n++
+        intentCalls.lastText = req.queryText
+        return {
+          intent: {
+            mode: 'lookup',
+            geographies: [],
+            metricKeys: [],
+            filters: [],
+            clarificationNeeded: true,
+          },
+        }
+      },
+    })
+    render(
+      <AskPanel
+        provider={provider}
+        micRecognizer={fake.recognizer}
+        micStorage={fakeStorage()}
+        onExecute={(intent) => void executed.push(intent)}
+      />,
+    )
+    await speakTap()
+    await fake.emit.final({
+      transcript: 'what city has the best schools but also has the lowest cost of living',
+      confidence: 0.92,
+    })
+    expect(intentCalls.n).toBe(1)
+    expect(container.textContent ?? '').not.toContain('so nothing was run')
+    expect(statusTexts().join(' ')).not.toContain('does not match the understood request')
+    // The parse was accepted and the understood request stands —
+    // before the cure this surface showed only the block note.
+    expect(container.querySelector('[aria-label="What was understood"]')).not.toBeNull()
+  })
+
+  it('a spoken number-word the parse heard correctly runs with the heard value in the request', async () => {
+    const intentCalls = { n: 0, lastText: undefined as string | undefined }
+    const executed: ValidatedIntent[] = []
+    const fake = fakeRecognizer()
+    const provider = createStubProvider({
+      async transcribe() {
+        return { transcript: 'rent in Hilo under twenty five hundred', confidence: 0.96 }
+      },
+      async intent(req) {
+        intentCalls.n++
+        intentCalls.lastText = req.queryText
+        return {
+          intent: {
+            ...sweepIntent,
+            filters: [{ metricKey: 'median_gross_rent', op: 'lt' as const, value: 2500 }],
+          },
+        }
+      },
+    })
+    render(
+      <AskPanel
+        provider={provider}
+        micRecognizer={fake.recognizer}
+        micStorage={fakeStorage()}
+        onExecute={(intent) => void executed.push(intent)}
+      />,
+    )
+    await speakTap()
+    await fake.emit.final({
+      transcript: 'rent in Hilo under twenty five hundred',
+      confidence: 0.96,
+    })
+    expect(intentCalls.n).toBe(1)
+    expect(statusTexts().join(' ')).not.toContain(SPOKEN_NUMBER_CORRECTION_NOTE)
+    expect(executed).toHaveLength(1)
+    expect(executed[0]?.filters).toEqual([
+      { metricKey: 'median_gross_rent', op: 'lt', value: 2500 },
+    ])
   })
 
   it('the recorder fallback is atomic too: its end-of-utterance signal submits with no stop click', async () => {

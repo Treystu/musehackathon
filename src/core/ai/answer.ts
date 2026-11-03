@@ -464,6 +464,16 @@ export interface ComposedAnswer {
    * exactly when its name is here.
    */
   researchNamedPlaces?: string[]
+  /**
+   * Labels of researched criteria whose research pass failed while
+   * sibling passes returned material (partial tolerance in
+   * researchPerCriterion, 2026-11-02), carried from the research
+   * stage's record so the run's outcome states the partial failure
+   * rather than reading as a complete research result. The failed
+   * criteria are accounted in criterionEvidence with the failure
+   * stated. Absent when every pass returned (or no research ran).
+   */
+  researchFailures?: readonly string[]
 }
 
 /**
@@ -845,6 +855,15 @@ export interface ResearchStageResult {
   prose: string
   sources: AnswerSource[]
   claims: ResearchedClaim[]
+  /**
+   * Labels of criteria whose research pass FAILED after at least one
+   * pass had already returned material (partial tolerance in
+   * researchPerCriterion, 2026-11-02). Absent when every pass
+   * returned. A failed criterion is accounted on the card as not
+   * measured, with the lookup's failure stated — never as if
+   * research had run and found nothing.
+   */
+  failedCriteria?: readonly string[]
 }
 
 /**
@@ -905,6 +924,7 @@ export async function researchPerCriterion(
   const sources: AnswerSource[] = []
   const claims: ResearchedClaim[] = []
   const proseParts: string[] = []
+  const failedCriteria: string[] = []
   // One pass per criterion; the loop count is the contract, the
   // query is the reader's whole question for every pass. A criterion
   // decomposed onto a Census metric takes no pass — its figures are
@@ -912,7 +932,25 @@ export async function researchPerCriterion(
   // criterion the data already answers (P3 step 3).
   const researched = criteria.filter((c) => !c.decomposedMetricKey)
   for (let pass = 0; pass < researched.length; pass++) {
-    const result = await provider.research({ queryText: researchQuery, places: [...places] }, signal)
+    // Partial tolerance (2026-11-02, flexible-trigger cure): before
+    // this, ANY pass failure threw out of the pipeline and discarded
+    // every earlier pass's gathered material, so a dual-criteria
+    // question whose first pass named places and whose second pass
+    // hit a provider flap died at the compose-failed note with
+    // research-named material in hand. Now a failed pass is recorded
+    // and the remaining passes still run — WHEN at least one pass
+    // has already returned material. When NO pass has succeeded the
+    // failure rethrows exactly as before: research is down, no named
+    // material exists to ground anything on, and the honest note is
+    // the terminal by design.
+    let result: ResearchResult
+    try {
+      result = await provider.research({ queryText: researchQuery, places: [...places] }, signal)
+    } catch (err) {
+      if (proseParts.length === 0) throw err
+      failedCriteria.push(researched[pass]!.label)
+      continue
+    }
     proseParts.push(result.prose)
     for (const source of result.sources) {
       if (!sources.some((s) => s.url === source.url)) {
@@ -923,7 +961,12 @@ export async function researchPerCriterion(
       if (!claims.some((c) => c.text === claim.text)) claims.push(claim)
     }
   }
-  return { prose: proseParts.join('\n'), sources, claims }
+  return {
+    prose: proseParts.join('\n'),
+    sources,
+    claims,
+    ...(failedCriteria.length > 0 ? { failedCriteria } : {}),
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1107,6 +1150,14 @@ export function criterionEvidenceFor(input: {
   countyFigureNotMeasurable?: string | null
   /** The reader's question text, for stated criteria no layer serves. */
   queryText?: string
+  /**
+   * Labels of researched criteria whose research pass failed while
+   * sibling passes returned material (ResearchStageResult
+   * .failedCriteria). Their evidence entry states the lookup did
+   * not return, rather than reading as if research ran and no
+   * source spoke to the criterion.
+   */
+  failedResearchCriteria?: readonly string[]
 }): CriterionEvidence[] {
   const evidence: CriterionEvidence[] = []
   for (const criterion of input.criteria) {
@@ -1242,7 +1293,9 @@ export function criterionEvidenceFor(input: {
         criterion: criterion.label,
         kind: 'research',
         status: 'not_measurable',
-        detail: 'No cited source available here speaks to this criterion.',
+        detail: (input.failedResearchCriteria ?? []).includes(criterion.label)
+          ? 'The research lookup for this criterion did not return, so no cited source speaks to it here.'
+          : 'No cited source available here speaks to this criterion.',
         sourceUrls: [],
       })
     } else if (criterion.id === 'safety' && !serving.some((claim) => SAFETY_DIRECTION_RE.test(claim.text))) {
@@ -1447,6 +1500,7 @@ export function composeAnswer(input: {
     countySupported: input.countySupported ?? false,
     countyFigureNotMeasurable: input.countyFigureNotMeasurable ?? null,
     queryText: researchCriteria[0]?.text,
+    failedResearchCriteria: input.research?.failedCriteria,
   })
   // Summary-claim rule (P3 step 4, battery A1/B5/C5/D2): the
   // "meet all of the stated Census criteria" sentence renders ONLY
@@ -1930,6 +1984,9 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       ...composedRaw,
       researchNamedPlaces: [...extracted],
       ...(cappedRows.length === 0 ? { noCensusMatch: true } : {}),
+      ...(research.failedCriteria?.length
+        ? { researchFailures: research.failedCriteria }
+        : {}),
     }
     const composed = input.unresolvedGeographies
       ? { ...composedWithMarker, unresolvedGeographies: [...input.unresolvedGeographies] }
@@ -2148,9 +2205,13 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     stateSupported,
     summaryOverride: countyEmptySummary,
   })
+  const composedWithFailures =
+    research?.failedCriteria?.length
+      ? { ...composedRaw, researchFailures: research.failedCriteria }
+      : composedRaw
   const composed = input.unresolvedGeographies
-    ? { ...composedRaw, unresolvedGeographies: [...input.unresolvedGeographies] }
-    : composedRaw
+    ? { ...composedWithFailures, unresolvedGeographies: [...input.unresolvedGeographies] }
+    : composedWithFailures
   if (composed.status === 'empty') return { ...composed, stage: 'verify' }
 
   // Stage 5: verify, fail-closed. On the county path the figures are

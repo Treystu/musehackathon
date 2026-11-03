@@ -935,23 +935,39 @@ export async function composeAnswerForRequest(input: {
   if (answer.status === 'blocked') return null
 
   // Flexible completion fall-through (2026-11-02, owner directive;
-  // core/ai/flexible.ts): the pipeline's research-mismatch marker
-  // is the ONLY trigger — research succeeded and named places, but
-  // none matched Census data, so the strict answer is the bare
-  // not-matched note. The completion drafts on the hourglass seams
-  // and must pass the extended validator before it replaces the
-  // note; any failure along the way returns null here and the
-  // strict terminal stands, unchanged. Provider failures never
-  // reach this branch (they throw out of the pipeline to the
-  // caller's note), and neither do safety refusals ('blocked'
-  // returned null above) or a genuine Census screen with no match
-  // (status 'empty' without the marker).
+  // core/ai/flexible.ts): research succeeded and named places, but
+  // the strict lane could not compose a card from them, so the
+  // strict answer is the bare not-matched note. The completion
+  // drafts on the hourglass seams and must pass the extended
+  // validator before it replaces the note; any failure along the
+  // way returns null here and the strict terminal stands, unchanged.
+  // Provider failures never reach this branch (they throw out of
+  // the pipeline to the caller's note), and neither do safety
+  // refusals ('blocked' returned null above) or a genuine Census
+  // screen with no match (status 'empty' with no research material).
+  //
+  // Trigger widening (2026-11-02, flexible-trigger cure): the
+  // fall-through keys on the MATERIAL — research-named places
+  // present on the answer — not only on the noCensusMatch marker.
+  // The marker remains a sufficient condition (it is stamped
+  // exactly at the research-mismatch terminal), but any 'empty'
+  // terminal of a researched question that carries research-named
+  // places engages the lane: what research returned decides the
+  // rescue, not which internal terminal stamped the answer. The
+  // multi-pass partial-failure terminal that motivated the widening
+  // is cured one layer down (researchPerCriterion's partial
+  // tolerance returns the gathered material instead of throwing it
+  // away), and lands here through the same material test.
   let flexibleVerification: {
     wonder: 'verified' | 'concerns' | 'not-run'
     wonderConcerns?: string[]
     jev: { roundsUsed: number; passed: boolean } | 'not-run'
   } | null = null
-  if (stack && answer.status === 'empty' && answer.noCensusMatch) {
+  if (
+    stack &&
+    answer.status === 'empty' &&
+    (answer.noCensusMatch || (answer.researchNamedPlaces?.length ?? 0) > 0)
+  ) {
     const completion = await composeFlexibleCompletion({
       queryText: input.queryText,
       strictAnswer: answer,

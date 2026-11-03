@@ -2,8 +2,10 @@
  * The flexible completion's orchestration (2026-11-02; core
  * contract in core/ai/flexible.ts). Sibling to general-runner.ts:
  * the strict pipeline's contract is untouched, and this runner runs
- * only when the pipeline's own marker says the request terminated
- * at research mismatch (ComposedAnswer.noCensusMatch).
+ * only when the strict lane terminated at research mismatch — the
+ * pipeline's noCensusMatch marker, or research-named material
+ * carried on an 'empty' answer (the runner's material-keyed
+ * trigger, widened 2026-11-02).
  *
  * Order, on the hourglass seams the conversational stack already
  * owns: Spark drafts through the flexible route -> the extended

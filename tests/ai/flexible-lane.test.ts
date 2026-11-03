@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { AreaRow } from '../../src/core/plugins/acs'
 import {
+  decomposeResearchCriteria,
+  researchPerCriterion,
   runAnswerPipeline,
   type ComposedAnswer,
 } from '../../src/core/ai/answer'
@@ -413,5 +415,131 @@ describe('flexible completion at the runner', () => {
     expect(answer?.status).toBe('verified')
     expect(answer?.places.map((p) => p.name)).toEqual(['Hilo, HI'])
     expect(flexibleCalls).toBe(0)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* Partial research tolerance (flexible-trigger cure, 2026-11-02)      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The trigger gap's reachable terminal: researchPerCriterion runs
+ * one pass per researched criterion, and before the cure ANY pass
+ * failure threw out of the pipeline — so a dual-criteria question
+ * whose first pass named places and whose second pass hit a
+ * provider flap died at the App's compose-failed note with
+ * research-named material already in hand (the terminal class
+ * behind the owner's 2026-11-02 live finding on "lowest cost of
+ * living but also the best schools?"). The cure: a failed pass is
+ * recorded and the gathered material proceeds; only a TOTAL
+ * research failure — no pass returned anything — still throws to
+ * the honest note, by design.
+ */
+describe('partial research tolerance', () => {
+  /** Pass 1 returns the unmatched-places findings; every later pass throws. */
+  function flakyProvider() {
+    let calls = 0
+    return createStubProvider({
+      research: async () => {
+        calls += 1
+        if (calls === 1) return UNMATCHED_RESEARCH
+        throw new Error('provider_down')
+      },
+    })
+  }
+
+  it('a failed later pass keeps the gathered material and records the failure', async () => {
+    const result = await researchPerCriterion(
+      flakyProvider(),
+      [],
+      decomposeResearchCriteria(SENTENCE_1),
+      SENTENCE_1,
+      new AbortController().signal,
+    )
+    expect(result.claims.length).toBeGreaterThan(0)
+    expect(result.sources).toEqual(UNMATCHED_RESEARCH.sources)
+    expect(result.failedCriteria).toEqual(['Fast food restaurants'])
+  })
+
+  it('a total research failure still throws — no material, no completion', async () => {
+    const provider = createStubProvider({
+      research: async () => {
+        throw new Error('provider_down')
+      },
+    })
+    await expect(
+      researchPerCriterion(
+        provider,
+        [],
+        decomposeResearchCriteria(SENTENCE_1),
+        SENTENCE_1,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow('provider_down')
+  })
+
+  it('the pipeline reaches the mismatch terminal on partial research, failure recorded', async () => {
+    // Pass 1 returns schools-only findings (the fast-food pass is
+    // the one that fails), so the failed criterion has no serving
+    // claim and its evidence entry must state the lookup failure.
+    let calls = 0
+    const provider = createStubProvider({
+      research: async () => {
+        calls += 1
+        if (calls === 1) {
+          return {
+            prose:
+              'Stone Mountain, GA schools are rated above the state average in the cited directory.',
+            sources: [{ title: 'State school directory', url: 'https://example.org/schools' }],
+          }
+        }
+        throw new Error('provider_down')
+      },
+    })
+    const answer = await runAnswerPipeline({
+      intent: EXTERNAL_ONLY,
+      rows: ROWS,
+      researchQuery: SENTENCE_1,
+      queryText: SENTENCE_1,
+      provider,
+    })
+    expect(answer.status).toBe('empty')
+    expect(answer.noCensusMatch).toBe(true)
+    expect(answer.researchNamedPlaces).toEqual(['Stone Mountain, GA'])
+    expect(answer.researchFailures).toEqual(['Fast food restaurants'])
+    const failed = answer.criterionEvidence.find((e) => e.criterion === 'Fast food restaurants')
+    expect(failed?.status).toBe('not_measurable')
+    expect(failed?.detail).toContain('did not return')
+    const served = answer.criterionEvidence.find((e) => e.criterion === 'School quality')
+    expect(served?.detail).not.toContain('did not return')
+  })
+
+  it('the runner completes the partial-failure terminal through the flexible lane', async () => {
+    let flexibleCalls = 0
+    const answer = await composeAnswerForRequest({
+      intent: EXTERNAL_ONLY,
+      queryText: SENTENCE_1,
+      rows: ROWS,
+      resolved: resolveAnswerGeographies(EXTERNAL_ONLY, null),
+      provider: flakyProvider(),
+      research: true,
+      stack: {
+        decisions: {},
+        ...NO_PLAN,
+        ...VERIFIED_BOOKEND,
+        jevTransport: jevTransportWith(0.95),
+        flexibleTransport: async () => {
+          flexibleCalls += 1
+          return DRAFT
+        },
+      },
+    })
+    expect(flexibleCalls).toBe(1)
+    expect(answer?.status).toBe('flexible')
+    expect(answer?.researchFailures).toEqual(['Fast food restaurants'])
+    expect(answer?.flexible?.places.map((p) => p.name)).toEqual([
+      'Stone Mountain, GA',
+      'Kingwood, TX',
+    ])
   })
 })

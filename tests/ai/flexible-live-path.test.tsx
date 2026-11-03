@@ -67,6 +67,7 @@ const FLEXIBLE_DRAFT = {
 
 interface FetchLog {
   research: number
+  researchStatuses: number[]
   flexible: number
 }
 
@@ -77,7 +78,30 @@ function jsonResponse(status: number, body: unknown): Response {
   })
 }
 
-function installFetch(log: FetchLog) {
+interface FetchOptions {
+  /**
+   * Research wire behavior: 'named' returns the findings fixture on
+   * every call; 'down' fails every call (provider_down); 'partial'
+   * returns the fixture on the first call and fails every later
+   * call — the multi-pass partial failure (pass 1 gathers material,
+   * a later pass hits the flap).
+   */
+  researchMode?: 'named' | 'down' | 'partial'
+  researchBody?: { prose: string; sources: { title: string; url: string }[] }
+  draft?: unknown
+}
+
+const NAMED_RESEARCH_BODY = {
+  prose:
+    'Stone Mountain, GA schools are rated above the state average in the cited directory. ' +
+    'Kingwood, TX has few fast-food outlets along its main roads.',
+  sources: [
+    { title: 'State school directory', url: 'https://example.org/schools' },
+    { title: 'Local dining guide', url: 'https://example.org/dining' },
+  ],
+}
+
+function installFetch(log: FetchLog, options: FetchOptions = {}) {
   const handler = async (
     input: RequestInfo | URL,
     init?: RequestInit,
@@ -121,15 +145,12 @@ function installFetch(log: FetchLog) {
     }
     if (url.includes('/api/muse/research')) {
       log.research += 1
-      return jsonResponse(200, {
-        prose:
-          'Stone Mountain, GA schools are rated above the state average in the cited directory. ' +
-          'Kingwood, TX has few fast-food outlets along its main roads.',
-        sources: [
-          { title: 'State school directory', url: 'https://example.org/schools' },
-          { title: 'Local dining guide', url: 'https://example.org/dining' },
-        ],
-      })
+      const mode = options.researchMode ?? 'named'
+      const fail =
+        mode === 'down' || (mode === 'partial' && log.research > 1)
+      log.researchStatuses.push(fail ? 500 : 200)
+      if (fail) return jsonResponse(500, { error: 'provider_down' })
+      return jsonResponse(200, options.researchBody ?? NAMED_RESEARCH_BODY)
     }
     if (url.includes('/api/muse/plan')) {
       return jsonResponse(200, { verdict: 'sound', objections: [] })
@@ -165,7 +186,11 @@ function installFetch(log: FetchLog) {
     }
     if (url.includes('/api/muse/flexible')) {
       log.flexible += 1
-      return jsonResponse(200, { outcome: 'draft', draft: FLEXIBLE_DRAFT, model: 'muse-spark-1.3' })
+      return jsonResponse(200, {
+        outcome: 'draft',
+        draft: options.draft ?? FLEXIBLE_DRAFT,
+        model: 'muse-spark-1.3',
+      })
     }
     return jsonResponse(404, { error: 'unstubbed' })
   }
@@ -216,7 +241,7 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  log = { research: 0, flexible: 0 }
+  log = { research: 0, researchStatuses: [], flexible: 0 }
   localStorage.clear()
   sessionStorage.clear()
   resetBudget()
@@ -251,5 +276,87 @@ describe('flexible completion on the real data path', () => {
     expect(text).toContain('Named in research — not matched to Census data')
     // The bare not-matched note is not the terminal any more.
     expect(text).not.toContain(NOT_MATCHED_NOTE)
+  }, 90_000)
+})
+
+/**
+ * The trigger-gap battery (2026-11-02, owner live finding): the
+ * owner's exact question — "what city/zip has the lowest cost of
+ * living but also the best schools?" — terminated live on the
+ * compose-failed note ("The answer to this question could not be
+ * composed just now"). The diagnosis (drive-scratch RESULTS): the
+ * note is the research-failure terminal, and the gap was the
+ * multi-pass discard — one pass's gathered material thrown away
+ * when a later pass failed. These three cases pin the cured
+ * behavior on the real App path.
+ */
+const OWNER_QUESTION = 'what city/zip has the lowest cost of living but also the best schools?'
+const COMPOSE_FAILED_NOTE = 'could not be composed just now'
+
+const OWNER_RESEARCH_BODY = {
+  prose:
+    'Stone Mountain, GA schools are rated above the state average in the cited directory. ' +
+    'Yellow Springs, OH is named among the lowest cost-of-living towns in the cited guide.',
+  sources: [
+    { title: 'State school directory', url: 'https://example.org/schools' },
+    { title: 'Cost-of-living guide', url: 'https://example.org/cost-of-living' },
+  ],
+}
+
+const OWNER_DRAFT = {
+  prose:
+    'Stone Mountain, GA and Yellow Springs, OH are the places the cited research named for ' +
+    'the stated criteria. The research describes Stone Mountain schools as rated above the ' +
+    'state average, and names Yellow Springs among the lowest cost-of-living towns.',
+  places: [
+    { name: 'Stone Mountain, GA', basis: 'research', note: 'Named by the cited research for school quality.', figures: [] },
+    { name: 'Yellow Springs, OH', basis: 'research', note: 'Named by the cited research among the lowest cost-of-living towns.', figures: [] },
+  ],
+  figures: [],
+}
+
+describe('flexible trigger gap — the owner question battery', () => {
+  it('the owner question completes flexibly when research names unmatched places', async () => {
+    installFetch(log, { researchBody: OWNER_RESEARCH_BODY, draft: OWNER_DRAFT })
+    render(<App />)
+    await ask(OWNER_QUESTION)
+    expect(await waitFor(() => pageText().includes('Yellow Springs, OH'))).toBe(true)
+    const text = pageText()
+    expect(log.research).toBeGreaterThanOrEqual(1)
+    expect(log.flexible).toBeGreaterThanOrEqual(1)
+    expect(text).toContain('Stone Mountain, GA')
+    expect(text).toContain('Named in research — not matched to Census data')
+    // Neither bare note is the terminal.
+    expect(text).not.toContain(COMPOSE_FAILED_NOTE)
+    expect(text).not.toContain(NOT_MATCHED_NOTE)
+  }, 90_000)
+
+  it('a later research pass failing mid-run no longer strands the question on the compose-failed note', async () => {
+    installFetch(log, { researchMode: 'partial' })
+    render(<App />)
+    await ask(SENTENCE_1)
+    expect(await waitFor(() => pageText().includes('Stone Mountain, GA'))).toBe(true)
+    const text = pageText()
+    // A pass really did fail in this run (the flap is in the wire
+    // log), and the material pass 1 gathered still completed.
+    expect(log.researchStatuses).toContain(500)
+    expect(log.flexible).toBeGreaterThanOrEqual(1)
+    expect(text).toContain('Named in research — not matched to Census data')
+    expect(text).not.toContain(COMPOSE_FAILED_NOTE)
+    expect(text).not.toContain(NOT_MATCHED_NOTE)
+  }, 90_000)
+
+  it('research fully down: the honest note stands and the flexible route is never called', async () => {
+    installFetch(log, { researchMode: 'down' })
+    render(<App />)
+    await ask(OWNER_QUESTION)
+    expect(await waitFor(() => pageText().includes(COMPOSE_FAILED_NOTE))).toBe(true)
+    const text = pageText()
+    expect(log.research).toBeGreaterThanOrEqual(1)
+    expect(log.researchStatuses).not.toContain(200)
+    // No named material exists to ground a completion on: the lane
+    // must not manufacture one from model knowledge alone.
+    expect(log.flexible).toBe(0)
+    expect(text).not.toContain('Yellow Springs, OH')
   }, 90_000)
 })

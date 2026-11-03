@@ -1159,9 +1159,11 @@ export default function App() {
     // One match is still shown as a list rather than opened directly, because the
     // reader may want a specific ZIP code inside it.
     setChosenPlace(matches[0]!)
-    if (matches.length > 1) {
-      setTerm('')
-    }
+    // The typed term stays in the box on a multi-match submit
+    // (item-16 cure C10): it used to be cleared here, discarding
+    // state the reader supplied — with several same-name cities
+    // open, the box no longer showed which city they had asked
+    // about, and correcting a typo meant retyping from nothing.
   }
 
   // Announce async state to assistive technology. With a sweep of ~41,000 rows

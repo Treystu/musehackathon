@@ -414,3 +414,90 @@ describe('A9 pins — decomposition accounting (FM-2 / FM-3)', () => {
   })
 })
 })
+
+describe('A9 pins — resolution (FM-5 bare names, FM-6 list genre)', () => {
+  it('FM-5: a bare name with no bound row is recorded, not vanished (Sanibel)', async () => {
+    // The battery's bound FL rows carry no Sanibel: the phase-1
+    // defect was that the mention left NO record. It now lands in
+    // unresolvedCandidates under its written form.
+    const r = await runScenario(SCENARIOS.climate_weather!)
+    expect(r.places).not.toContain('Sanibel, FL')
+    expect(r.unresolved).toContain('Sanibel')
+  })
+
+  it('FM-5: a bare name carried by exactly one bound row resolves', async () => {
+    const calls: { places: readonly string[]; queryText: string }[] = []
+    const answer = await runAnswerPipeline({
+      intent: intent({ geographies: ['FL'], metricKeys: [] }),
+      rows: [row('33040', 'Key West, FL', 2400), row('33957', 'Sanibel, FL', 2300)],
+      researchQuery: 'What city in Florida has the best weather year-round?',
+      researchCriteria: ['What city in Florida has the best weather year-round?'],
+      queryText: 'What city in Florida has the best weather year-round?',
+      provider: provider(
+        'Key West, FL has the mildest weather in Florida. Sanibel is often praised by residents for its gentle coastal weather year-round. Answer: Key West, FL has the strongest support for the best year-round weather in Florida.',
+        calls,
+      ),
+    })
+    expect(answer.places.map((p) => p.name)).toEqual(['Key West, FL', 'Sanibel, FL'])
+    expect(answer.unresolvedCandidates).not.toContain('Sanibel')
+  })
+
+  it('FM-5: an anchor city named in framing prose does not enter the ranked set', async () => {
+    // "the safest suburbs of Dallas": Dallas is the anchor, named
+    // mid-sentence. The first cure run resolved it as a candidate;
+    // sentence-initial detection keeps it framing.
+    const r = await runScenario(SCENARIOS.safety!)
+    expect(r.places).not.toContain('Dallas, TX')
+    const s = await runScenario(SCENARIOS.schools_family!)
+    expect(s.places).not.toContain('Chicago, IL')
+  })
+
+  it('FM-5: a bare name carried by two bound rows is recorded ambiguous, never resolved', async () => {
+    const calls: { places: readonly string[]; queryText: string }[] = []
+    const answer = await runAnswerPipeline({
+      intent: intent({ geographies: [], metricKeys: [] }),
+      rows: [row('04101', 'Portland, ME', 1500), row('97201', 'Portland, OR', 1600), row('02108', 'Boston, MA', 2400)],
+      researchQuery: 'What city in the US is the most walkable without a car?',
+      researchCriteria: ['What city in the US is the most walkable without a car?'],
+      queryText: 'What city in the US is the most walkable without a car?',
+      provider: provider(
+        'Boston, MA is exceptionally walkable, with most errands on foot. Portland is also frequently named for walking. Answer: Boston has the strongest support in these findings for the stated criteria.',
+        calls,
+      ),
+    })
+    expect(answer.places.map((p) => p.name)).toEqual(['Boston, MA'])
+    expect(answer.unresolvedCandidates).toContain('Portland')
+  })
+
+  it('FM-6: list-genre findings (full state names, bare follow-ups) materialize the shortlist', async () => {
+    const calls: { places: readonly string[]; queryText: string }[] = []
+    const answer = await runAnswerPipeline({
+      intent: intent({ geographies: ['Texas'], metricKeys: [] }),
+      rows: [
+        row('78839', 'Crystal City, TX', 812),
+        row('79843', 'Marfa, TX', 975),
+        row('78827', 'Asherton, TX', 640),
+        row('78594', 'Sebastian, TX', 705),
+        row('78701', 'Austin, TX', 1449),
+      ],
+      researchQuery: 'what city in Texas is the most liberal',
+      researchCriteria: ['what city in Texas is the most liberal'],
+      queryText: 'what city in Texas is the most liberal',
+      provider: provider(
+        'The most liberal cities in Texas, from recent rankings: 1. Crystal City, Texas — a small border city that votes heavily Democratic in recent elections. 2. Marfa, Texas — a desert arts town known for progressive politics. 3. Asherton, Texas — a small city that also leans strongly Democratic. 4. Sebastian, Texas — a community described as politically mixed but leaning liberal. Austin is the large-city reference and is often described as liberal. Answer: Crystal City has the strongest support in these findings for the stated criteria.',
+        calls,
+      ),
+    })
+    expect(answer.status).toBe('verified')
+    // The T1 shape: at least three named qualifiers materialize as
+    // entries (the live failure had exactly one).
+    expect(answer.places.map((p) => p.name)).toEqual([
+      'Crystal City, TX',
+      'Marfa, TX',
+      'Asherton, TX',
+      'Sebastian, TX',
+      'Austin, TX',
+    ])
+    expect(answer.places[0]!.zcta).toBe('78839')
+  })
+})

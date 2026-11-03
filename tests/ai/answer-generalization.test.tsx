@@ -189,7 +189,13 @@ describe('(ii) research-first: only external criteria', () => {
     })
     expect(answer.status).toBe('verified')
     expect(answer.places.map((p) => p.name)).toEqual(['Hilo, HI'])
-    expect(answer.unresolvedCandidates).toEqual(['Atlantis, ZZ'])
+    // ADAPTED (Lane A9 FM-5): the provider's prose also names
+    // Nowhereville bare, as a sentence subject, and the bare-name
+    // pass records such mentions with the unresolved names instead
+    // of letting them vanish. The invariant this pin guards —
+    // unresolvable names are dropped and counted, never guessed —
+    // is unchanged: places still holds Hilo alone.
+    expect(answer.unresolvedCandidates).toEqual(['Atlantis, ZZ', 'Nowhereville'])
   })
 
   it('partial evidence stays labelled partial and is never silently upgraded', async () => {

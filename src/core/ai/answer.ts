@@ -1532,6 +1532,37 @@ export type CandidateResolver = (
 
 const CANDIDATE_NAME_RE = /\b([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}), ([A-Z]{2})\b/g
 
+/** Full state names to their abbreviations, for the list-genre
+ * extraction below (multi-word names first: alternation order is
+ * match order). */
+const STATE_NAME_TO_ABBR: Readonly<Record<string, string>> = {
+  'District of Columbia': 'DC',
+  'North Carolina': 'NC',
+  'South Carolina': 'SC',
+  'North Dakota': 'ND',
+  'South Dakota': 'SD',
+  'New Hampshire': 'NH',
+  'New Jersey': 'NJ',
+  'New Mexico': 'NM',
+  'New York': 'NY',
+  'Rhode Island': 'RI',
+  'West Virginia': 'WV',
+  Alabama: 'AL', Alaska: 'AK', Arizona: 'AZ', Arkansas: 'AR', California: 'CA',
+  Colorado: 'CO', Connecticut: 'CT', Delaware: 'DE', Florida: 'FL', Georgia: 'GA',
+  Hawaii: 'HI', Idaho: 'ID', Illinois: 'IL', Indiana: 'IN', Iowa: 'IA',
+  Kansas: 'KS', Kentucky: 'KY', Louisiana: 'LA', Maine: 'ME', Maryland: 'MD',
+  Massachusetts: 'MA', Michigan: 'MI', Minnesota: 'MN', Mississippi: 'MS',
+  Missouri: 'MO', Montana: 'MT', Nebraska: 'NE', Nevada: 'NV', Ohio: 'OH',
+  Oklahoma: 'OK', Oregon: 'OR', Pennsylvania: 'PA', Tennessee: 'TN', Texas: 'TX',
+  Utah: 'UT', Vermont: 'VT', Virginia: 'VA', Washington: 'WA', Wisconsin: 'WI',
+  Wyoming: 'WY',
+}
+
+const CANDIDATE_NAME_FULL_STATE_RE = new RegExp(
+  `\\b([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}), (${Object.keys(STATE_NAME_TO_ABBR).join('|')})\\b`,
+  'g',
+)
+
 /**
  * Default extraction: "Name, ST" mentions in the findings prose, in
  * mention order, de-duplicated. Prose names without a state are not
@@ -1559,7 +1590,107 @@ export function extractCandidateNamesFromProse(prose: string): string[] {
     if (breakAt >= 3) name = name.slice(breakAt + 2)
     if (!names.includes(name)) names.push(name)
   }
+  // List-genre findings name places with the full state name
+  // ("1. Crystal City, Texas — ..."): the enumeration is the
+  // research's candidate list, and the abbreviation-only pattern
+  // above reads none of it — measured on the live Texas specimen's
+  // genre in Lane A9 phase 1 (FM-6: the shortlist never
+  // materialized). The same glue normalization applies.
+  for (const match of prose.matchAll(CANDIDATE_NAME_FULL_STATE_RE)) {
+    const abbr = STATE_NAME_TO_ABBR[match[2]!]
+    if (!abbr) continue
+    let name = `${match[1]}, ${abbr}`
+    const breakAt = name.lastIndexOf('. ')
+    if (breakAt >= 3) name = name.slice(breakAt + 2)
+    if (!names.includes(name)) names.push(name)
+  }
   return names
+}
+
+/** Sentence openers that are never a bare candidate mention. */
+const BARE_MENTION_OPENERS: ReadonlySet<string> = new Set([
+  'answer', 'the', 'a', 'an', 'in', 'on', 'for', 'this', 'these', 'those',
+  'it', 'there', 'taken', 'overall', 'according', 'note', 'source',
+  'sources', 'research', 'findings', 'however', 'while', 'both', 'many',
+  'most', 'several', 'among', 'across', 'within',
+])
+
+/**
+ * Bare-name candidate extraction (Lane A9 FM-5): findings prose
+ * also names places with no state at all ("Sanibel is often praised
+ * for its gentle coastal weather"), and the extraction above reads
+ * none of those — the name vanishes with no record at all (phase-1
+ * battery: Sanibel). The design boundary in the extraction comment
+ * stands — a bare name is never GUESSED at a place — so detection
+ * uses the findings genre's own shape: one place per sentence,
+ * named as the sentence's subject. A sentence-initial capitalized
+ * sequence is a candidate mention; mid-sentence bare mentions are
+ * framing, not candidates — the anchor city in "the safest suburbs
+ * of Dallas" is named in exactly that position, and resolving it
+ * would rank the anchor among its own suburbs (measured in this
+ * cure's first pin run: Dallas and Chicago entered the ranked
+ * sets). Three outcomes, none of them a guess: the bound rows
+ * carry the name exactly once (resolved), two or more times
+ * (ambiguous — recorded, not resolved), or not at all (unresolved
+ * — recorded with the other unmatched names, so the mention no
+ * longer vanishes).
+ */
+export function extractBareCandidateNames(
+  prose: string,
+  alreadyExtracted: readonly string[],
+  rows: readonly AreaRow[],
+): { names: string[]; ambiguous: string[]; unresolved: string[] } {
+  const byBare = new Map<string, string[]>()
+  for (const row of rows) {
+    const bare = row.name.split(',')[0]!.trim()
+    if (!bare) continue
+    const key = bare.toLowerCase()
+    const list = byBare.get(key) ?? []
+    list.push(row.name)
+    byBare.set(key, list)
+  }
+  const covered = new Set(
+    alreadyExtracted.map((n) => n.split(',')[0]!.trim().toLowerCase()),
+  )
+  const names: string[] = []
+  const ambiguous: string[] = []
+  const unresolved: string[] = []
+  const seen = new Set<string>()
+  for (const sentence of prose.split(/(?<=[.!?])\s+/)) {
+    if (/^Answer:/.test(sentence)) continue
+    const lead = sentence.match(/^([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2})/)
+    if (!lead) continue
+    const words = lead[1]!.split(' ')
+    if (words[0]!.includes("'")) continue
+    let settled = false
+    for (let take = words.length; take >= 1; take--) {
+      const candidate = words.slice(0, take).join(' ')
+      const key = candidate.toLowerCase()
+      if (covered.has(key)) {
+        settled = true
+        break
+      }
+      const hits = byBare.get(key)
+      if (!hits) continue
+      settled = true
+      if (seen.has(key)) break
+      seen.add(key)
+      if (hits.length === 1) names.push(hits[0]!)
+      else ambiguous.push(candidate)
+      break
+    }
+    if (settled) continue
+    // No bound row carries the mention: record it unresolved
+    // under its written form, unless the lead is a sentence
+    // opener rather than a name.
+    const mention = words.join(' ')
+    const key = mention.toLowerCase()
+    if (BARE_MENTION_OPENERS.has(words[0]!.toLowerCase())) continue
+    if (seen.has(key) || covered.has(key)) continue
+    seen.add(key)
+    unresolved.push(mention)
+  }
+  return { names, ambiguous, unresolved }
 }
 
 /** Default resolution: an exact match against a loaded row's name. */
@@ -2874,10 +3005,21 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
                 const extractor =
                   input.candidateExtractor ??
                   (({ prose }) => extractCandidateNamesFromProse(prose))
-                const extractedNow = await extractor({
+                const extractedStdNow = await extractor({
                   prose: accumulated.prose,
                   sources: accumulated.sources,
                 })
+                // The same bare-name pass as the terminal path
+                // (FM-5), so an interim place is a terminal place.
+                const bareNow = extractBareCandidateNames(
+                  accumulated.prose,
+                  extractedStdNow,
+                  input.rows,
+                )
+                const extractedNow = [
+                  ...extractedStdNow,
+                  ...bareNow.names.filter((n) => !extractedStdNow.includes(n)),
+                ]
                 const resolver =
                   input.candidateResolver ??
                   ((names) => resolveCandidatesAgainstRows(names, input.rows))
@@ -2927,16 +3069,31 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // Stage order inverts: research -> extract -> resolve -> pull.
     const research = firstResearch
     const extractor = input.candidateExtractor ?? (({ prose }) => extractCandidateNamesFromProse(prose))
-    const extracted = await extractor({ prose: research.prose, sources: research.sources })
+    const extractedStd = await extractor({ prose: research.prose, sources: research.sources })
+    // Bare names the prose carries with no state at all join the
+    // candidate list when the bound rows carry exactly one match
+    // (FM-5, extractBareCandidateNames); ambiguous bare names are
+    // recorded with the unresolved names below, never resolved.
+    const bare = extractBareCandidateNames(research.prose, extractedStd, input.rows)
+    const extracted = [
+      ...extractedStd,
+      ...bare.names.filter((n) => !extractedStd.includes(n)),
+    ]
     const resolver = input.candidateResolver ?? ((names) => resolveCandidatesAgainstRows(names, input.rows))
     const resolved = await resolver(extracted)
     // Resolution is by name, exactly as extracted: a resolver either
     // returns the extracted name with its ZCTAs or it does not, and
     // a name it does not return is reported, never repaired.
     const resolvedNames = new Set(resolved.map((r) => r.name.toLowerCase()))
-    const unresolvedCandidates = extracted.filter(
-      (name) => !resolvedNames.has(name.toLowerCase()),
-    )
+    const unresolvedCandidates = [
+      ...extracted.filter((name) => !resolvedNames.has(name.toLowerCase())),
+      ...bare.ambiguous.filter((name) => !resolvedNames.has(name.toLowerCase())),
+      ...bare.unresolved.filter(
+        (name) =>
+          !resolvedNames.has(name.toLowerCase()) &&
+          !extracted.some((e) => e.toLowerCase() === name.toLowerCase()),
+      ),
+    ]
     // One representative row per resolved candidate, in research
     // order (representativeCandidateRows — the battery B3 rule:
     // places count by place, not by ZIP). The claim that names the

@@ -516,6 +516,7 @@ function chartReferenceSentence(answer: ComposedAnswer): string | null {
   if (kinds.length === 0) return null
   if (kinds.length === 1) {
     const chart = kinds[0]!
+    if (chart.sentence) return chart.sentence
     return `The map shows the places by ${chart.subject}.`
   }
   return `The answer includes ${kinds.map((k) => k.spokenName).join(' and ')}.`

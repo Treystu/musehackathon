@@ -15,6 +15,9 @@ import {
 } from '../../src/core/ratelimit'
 import { ResultMap } from '../../src/ui/map/ResultMap'
 import { ProgressivePlacesMap } from '../../src/ui/map/ProgressivePlacesMap'
+import { SessionMapView } from '../../src/ui/map/SessionMapView'
+import { QualifyingPlacesMap } from '../../src/ui/map/QualifyingPlacesMap'
+import { answerPlaceAnchorId } from '../../src/core/map/result-scale'
 
 /**
  * ResultMap component pins (drive item 13 / plan P6), hermetic: the
@@ -453,4 +456,77 @@ describe('K2 — progressive map at one interim place', () => {
     expect(panel.textContent).toContain('places so far')
     expect(panel.textContent).toContain('Seattle, WA')
   }, 30000)
+})
+
+describe('QualifyingPlacesMap — research-first terminal map (Lane completion K7)', () => {
+  it('marks the card\u2019s places as buttons, and a mark jumps to the place\u2019s card entry', async () => {
+    render(<QualifyingPlacesMap places={SEATTLE_PLACES} />)
+    // A stand-in card entry carrying the anchor the PlaceBlock
+    // renders — appended after the root's first render, which
+    // clears the container, and outside it, as the real card
+    // entry sits outside the map's own subtree.
+    const target = document.createElement('article')
+    target.id = answerPlaceAnchorId('98101')
+    target.tabIndex = -1
+    document.body.appendChild(target)
+    const scrolled = vi.fn()
+    const focused = vi.fn()
+    target.scrollIntoView = scrolled
+    target.focus = focused
+    await flushUntil(
+      () =>
+        container.querySelectorAll('[data-testid="qualifying-places-map"] [role="button"]')
+          .length === 3,
+    )
+    const panel = container.querySelector('[data-testid="qualifying-places-map"]')!
+    expect(panel.textContent).toContain('The places this answer names')
+    expect(panel.textContent).toContain('A place this answer names')
+    const marks = [...panel.querySelectorAll('[role="button"]')]
+    expect(marks[0]!.getAttribute('aria-label')).toContain(
+      'See the details and sources for Seattle, WA',
+    )
+    act(() => {
+      marks[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(scrolled).toHaveBeenCalled()
+    expect(focused).toHaveBeenCalled()
+    target.remove()
+  }, 30000)
+
+  it('county aggregates are not points and never enter the map set', async () => {
+    const counties = [
+      place('county:TX:Travis', 'Travis County, TX', [['median_gross_rent', 1500]], ['78701']),
+      place('98101', 'Seattle, WA', [['median_gross_rent', 2340]]),
+      place('98103', 'Seattle, WA', [['median_gross_rent', 1895]]),
+    ]
+    render(<QualifyingPlacesMap places={counties} />)
+    await flushUntil(
+      () =>
+        container.querySelectorAll('[data-testid="qualifying-places-map"] [role="button"]')
+          .length === 2,
+    )
+    const labels = [...container.querySelectorAll('[role="button"]')].map((b) =>
+      b.getAttribute('aria-label'),
+    )
+    expect(labels.join(' ')).not.toContain('Travis')
+  }, 30000)
+})
+
+describe('SessionMapView — empty state (Lane completion K9)', () => {
+  it('the "See the whole country" button carries the padding that lifts it to the tap-target floor', () => {
+    // DOM census on production 6027031 measured this button at
+    // 20px tall at every audited width — under the 24px floor,
+    // and a standalone button takes no inline-link exception.
+    // jsdom does no layout, so the pin holds the class contract
+    // (py-1 = 8px of vertical padding on the measured 20px box);
+    // the rendered height is re-measured on the deployed build.
+    render(
+      <SessionMapView answer={null} questionText={null} overview={<div>overview</div>} />,
+    )
+    const button = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('See the whole country'),
+    )
+    expect(button).toBeDefined()
+    expect(button!.className).toContain('py-1')
+  })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { AnswerPlace, ComposedAnswer } from '../ai/answer'
 import {
+  answerPlaceAnchorId,
   colorForValue,
   drivingMetricKey,
   eligibleMetricKeys,
@@ -12,10 +13,12 @@ import {
   orderedResultPlaces,
   overflowPlaceNames,
   overflowPlaceSummary,
+  qualifyingPlacesMapRelevant,
   resultMapMode,
   resultMapPlaces,
   resultMapRelevant,
   screeningCoverageLine,
+  terminalChartKinds,
   OVERFLOW_NAME_LIMIT,
 } from './result-scale'
 
@@ -384,5 +387,59 @@ describe('chart relevance (owner rules, 2026-11-03)', () => {
   it('does not render for a single place or a non-verified answer', () => {
     expect(resultMapRelevant(answer({ places: [SEATTLE[0]!] }))).toBe(false)
     expect(resultMapRelevant(answer({ places: SEATTLE, status: 'empty' }))).toBe(false)
+  })
+})
+
+describe('qualifying-places map relevance (Lane completion K7)', () => {
+  it('renders for a research-first candidate answer — the class the choropleth excludes', () => {
+    const a = answer({ places: SEATTLE, researchNamedPlaces: ['Seattle, WA'] })
+    expect(qualifyingPlacesMapRelevant(a)).toBe(true)
+    // The two predicates are mutually exclusive: one map per card.
+    expect(resultMapRelevant(a)).toBe(false)
+  })
+
+  it('does not render for a screen-composed answer (the choropleth path is unchanged)', () => {
+    const a = answer({ places: SEATTLE })
+    expect(qualifyingPlacesMapRelevant(a)).toBe(false)
+    expect(resultMapRelevant(a)).toBe(true)
+  })
+
+  it('needs two pointable places: county aggregates and singletons do not qualify', () => {
+    const counties = [
+      place('county:TX:Travis', 'Travis County, TX', [['median_gross_rent', 1500]], ['78701']),
+      place('county:TX:Hays', 'Hays County, TX', [['median_gross_rent', 1300]], ['78666']),
+    ]
+    expect(
+      qualifyingPlacesMapRelevant(
+        answer({ places: counties, researchNamedPlaces: ['Austin, TX'] }),
+      ),
+    ).toBe(false)
+    expect(
+      qualifyingPlacesMapRelevant(
+        answer({ places: [SEATTLE[0]!], researchNamedPlaces: ['Seattle, WA'] }),
+      ),
+    ).toBe(false)
+    expect(
+      qualifyingPlacesMapRelevant(
+        answer({ places: SEATTLE, researchNamedPlaces: ['Seattle, WA'], status: 'empty' }),
+      ),
+    ).toBe(false)
+  })
+
+  it('the spoken chart derivation names the points map with its own sentence', () => {
+    const kinds = terminalChartKinds(
+      answer({ places: SEATTLE, researchNamedPlaces: ['Seattle, WA'] }),
+    )
+    expect(kinds).toHaveLength(1)
+    expect(kinds[0]!.sentence).toBe('The map shows the places this answer names.')
+    // And the choropleth path keeps its metric-subject form.
+    const screenKinds = terminalChartKinds(answer({ places: SEATTLE }))
+    expect(screenKinds).toHaveLength(1)
+    expect(screenKinds[0]!.sentence).toBeUndefined()
+    expect(screenKinds[0]!.subject).toBe('median gross rent')
+  })
+
+  it('the anchor id is the place\u2019s card-entry id', () => {
+    expect(answerPlaceAnchorId('78701')).toBe('answer-place-78701')
   })
 })

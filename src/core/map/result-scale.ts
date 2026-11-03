@@ -411,6 +411,36 @@ export function resultMapRelevant(answer: ComposedAnswer): boolean {
   return drivingMetricKey(answer) !== null
 }
 
+/**
+ * The qualifying-places map's relevance (Lane completion K7,
+ * owner directive 2026-11-03 02:46 HST: for a geographic set
+ * qualified by a researched attribute, the relevant map plots
+ * the QUALIFYING places, points clickable to full details and
+ * cited sources). This is the sibling chart for exactly the
+ * class resultMapRelevant excludes: a research-first candidate
+ * answer has no screened set and no driving metric, so the
+ * choropleth above stays suppressed — but its geography IS the
+ * content (the named places are the answer), and a points map
+ * of the card's own places is the relevant chart. The two
+ * predicates are mutually exclusive by construction
+ * (researchNamedPlaces stamped / not stamped), so a terminal
+ * mounts at most one map. Conditions: a verified answer; the
+ * research-first stamp; at least two pointable places (a real
+ * ZCTA — county aggregates carry a synthetic key and are not
+ * points; a one-place map is a portrait, not information, the
+ * same floor as the choropleth).
+ */
+export function qualifyingPlacesMapRelevant(answer: ComposedAnswer): boolean {
+  if (answer.status !== 'verified') return false
+  if (answer.researchNamedPlaces === undefined) return false
+  return answer.places.filter((place) => !place.memberZctas).length >= 2
+}
+
+/** The in-card anchor a qualifying map point jumps to: the place's own card entry. */
+export function answerPlaceAnchorId(zcta: string): string {
+  return `answer-place-${zcta}`
+}
+
 /** One chart a terminal render mounts, as the spoken layer names it. */
 export interface TerminalChartKind {
   kind: 'map'
@@ -422,6 +452,13 @@ export interface TerminalChartKind {
    * lowercased for mid-sentence use.
    */
   subject: string
+  /**
+   * The full chart-reference sentence, when the generic
+   * "shows the places by <subject>" composition does not fit the
+   * chart (the qualifying-places map: its subject is the places
+   * themselves, not a variable they are colored by).
+   */
+  sentence?: string
 }
 
 /**
@@ -433,17 +470,31 @@ export interface TerminalChartKind {
  * result map on exactly `answer.status === 'verified' &&
  * resultMapRelevant(answer)` (AnswerCard), and resultMapRelevant
  * already requires the verified status, so this derivation is that
- * mount condition restated as data. Today the map is the only chart
- * kind any answer terminal renders; bar/line kinds slot into this
- * list when a terminal render gains one, and speech picks them up
- * without reshaping. The Map TAB is a view, not a chart the answer
- * created, and is never in this set.
+ * mount condition restated as data. The qualifying-places map
+ * (K7) slots in beside it under its own predicate — the two are
+ * mutually exclusive, so a terminal still mounts at most one
+ * map; bar/line kinds slot into this list when a terminal render
+ * gains one, and speech picks them up without reshaping. The Map
+ * TAB is a view, not a chart the answer created, and is never in
+ * this set.
  */
 export function terminalChartKinds(answer: ComposedAnswer): TerminalChartKind[] {
-  if (!resultMapRelevant(answer)) return []
-  const key = drivingMetricKey(answer)
-  if (!key) return []
-  return [{ kind: 'map', spokenName: 'the map', subject: metricLabel(key).toLowerCase() }]
+  if (resultMapRelevant(answer)) {
+    const key = drivingMetricKey(answer)
+    if (!key) return []
+    return [{ kind: 'map', spokenName: 'the map', subject: metricLabel(key).toLowerCase() }]
+  }
+  if (qualifyingPlacesMapRelevant(answer)) {
+    return [
+      {
+        kind: 'map',
+        spokenName: 'the map',
+        subject: 'the places this answer names',
+        sentence: 'The map shows the places this answer names.',
+      },
+    ]
+  }
+  return []
 }
 
 /**

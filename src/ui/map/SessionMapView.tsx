@@ -49,10 +49,17 @@ export function SessionMapView({
         </p>
         {overview && !overviewShown && (
           <p className="mt-3">
+            {/* py-1 (Lane completion K9): the DOM census on
+                production 6027031 measured this button at 20px
+                tall at every audited width — under the 24px
+                tap-target floor, and a standalone button does
+                not take the inline-link spacing exception. The
+                vertical padding brings the box to ~28px; no other
+                button shares this class string. */}
             <button
               type="button"
               onClick={() => setOverviewShown(true)}
-              className="text-sm font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+              className="py-1 text-sm font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
             >
               See the whole country
             </button>

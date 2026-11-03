@@ -176,13 +176,23 @@ function texasAnswer(partial: Partial<ComposedAnswer> = {}): ComposedAnswer {
 }
 
 describe('class 2: research-first card', () => {
-  it('the conclusion leads, the criterion follows, the shortlist is named; no map, no hook', () => {
+  it('the conclusion leads, the criterion follows, the qualifying-places map is referenced, the shortlist is named; no hook', () => {
+    // Adapted 2026-11-03 (Lane completion K7): this pin's "no map"
+    // clause encoded the A6 outcome — a research-first terminal
+    // mounted no map, so speech referenced none. K7 mounts the
+    // qualifying-places map for exactly this class (owner
+    // directive 2026-11-03 02:46 HST; Jev proceed / 0.04 / 0.97),
+    // and A8's rule — speech references exactly the charts the
+    // terminal mounted — now carries the points-map sentence.
+    // The hook exclusion is unchanged (degraded and research
+    // classes define no hook).
     const spoken = composeSpokenSummary(texasAnswer(), undefined, {
       queryText: 'what city in Texas is the most liberal',
     })
     expect(spoken).toEqual([
       TEXAS_CONCLUSION,
       'Outside-Census criteria: measured.',
+      'The map shows the places this answer names.',
       'The places named for the stated criteria are Crystal City, TX, Marfa, TX, Asherton, TX, and Sebastian, TX.',
     ])
   })
@@ -433,7 +443,17 @@ describe('the hook', () => {
 /* ------------------------------------------------------------------ */
 
 describe('chart-reference exactness (rendered set == referenced set)', () => {
-  const shapes: Array<[string, ComposedAnswer, boolean]> = [
+  // Adapted 2026-11-03 (Lane completion K7): the matrix now
+  // tracks the two map predicates separately — the metric
+  // choropleth (resultMapRelevant, unchanged) and any terminal
+  // map (terminalChartKinds / the spoken reference). Before K7
+  // the two coincided on every shape; the research-named row is
+  // where they now divide, by design: its choropleth stays
+  // suppressed (A6 outcome, unchanged) while the
+  // qualifying-places map renders and is referenced. The
+  // invariant this block exists for — the referenced set equals
+  // the rendered set — is asserted exactly as before, per map.
+  const shapes: Array<[string, ComposedAnswer, boolean, boolean]> = [
     [
       'verified screen, 2+ places, driving metric',
       baseAnswer({
@@ -444,11 +464,13 @@ describe('chart-reference exactness (rendered set == referenced set)', () => {
         criterionEvidence: [RENT_EVIDENCE],
       }),
       true,
+      true,
     ],
     [
-      'research-named set (map suppressed by the A6 outcome)',
+      'research-named set (choropleth suppressed by the A6 outcome; qualifying-places map renders — K7)',
       texasAnswer(),
       false,
+      true,
     ],
     [
       'single place',
@@ -456,6 +478,7 @@ describe('chart-reference exactness (rendered set == referenced set)', () => {
         places: [place('Hilo, HI', '96720', [{ key: 'median_gross_rent', value: 1450 }])],
         criterionEvidence: [RENT_EVIDENCE],
       }),
+      false,
       false,
     ],
     [
@@ -465,24 +488,27 @@ describe('chart-reference exactness (rendered set == referenced set)', () => {
         places: [place('A, ST', '00001', []), place('B, ST', '00002', [])],
       }),
       false,
+      false,
     ],
     [
       'flexible (never mapped as Census places)',
       baseAnswer({ status: 'flexible', criteria: [], flexible: { prose: 'A conclusion.', places: [], figures: [] } }),
+      false,
       false,
     ],
     [
       'withheld',
       baseAnswer({ status: 'withheld' }),
       false,
+      false,
     ],
   ]
-  for (const [name, shape, renders] of shapes) {
+  for (const [name, shape, choroplethRenders, anyMapRenders] of shapes) {
     it(name, () => {
-      expect(resultMapRelevant(shape)).toBe(renders)
-      expect(terminalChartKinds(shape).length).toBe(renders ? 1 : 0)
+      expect(resultMapRelevant(shape)).toBe(choroplethRenders)
+      expect(terminalChartKinds(shape).length).toBe(anyMapRenders ? 1 : 0)
       const spoken = composeSpokenSummary(shape)
-      expect(spoken.some((s) => s.includes('The map shows'))).toBe(renders)
+      expect(spoken.some((s) => s.includes('The map shows'))).toBe(anyMapRenders)
     })
   }
 })

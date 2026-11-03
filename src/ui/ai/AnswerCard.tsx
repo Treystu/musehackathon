@@ -6,9 +6,14 @@ import type {
   ResearchedClaim,
 } from '../../core/ai/answer'
 import { METRIC_DEFS_BY_KEY } from '../../core/civicscope-registry'
-import { resultMapRelevant } from '../../core/map/result-scale'
+import {
+  answerPlaceAnchorId,
+  qualifyingPlacesMapRelevant,
+  resultMapRelevant,
+} from '../../core/map/result-scale'
 import { formatMetricNumber } from '../metric-format'
 import { ResultMap } from '../map/ResultMap'
+import { QualifyingPlacesMap } from '../map/QualifyingPlacesMap'
 import { FlexibleAnswer } from './FlexibleAnswer'
 import { HelpTip } from './HelpTip'
 import { measureLabel } from './plain-labels'
@@ -359,7 +364,11 @@ function PlaceBlock({
   sourceVisibility?: Map<ResearchedClaim, string[]>
 }) {
   return (
-    <article className="mt-4 border-t border-slate-100 pt-4">
+    <article
+      id={answerPlaceAnchorId(place.zcta)}
+      tabIndex={-1}
+      className="mt-4 border-t border-slate-100 pt-4"
+    >
       <h3 className="text-lg font-semibold leading-snug text-slate-900">
         {place.name}{' '}
         <span className="text-sm font-normal tabular-nums text-slate-500">
@@ -725,14 +734,25 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
         for it today, so a tap on the map shows that place's card
         figures in the map's own panel (the P6 requirement) rather
         than selecting for comparison.
-        CHART RELEVANCE (owner standing rules, 2026-11-03): the mount
-        is gated by resultMapRelevant — the map renders only when the
-        answer's geography is itself the information (a screen over
-        an area). A research-first candidate answer gets no in-card
-        map: its answer is the ranked candidate list above, and the
-        Map view remains where its geography can be opened.
+        CHART RELEVANCE (owner standing rules, 2026-11-03): the
+        choropleth mount is gated by resultMapRelevant — it renders
+        only when the answer's geography is itself the information
+        (a screen over an area) and a metric drives its colors.
+        QUALIFYING-PLACES MAP (Lane completion K7, owner directive
+        2026-11-03 02:46 HST): a research-first candidate answer is
+        excluded from that choropleth (no screened set, no metric),
+        and instead mounts the points map of its own named places
+        under qualifyingPlacesMapRelevant — the two predicates are
+        mutually exclusive, so a card mounts at most one map. The
+        points map receives the card's shown places in card order;
+        its marks jump to the PlaceBlock anchors above.
       */}
       {answer.status === 'verified' && resultMapRelevant(answer) && <ResultMap answer={answer} />}
+      {answer.status === 'verified' && qualifyingPlacesMapRelevant(answer) && (
+        <QualifyingPlacesMap
+          places={orderedPlaces(answer).slice(0, ANSWER_CARD_PLACE_LIMIT)}
+        />
+      )}
     </section>
   )
 }

@@ -543,3 +543,104 @@ describe('partial research tolerance', () => {
     ])
   })
 })
+
+/* ------------------------------------------------------------------ */
+/* Screen-path total research failure degrade (2026-11-02)             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The screen-path compose throw (owner live finding, 2026-11-02
+ * ~18:03 HST): "Where is the best schools and lowest cost of living
+ * in Arkansas?" screened AR by median gross rent — the screen
+ * succeeded and rendered — and then the Answer block showed the
+ * bare compose-failed note. Diagnosis (drive-scratch RESULTS): the
+ * question decomposes to exactly ONE researched pass (schools;
+ * cost of living decomposes onto median_gross_rent), and
+ * researchPerCriterion's zero-success rethrow — correct on the
+ * research-first path, where research is the only leg — propagated
+ * out of the screen path's stage 3 and discarded a complete Census
+ * screen. The cure: the screen path asks for the total-failure
+ * degrade (the failed criterion is recorded and composes onto the
+ * card as a lookup failure); the research-first path keeps the
+ * throw, exactly as the flexible-trigger cure dispositioned it.
+ */
+describe('screen-path research failure degrade', () => {
+  const AR_QUESTION = 'Where is the best schools and lowest cost of living in Arkansas?'
+  const AR_ROWS: AreaRow[] = [
+    { zcta: '71601', name: 'Pine Bluff, AR', metrics: { median_gross_rent: 750 }, moes: { median_gross_rent: 40 } },
+    { zcta: '71901', name: 'Hot Springs, AR', metrics: { median_gross_rent: 890 }, moes: { median_gross_rent: 55 } },
+    { zcta: '72201', name: 'Little Rock, AR', metrics: { median_gross_rent: 1050 }, moes: { median_gross_rent: 60 } },
+    { zcta: '72701', name: 'Fayetteville, AR', metrics: { median_gross_rent: 1150 }, moes: { median_gross_rent: 70 } },
+  ]
+  const AR_SCREEN: ValidatedIntent = {
+    mode: 'sweep_filter',
+    geographies: ['AR'],
+    metricKeys: ['median_gross_rent'],
+    filters: [],
+    clarificationNeeded: false,
+  }
+  const downProvider = () =>
+    createStubProvider({
+      research: async () => {
+        throw new Error('provider_down')
+      },
+    })
+
+  it('the degrade posture returns empty material with every researched failure recorded', async () => {
+    const result = await researchPerCriterion(
+      downProvider(),
+      [],
+      decomposeResearchCriteria(SENTENCE_1),
+      SENTENCE_1,
+      new AbortController().signal,
+      { tolerateTotalFailure: true },
+    )
+    expect(result.prose).toBe('')
+    expect(result.claims).toEqual([])
+    expect(result.sources).toEqual([])
+    expect(result.failedCriteria).toEqual(['School quality', 'Fast food restaurants'])
+  })
+
+  it('the Arkansas screen composes its card with the schools lookup recorded as failed', async () => {
+    const answer = await runAnswerPipeline({
+      intent: AR_SCREEN,
+      rows: AR_ROWS,
+      geographyZctas: new Set(AR_ROWS.map((r) => r.zcta)),
+      researchQuery: AR_QUESTION,
+      queryText: AR_QUESTION,
+      provider: downProvider(),
+    })
+    expect(answer.status).toBe('verified')
+    // The screen's own order: lowest median gross rent first.
+    expect(answer.places.map((p) => p.name)).toEqual([
+      'Pine Bluff, AR',
+      'Hot Springs, AR',
+      'Little Rock, AR',
+      'Fayetteville, AR',
+    ])
+    expect(answer.researchFailures).toEqual(['School quality'])
+    const schools = answer.criterionEvidence.find((e) => e.criterion === 'School quality')
+    expect(schools?.status).toBe('not_measurable')
+    expect(schools?.detail).toContain('did not return')
+    // The decomposed cost criterion is assessed from the figures,
+    // measured — the degrade touches only the failed lookup.
+    const cost = answer.criterionEvidence.find((e) => e.criterion === 'Cost of living')
+    expect(cost?.status).toBe('met')
+    // The summary names the unmeasured criterion; it never claims
+    // the stated criteria were all met.
+    expect(answer.summary).toContain('Not measured here')
+    expect(answer.summary).toContain('School quality')
+  })
+
+  it('the research-first path still throws on total research failure — the boundary stands', async () => {
+    await expect(
+      runAnswerPipeline({
+        intent: EXTERNAL_ONLY,
+        rows: ROWS,
+        researchQuery: SENTENCE_1,
+        queryText: SENTENCE_1,
+        provider: downProvider(),
+      }),
+    ).rejects.toThrow('provider_down')
+  })
+})

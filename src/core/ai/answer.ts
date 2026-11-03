@@ -856,9 +856,12 @@ export interface ResearchStageResult {
   sources: AnswerSource[]
   claims: ResearchedClaim[]
   /**
-   * Labels of criteria whose research pass FAILED after at least one
+   * Labels of criteria whose research pass FAILED — after a sibling
    * pass had already returned material (partial tolerance in
-   * researchPerCriterion, 2026-11-02). Absent when every pass
+   * researchPerCriterion, 2026-11-02), or, on the screen path only,
+   * with no pass returning at all (the total-failure degrade,
+   * 2026-11-02: the completed Census screen carries the card and
+   * every failed lookup is recorded on it). Absent when every pass
    * returned. A failed criterion is accounted on the card as not
    * measured, with the lookup's failure stated — never as if
    * research had run and found nothing.
@@ -920,6 +923,20 @@ export async function researchPerCriterion(
   criteria: readonly ResearchCriterion[],
   researchQuery: string,
   signal: AbortSignal,
+  options?: {
+    /**
+     * The caller's posture toward a TOTAL research failure — every
+     * pass down, no material gathered. Default (research-first):
+     * the failure rethrows, because research is that path's only
+     * leg and the honest note is its terminal. The screen path
+     * passes true: a completed Census screen can carry the card on
+     * its own, so a total failure degrades onto it — every
+     * researched criterion recorded in failedCriteria — instead of
+     * discarding the screen. A partial failure (some pass returned)
+     * is tolerated under either posture.
+     */
+    tolerateTotalFailure?: boolean
+  },
 ): Promise<ResearchStageResult> {
   const sources: AnswerSource[] = []
   const claims: ResearchedClaim[] = []
@@ -943,11 +960,27 @@ export async function researchPerCriterion(
     // failure rethrows exactly as before: research is down, no named
     // material exists to ground anything on, and the honest note is
     // the terminal by design.
+    //
+    // Total-failure degrade (2026-11-02, screen-path compose throw):
+    // that rethrow is the RESEARCH-FIRST path's contract, where
+    // research is the only leg. The screen path composes over a
+    // completed Census screen, and the same rethrow discarded it
+    // whole: the owner's "best schools and lowest cost of living in
+    // Arkansas?" carries exactly ONE researched pass (schools; cost
+    // of living decomposes onto median_gross_rent), so a provider
+    // flap during that pass killed a compose whose screen material
+    // was complete — the rendered screen above a compose-failed
+    // note. When the caller passes tolerateTotalFailure (the screen
+    // path only), a failure with no material yet is recorded like
+    // any other failed pass and the loop continues; if no pass
+    // returns, the stage result is empty material with every
+    // researched criterion in failedCriteria, and compose accounts
+    // each one on the card as a lookup that did not return.
     let result: ResearchResult
     try {
       result = await provider.research({ queryText: researchQuery, places: [...places] }, signal)
     } catch (err) {
-      if (proseParts.length === 0) throw err
+      if (proseParts.length === 0 && !options?.tolerateTotalFailure) throw err
       failedCriteria.push(researched[pass]!.label)
       continue
     }
@@ -2160,6 +2193,15 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // that did not run).
     input.onStage?.('research', researchSubject)
     const capped = effectiveScreen.rows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
+    // This stage runs only over a non-empty screen, so Census
+    // material exists that can carry the card on its own: a total
+    // research failure degrades onto the card as recorded lookup
+    // failures (tolerateTotalFailure — see researchPerCriterion),
+    // where the research-first call above deliberately keeps the
+    // rethrow, research being its only leg. The single-pass legacy
+    // shape degrades the same way; it carries no decomposed
+    // criterion, so there is no label for the stage result to
+    // record — the card is the screen's, with no research claims.
     research =
       researchCriteria.length > 0
         ? await researchPerCriterion(
@@ -2168,8 +2210,11 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
             researchCriteria,
             input.researchQuery,
             signal,
+            { tolerateTotalFailure: true },
           )
-        : await researchScreened(input.provider, capped, input.researchQuery, signal)
+        : await researchScreened(input.provider, capped, input.researchQuery, signal).catch(
+            (): ResearchStageResult => ({ prose: '', sources: [], claims: [] }),
+          )
   }
 
   // Stage 4: compose. The state aggregates ride the countyMeta seam:

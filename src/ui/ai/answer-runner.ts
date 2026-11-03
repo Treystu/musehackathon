@@ -742,9 +742,13 @@ export async function evaluateDecisionProposal(input: {
  * note in the card's blocked words — on the research-first handoff
  * path nothing upstream speaks for a blocked composition, and a
  * silent null there was one half of the Round 11 dead-end.
- * Research failures propagate to the caller, which likewise renders
- * them as the answer area's note and records the failure class in
- * diagnostics; no terminal state of this pipeline is silent.
+ * Research failures on the research-first path propagate to the
+ * caller, which likewise renders them as the answer area's note
+ * and records the failure class in diagnostics; on the screen path
+ * a research failure degrades inside the pipeline onto the Census
+ * card as a recorded lookup failure and never reaches the caller
+ * (answer.ts, total-failure degrade, 2026-11-02). No terminal
+ * state of this pipeline is silent.
  */
 export async function composeAnswerForRequest(input: {
   intent: ValidatedIntent

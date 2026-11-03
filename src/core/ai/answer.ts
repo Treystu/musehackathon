@@ -525,9 +525,9 @@ export interface StateAggregateGeography {
  * the metered, slow stage; the card itself shows at most this many
  * places before deferring to the screening table (AnswerCard's
  * ANSWER_CARD_PLACE_LIMIT is the same number, deliberately — a place
- * the card cannot show should not spend a research pass). When a
- * screen leaves more survivors than this, research covers the first
- * cap-many in screen order and the answer discloses the cap.
+ * the card cannot show should not spend a research pass). When a screen
+ * leaves more survivors than this, research covers the first cap-many
+ * in screen order and the answer discloses the cap. This number is also the research request's places ceiling (RESEARCH_PLACES_LIMIT in meta-client.ts, which the route validates against): when the two diverged — cap 10, route 8 — every full screen's research pass was refused as a shape error and recorded as a lookup that "did not return" (measured 2026-11-02); a test pins cap <= limit.
  */
 export const SCREENED_RESEARCH_CANDIDATE_CAP = 10
 

@@ -78,6 +78,24 @@ export const PROXY_ALLOWED_MODELS: readonly string[] = [
 /** Ceiling mirrored from the proxy's intent parser, so the two cannot drift. */
 export const MAX_INTENT_QUERY_CHARS = 500
 
+/**
+ * The most place names one research request may carry. ONE constant
+ * for both sides of the seam: the pipeline's screened-research
+ * candidate cap (SCREENED_RESEARCH_CANDIDATE_CAP in answer.ts) sends
+ * up to this many names, the research route validates against this
+ * same value, and the providers below slice to it before sending.
+ * The two sides diverged once (measured 2026-11-02, owner live runs
+ * 18:03 and 23:42 HST): the cap sent 10 names while the route's own
+ * ceiling was 8, so every screen returning 9-10 rows had its
+ * research pass refused with a 400 shape error before any upstream
+ * call — recorded on the card as "the research lookup for this
+ * criterion did not return" — while narrower screens and placeless
+ * research-first questions, which send fewer names, worked. Probes
+ * against the live route that night: 10 places -> 400 in ~1s;
+ * 8 places -> 200; no places -> 200.
+ */
+export const RESEARCH_PLACES_LIMIT = 10
+
 /** Errors after which the BYO path is the honest next attempt. */
 const BYO_FALLBACK_ERRORS: ReadonlySet<ProxyError> = new Set([
   'budget_exhausted',
@@ -696,9 +714,13 @@ export function createMetaDirectProvider(
     },
 
     async research(req: ResearchRequest, signal: AbortSignal): Promise<ResearchResult> {
+      // Sliced to the shared limit (see RESEARCH_PLACES_LIMIT): a
+      // caller carrying more names than the route accepts degrades
+      // to the leading names instead of a shape refusal.
+      const scopedPlaces = (req.places ?? []).slice(0, RESEARCH_PLACES_LIMIT)
       const places =
-        req.places && req.places.length > 0
-          ? `\nPlaces the question names: ${req.places.join(', ')}`
+        scopedPlaces.length > 0
+          ? `\nPlaces the question names: ${scopedPlaces.join(', ')}`
           : ''
       const reply = await respond(
         {
@@ -968,7 +990,7 @@ export function createLiveProvider(options: LiveProviderOptions = {}): MuseProvi
       try {
         const reply = await viaProxy<{ prose?: unknown; sources?: unknown }>(
           '/api/muse/research',
-          { queryText: req.queryText, places: req.places ?? [] },
+          { queryText: req.queryText, places: (req.places ?? []).slice(0, RESEARCH_PLACES_LIMIT) },
           signal,
         )
         return parseResearchReply(reply)

@@ -24,13 +24,18 @@
  * and grounding here is a search.
  */
 import { findBannedConstruction } from '../../../src/core/ai/validator'
-import { MUSE_SPARK_MODEL } from '../../../src/core/ai/meta-client'
+import { MUSE_SPARK_MODEL, RESEARCH_PLACES_LIMIT } from '../../../src/core/ai/meta-client'
 import { preCallGate, mapProviderError, attemptCall, accountCall, accountSearches, accountError, accountFailure, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
 const ALLOWED_PATHS = new Set(['/api/muse/research'])
 const MAX_QUERY_CHARS = 500
-const MAX_PLACES = 8
+// The shared seam constant, not a local number: this ceiling sat at
+// 8 while the client's screened-research cap sent 10, and every
+// 9-10-place research pass was refused here as shape_invalid before
+// any upstream call (measured 2026-11-02; see RESEARCH_PLACES_LIMIT
+// in meta-client.ts). The two values are one contract.
+const MAX_PLACES = RESEARCH_PLACES_LIMIT
 const MAX_PLACE_CHARS = 120
 const ACTUAL_COST_MICRO = 5000
 const ACTUAL_TOKENS_IN = 256

@@ -279,9 +279,10 @@ describe('F-C run-with-default', () => {
   // on the default, clicked to run. C2 removed that confirm step:
   // the F-C outcome is unchanged (a geography with no measure runs
   // on the disclosed domain default), but it now happens on the
-  // completing pick itself, or at mount when no pick is on offer.
-  // The blocked cases keep their one-line hints, asserted below
-  // alongside the absence of any confirm button.
+  // completing pick itself — a place toggle into a measure-less
+  // set, or the default measure's own chip. The blocked cases keep
+  // their one-line hints, asserted below alongside the absence of
+  // any confirm button.
   function confirmButton() {
     return [...container.querySelectorAll('button')].find(
       (b) => b.textContent === 'Use these choices',
@@ -298,18 +299,18 @@ describe('F-C run-with-default', () => {
     const onResolve = vi.fn()
     render(
       <ClarificationPanel
-        intent={{ ...clarifying, geographies: ['Anchorage, AK'] }}
-        candidates={{ geographies: [], metricKeys: [] }}
+        intent={clarifying}
+        candidates={{ geographies: ['Anchorage, AK'], metricKeys: [...DISPLAYABLE_KEYS] }}
         onResolve={onResolve}
       />,
     )
     await flush()
-    const text = renderedLabels()
-    // The default is disclosed before anything runs, in plain words.
-    expect(text).toContain('median gross rent')
     expect(confirmButton()).toBeUndefined()
-    // No measure is on offer, so nothing is left to pick: the
-    // default completes the set at mount, with no click at all.
+    expect(onResolve).not.toHaveBeenCalled()
+    // The place pick is the completing toggle: no measure is held
+    // anywhere, so the F-C default measure completes the set and
+    // the toggle itself runs it — no confirm click follows.
+    clickChip('Anchorage, AK')
     expect(onResolve).toHaveBeenCalledTimes(1)
     const resolved = onResolve.mock.calls[0]![0] as ValidatedIntent
     expect(resolved.geographies).toEqual(['Anchorage, AK'])
@@ -328,10 +329,13 @@ describe('F-C run-with-default', () => {
     )
     await flush()
     expect(confirmButton()).toBeUndefined()
-    // Measures are on offer here, so the mount does not pre-empt the
-    // pick; choosing the default measure itself is the completing
-    // pick and runs the sweep on it.
+    // The default is disclosed before anything runs, in plain
+    // words: with a place held and no measure, the hint line names
+    // the measure a no-measure completion runs on.
+    expect(renderedLabels()).toContain('No measure chosen, so this runs on median gross rent')
     expect(onResolve).not.toHaveBeenCalled()
+    // Choosing the default measure itself is the completing pick
+    // and runs the sweep on it.
     clickChip('Median gross rent')
     expect(onResolve).toHaveBeenCalledTimes(1)
     const resolved = onResolve.mock.calls[0]![0] as ValidatedIntent

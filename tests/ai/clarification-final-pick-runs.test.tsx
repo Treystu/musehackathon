@@ -12,12 +12,12 @@ import { IntentEditor } from '../../src/ui/ai/IntentEditor'
  * C2: the clarification panel used to end every flow with a
  * "Use these choices" click that re-confirmed picks already made.
  * The cure: the toggle that makes the merged set runnable runs it
- * (including the F-C default-measure path), and picks already
- * complete at mount run with no click at all when nothing is left
- * on offer — a measure still on offer is a pending pick, and the
- * mount never pre-empts it with the default. The button is gone;
- * the hint line remains as the not-runnable state's carrier, with
- * its copy unchanged.
+ * (including the F-C default-measure path). Firing is toggle-only —
+ * nothing runs at mount, because a mount cannot distinguish a
+ * fresh parse from the reader's own chip removal upstairs, and
+ * auto-running after a removal would override it. The button is
+ * gone; the hint line remains as the not-runnable state's carrier,
+ * with its copy unchanged.
  *
  * C3: while the panel is mounted there is exactly one editing
  * surface — the IntentEditor's add-forms are suppressed (its
@@ -106,10 +106,10 @@ describe('C2: the final pick runs', () => {
     expect(onResolve).toHaveBeenCalledTimes(1)
   })
 
-  it('picks already complete at mount run with no click at all — when nothing is left on offer', () => {
-    // The held place is the only candidate and no measures are on
-    // offer, so there is no pending pick a mount-run could pre-empt:
-    // the F-C default completes the set by itself.
+  it('nothing runs at mount, even when the held picks would complete on the default', () => {
+    // Toggle-only firing: a panel that (re)mounts because the
+    // reader removed a chip in the editor must not auto-run the
+    // request they just edited down. The run waits for a pick.
     const onResolve = renderPanel(
       {
         mode: 'lookup',
@@ -122,12 +122,10 @@ describe('C2: the final pick runs', () => {
       undefined,
       { geographies: ['Anchorage, AK'], metricKeys: [] },
     )
-    expect(onResolve).toHaveBeenCalledTimes(1)
-    const resolved = onResolve.mock.calls[0]![0] as ValidatedIntent
-    expect(resolved.metricKeys).toEqual(['median_gross_rent'])
+    expect(onResolve).not.toHaveBeenCalled()
   })
 
-  it('mount does NOT pre-empt a pending pick: held places with a measure still on offer wait for the toggle', () => {
+  it('held places with a measure still on offer wait for the toggle, which runs both places', () => {
     const onResolve = renderPanel({
       mode: 'lookup',
       geographies: ['Springfield, IL', 'Springfield, MO'],

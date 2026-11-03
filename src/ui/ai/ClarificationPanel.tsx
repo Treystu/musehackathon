@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   canResolveClarification,
   resolveClarification,
@@ -36,13 +36,11 @@ const ERROR_COPY: Record<string, string> = {
 
 /**
  * Candidate picker. The picks ARE the decision (item-16 cure C2):
- * the toggle that makes the merged set runnable runs it, and picks
- * already complete at mount run on their own when nothing is left
- * on offer — there is no separate confirm step re-asking for a
- * decision the reader just made. The hint line below remains as
- * the not-runnable state's carrier: it says what is still missing,
- * and, on the F-C path, discloses the default measure before
- * anything runs.
+ * the toggle that makes the merged set runnable runs it — there is
+ * no separate confirm step re-asking for a decision the reader
+ * just made. The hint line below remains as the not-runnable
+ * state's carrier: it says what is still missing, and, on the F-C
+ * path, discloses the default measure before anything runs.
  */
 export function ClarificationPanel({
   intent,
@@ -117,10 +115,9 @@ export function ClarificationPanel({
 
   /**
    * Runs the merged picks if — and only if — they are runnable,
-   * exactly once per panel instance. Called on mount (picks the
-   * parse already completed need no click) and from every toggle
-   * with the toggle's own resulting picks, so the deciding toggle
-   * is the run.
+   * exactly once per panel instance. Called from every toggle with
+   * the toggle's own resulting picks, so the deciding toggle is
+   * the run.
    */
   function tryResolve(nextGeographies: string[], nextMetricKeys: string[]) {
     if (resolvedRef.current) return
@@ -159,22 +156,14 @@ export function ClarificationPanel({
     setError(ERROR_COPY[result.error] ?? 'That choice is not valid.')
   }
 
-  // Picks already complete at mount run on mount — but only when
-  // nothing is left on offer. If candidate places or measures
-  // remain unpicked, the reader's pick is still pending and firing
-  // now would pre-empt it with the F-C default (the Springfield
-  // shape: two held cities, a measure still to choose). When no
-  // candidates remain, the panel exists only because the parse
-  // flagged clarification, not because anything is choosable, and
-  // making the reader click to confirm picks the parse already
-  // holds was the double confirmation C2 removes.
-  useEffect(() => {
-    if (places.length === 0 && metrics.length === 0) {
-      tryResolve(geographies, metricKeys)
-    }
-    // Mount-only by design: later changes flow through the toggles.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // Nothing runs at mount, by design: firing is toggle-only (the
+  // audit's C2 wording — the toggle that makes the set runnable is
+  // the run). A mount-fire cannot distinguish a fresh parse settling
+  // into clarification from the reader's own chip removal in the
+  // editor above sending the intent back here — and auto-running
+  // the second case, on a default measure the reader never picked,
+  // would override the removal they just made (the spec-gaps
+  // chip-removal pins measure exactly that regression).
 
   function togglePlace(value: string) {
     const next = geographies.includes(value)

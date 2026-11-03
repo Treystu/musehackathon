@@ -324,7 +324,13 @@ describe('Map = session results (item 17c)', () => {
     expect(text).toContain('2 places from your last answer')
     expect(text).toContain('colored by Median gross rent')
     // The shipped ResultMap machinery is what draws it.
-    expect(text).toContain('Show the map for this answer')
+    // REVISED PIN (item-16 cure C4, 2026-11-02): this asserted the
+    // ResultMap's "Show the map for this answer" gate button as the
+    // machinery's tell. C4 removed that button — the load starts on
+    // mount — so the tell is now the machinery's own loading line,
+    // and the gate button's absence is asserted with it.
+    expect(text).toContain('Loading the map for this answer')
+    expect(text).not.toContain('Show the map for this answer')
 
     const homeIntent: ValidatedIntent = {
       mode: 'sweep_filter',

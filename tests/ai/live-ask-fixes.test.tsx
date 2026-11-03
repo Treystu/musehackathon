@@ -370,13 +370,6 @@ describe('live ask: no research status line while blocked in clarification', () 
         provider={provider}
         onExecute={() => ''}
         onAnswerRequest={() => {}}
-        // Production wiring (App passes the full measure list): a
-        // measure pick stays on offer, so the panel remains in
-        // clarification for this test's subject. Without candidates
-        // the panel would have nothing left to offer and — since
-        // item-16 cure C2 — would run the held places on the F-C
-        // default measure at mount instead of staying blocked.
-        clarificationCandidates={{ geographies: [], metricKeys: ['median_gross_rent'] }}
         parseRetryDelaysMs={[]}
       />,
     )

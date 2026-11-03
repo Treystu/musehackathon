@@ -1547,13 +1547,38 @@ const WHERE_COUNTY_RE = /\bwhere\b[^?]*\bcounty\b/i
  * "What's the median household income in Boulder County?" is a
  * county lookup, and it stays one.
  */
+/** A geography string that IS a county ("Boulder County, CO"),
+ * as opposed to a place string that merely mentions one
+ * ("Hilo, Hawaii County, HI"): the county is the geography's
+ * first comma segment, not a later qualifier. */
+function isCountyGeography(geography: string): boolean {
+  const firstSegment = geography.split(',')[0]?.trim() ?? ''
+  return /\bcounty$/i.test(firstSegment)
+}
+
 export function requestsCountyLevel(queryText: string | undefined, intent: ValidatedIntent): boolean {
   if (queryText && /\bcounty\b|\bcounties\b/i.test(queryText)) {
     if (COUNTY_SUBJECT_RE.test(queryText)) return true
     if (PLACE_FRAME_RE.test(queryText) || WHERE_COUNTY_RE.test(queryText)) return false
     return true
   }
-  return intent.geographies.some((g) => /\bcounty\b/i.test(g))
+  // No county in the question text: the county level may still be
+  // the intent's own shape — but only when the intent is an
+  // all-county intent (a county lookup, a county comparison, an
+  // editor-built county intent). The earlier any-match rule let a
+  // model intent parse that expanded ONE named place into its
+  // county ("Hilo, Hawaii County, HI" beside "East Honolulu, HI")
+  // flip a two-place comparison to county level, where the figures
+  // become aggregates over whatever screen rows are loaded —
+  // measured 2026-11-03: the same Hilo/East Honolulu comparison
+  // returned three different figure pairs in one day, and only the
+  // place-level reading matched the published Census rows. A named
+  // place resolves at place level; the county level is a property
+  // of the question, or of an intent that names counties only.
+  return (
+    intent.geographies.length > 0 &&
+    intent.geographies.every((g) => isCountyGeography(g))
+  )
 }
 
 const COUNT_WORDS: Readonly<Record<string, number>> = {

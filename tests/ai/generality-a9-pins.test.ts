@@ -653,6 +653,32 @@ describe('A9 pins — county shape (FM-10 / F1)', () => {
     expect(requestsCountyLevel('Where in Hawaii County is rent cheapest?', bare)).toBe(false)
   })
 
+  it('requestsCountyLevel: a stray county string in a place intent never flips the level', async () => {
+    const { requestsCountyLevel } = await import('../../src/core/ai/answer')
+    // The 2026-11-03 specimen (three figure pairs for one question
+    // in a day): with no county in the question text, the model
+    // intent parse expanded one named place into its county — as a
+    // sibling geography, and inside the place string itself. Both
+    // shapes are place intents and resolve at place level.
+    const question = 'Which is cheaper, Hilo or East Honolulu?'
+    const keys = ['median_gross_rent', 'median_home_value']
+    expect(
+      requestsCountyLevel(question, intent({ mode: 'compare', geographies: ['Hilo, HI', 'Honolulu County, HI'], metricKeys: keys })),
+    ).toBe(false)
+    expect(
+      requestsCountyLevel(question, intent({ mode: 'compare', geographies: ['Hilo, Hawaii County, HI', 'East Honolulu, HI'], metricKeys: keys })),
+    ).toBe(false)
+    // An all-county intent keeps the county level even when the
+    // question text never says the word (county lookup, county
+    // comparison, editor-built intent).
+    expect(
+      requestsCountyLevel(question, intent({ mode: 'lookup', geographies: ['Boulder County, CO'], metricKeys: keys })),
+    ).toBe(true)
+    expect(
+      requestsCountyLevel(question, intent({ mode: 'compare', geographies: ['Denver County, CO', 'Boulder County, CO'], metricKeys: keys })),
+    ).toBe(true)
+  })
+
   it('the F1 shape composes places in the county, not the county aggregate', async () => {
     const rows = [
       row('96720', 'Hilo, HI', 1346),
@@ -674,5 +700,54 @@ describe('A9 pins — county shape (FM-10 / F1)', () => {
     expect(answer.countyMethod).toBeNull()
     expect(answer.places.map((p) => p.name)).not.toContain('Hawaii County')
     expect(answer.places[0]!.name).toBe('Keaau, HI')
+  })
+
+  it('the specimen comparison composes the two places at place level, whatever the intent parse adds', async () => {
+    // The three-readings specimen end to end: the rows are the
+    // published ACS 2023 ZCTA rows (96720 rent 1346 / value 458100,
+    // 96821 rent 2946 / value 1457700 — the one reading of the
+    // three that matches published Census data), and a second
+    // Hawaii County member rides along so a county aggregate over
+    // the screen would produce a different figure and be caught.
+    const rows = [
+      row('96720', 'Hilo, HI', 1346, { median_home_value: 458100, population: 45000, households: 16000 }),
+      row('96778', 'Pahoa, HI', 1750, { median_home_value: 320000, population: 12000, households: 4500 }),
+      row('96821', 'East Honolulu, HI', 2946, { median_home_value: 1457700, population: 50000, households: 19000 }),
+    ]
+    const countyOf: Record<string, string> = {
+      '96720': 'Hawaii County',
+      '96778': 'Hawaii County',
+      '96821': 'Honolulu County',
+    }
+    const assignments = new Map(
+      rows.map((r) => [r.zcta, { name: countyOf[r.zcta]!, state: 'Hawaii' }]),
+    )
+    const answer = await runAnswerPipeline({
+      intent: intent({
+        mode: 'compare',
+        geographies: ['Hilo, Hawaii County, HI', 'East Honolulu, HI'],
+        metricKeys: ['median_gross_rent', 'median_home_value'],
+      }),
+      rows,
+      geographyZctas: new Set(['96720', '96821']),
+      queryText: 'Which is cheaper, Hilo or East Honolulu?',
+      countyAssignments: assignments,
+      provider: createStubProvider(),
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.geographyLevel).toBe('place')
+    expect(answer.countyMethod).toBeNull()
+    // The places are the two named places' own rows — no county
+    // aggregate place, no member-ZCTA synthetic row — and the
+    // figures are the ZCTA rows' figures exactly.
+    expect(answer.places.map((p) => p.zcta).sort()).toEqual(['96720', '96821'])
+    for (const place of answer.places) expect(place.memberZctas).toBeUndefined()
+    const figures = new Map(
+      answer.places.map((p) => [p.zcta, new Map(p.figures.map((f) => [f.key, f.value]))]),
+    )
+    expect(figures.get('96720')?.get('median_gross_rent')).toBe(1346)
+    expect(figures.get('96720')?.get('median_home_value')).toBe(458100)
+    expect(figures.get('96821')?.get('median_gross_rent')).toBe(2946)
+    expect(figures.get('96821')?.get('median_home_value')).toBe(1457700)
   })
 })

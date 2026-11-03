@@ -305,8 +305,15 @@ describe('bookend verdicts and packets', () => {
       placeDisplayLimit: 10,
     })
     expect(estimateTokens(JSON.stringify(verify))).toBeLessThanOrEqual(VERIFY_PACKET_TOKEN_BUDGET)
-    // Places beyond the display limit compress to a count (plan C5).
-    expect((verify as { additionalPlaces?: number }).additionalPlaces).toBe(20)
+    // Places beyond the display limit compress to the shown names
+    // (plan C5): the wire packet carries the first placeDisplayLimit
+    // place names, and the total count reaches the bookend in the
+    // caller's verifySummary, which both runners build with the
+    // full place count (route-contract cure 2026-11-03: the old
+    // packet's additionalPlaces field had no counterpart in the
+    // verify route's contract).
+    expect(verify.places).toHaveLength(10)
+    expect(verify.places[0]).toBe('Place 0')
   })
 })
 

@@ -126,22 +126,40 @@ export interface PlanPacketInput {
  * caller's problem; here the subset ranges compress first, then the
  * criteria list truncates from the end (the decomposition orders its
  * most central criteria first).
+ *
+ * The record this returns is the plan ROUTE's contract shape
+ * (functions/api/muse/plan.ts): the intent's measures travel under
+ * the route's `measures` key and the subset summary under `subset`
+ * with string ranges. This builder previously emitted its own
+ * field names (subsetSummary, metricKeys) and the route refused
+ * every call pre-accounting — measured 2026-11-03: the shipped
+ * client's packet bisects to 400 until exactly these two fields
+ * are renamed, and diagnostics showed the plan route at zero
+ * metered calls across every window, browser included.
  */
 export function buildPlanPacket(input: PlanPacketInput): Record<string, unknown> {
-  const packet: Record<string, unknown> = {
+  let ranges = input.subsetSummary.ranges.map((r) => ({
+    label: r.key,
+    min: r.min === null ? '' : String(r.min),
+    max: r.max === null ? '' : String(r.max),
+  }))
+  const criteria = [...input.criteria]
+  const packet = (): Record<string, unknown> => ({
     question: input.question,
-    intent: input.intent,
-    criteria: [...input.criteria],
-    subsetSummary: input.subsetSummary,
+    intent: {
+      mode: input.intent.mode,
+      geographies: input.intent.geographies,
+      measures: input.intent.metricKeys,
+    },
+    criteria,
+    subset: { count: input.subsetSummary.count, ranges },
     decisions: input.decisions,
-  }
-  const fits = () => estimateTokens(JSON.stringify(packet)) <= PLAN_PACKET_TOKEN_BUDGET
-  if (fits()) return packet
-  packet.subsetSummary = { count: input.subsetSummary.count, ranges: [] }
-  while (!fits() && (packet.criteria as unknown[]).length > 1) {
-    ;(packet.criteria as unknown[]).pop()
-  }
-  return packet
+  })
+  const fits = () => estimateTokens(JSON.stringify(packet())) <= PLAN_PACKET_TOKEN_BUDGET
+  if (fits()) return packet()
+  ranges = []
+  while (!fits() && criteria.length > 1) criteria.pop()
+  return packet()
 }
 
 export interface VerifyPacketInput {
@@ -158,27 +176,36 @@ export interface VerifyPacketInput {
  * Packet P2 (plan C5): the composed answer + per-criterion evidence
  * labels + sources (capped) + the verify stage's own result summary,
  * <= 2,500 tokens, hard-trimmed.
+ *
+ * The record this returns is the verify ROUTE's contract shape
+ * (functions/api/muse/verify.ts): the summary travels as
+ * `answerText`, the places as their names, and the evidence as
+ * `criteriaEvidence` entries whose label carries the status and
+ * detail together. This builder previously emitted its own field
+ * names (summary, evidence, place objects) and the route refused
+ * every call pre-accounting — measured 2026-11-03 by bisection.
+ * The place count the old record carried as `additionalPlaces`
+ * still reaches the bookend inside the caller's verifySummary
+ * string, which states the answer's place count verbatim.
  */
 export function buildVerifyPacket(input: VerifyPacketInput): Record<string, unknown> {
   const shown = input.places.slice(0, input.placeDisplayLimit)
-  const packet: Record<string, unknown> = {
-    summary: input.summary,
-    places: shown,
-    ...(input.places.length > shown.length
-      ? { additionalPlaces: input.places.length - shown.length }
-      : {}),
-    evidence: [...input.evidence],
-    sources: input.sources.slice(0, 12),
+  const criteriaEvidence = input.evidence.map((e) => ({
+    criterion: e.criterion,
+    label: `${e.status} — ${e.detail}`,
+  }))
+  const sources = input.sources.slice(0, 12)
+  const packet = (): Record<string, unknown> => ({
+    answerText: input.summary,
+    places: shown.map((p) => p.name),
+    criteriaEvidence,
+    sources,
     verifySummary: input.verifySummary,
-  }
-  const fits = () => estimateTokens(JSON.stringify(packet)) <= VERIFY_PACKET_TOKEN_BUDGET
-  while (!fits() && (packet.sources as unknown[]).length > 0) {
-    ;(packet.sources as unknown[]).pop()
-  }
-  while (!fits() && (packet.evidence as unknown[]).length > 1) {
-    ;(packet.evidence as unknown[]).pop()
-  }
-  return packet
+  })
+  const fits = () => estimateTokens(JSON.stringify(packet())) <= VERIFY_PACKET_TOKEN_BUDGET
+  while (!fits() && sources.length > 0) sources.pop()
+  while (!fits() && criteriaEvidence.length > 1) criteriaEvidence.pop()
+  return packet()
 }
 
 /* ------------------------------------------------------------------ */
@@ -208,6 +235,33 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   })
 }
 
+/**
+ * Translate a bookend ROUTE reply into the internal verdict shape.
+ * The routes answer with an `outcome` field (their degraded outcome
+ * included); the parsers above read a `verdict` field, so a route
+ * reply fed to them directly parsed as null even on a 200 —
+ * measured 2026-11-03: with the request shape cured, the sound and
+ * verified replies still produced no client-side verdict until
+ * this translation existed. A degraded outcome is not a verdict:
+ * it maps to null, the degradation the labeling rule already
+ * defines. The closed-schema validation itself is not duplicated:
+ * the mapped record goes through the same parsers.
+ */
+export function planVerdictFromRouteReply(body: unknown): PlanVerdict | null {
+  if (typeof body !== 'object' || body === null) return null
+  const { outcome, objections } = body as { outcome?: unknown; objections?: unknown }
+  if (outcome !== 'sound' && outcome !== 'unsound') return null
+  return parsePlanVerdict({ verdict: outcome, objections })
+}
+
+/** The verify route's reply translation; see planVerdictFromRouteReply. */
+export function verifyVerdictFromRouteReply(body: unknown): VerifyVerdict | null {
+  if (typeof body !== 'object' || body === null) return null
+  const { outcome, concerns } = body as { outcome?: unknown; concerns?: unknown }
+  if (outcome !== 'verified' && outcome !== 'concerns' && outcome !== 'not_verified') return null
+  return parseVerifyVerdict({ verdict: outcome, concerns })
+}
+
 /** The default browser transports: POST to the sibling's bookend routes. */
 export function createHttpBookendTransports(
   fetcher: typeof fetch = (...args) => globalThis.fetch(...args),
@@ -224,7 +278,7 @@ export function createHttpBookendTransports(
           PLAN_BOOKEND_TIMEOUT_MS,
         )
         if (!response.ok) return null
-        return parsePlanVerdict(await response.json())
+        return planVerdictFromRouteReply(await response.json())
       } catch {
         return null
       }
@@ -240,7 +294,7 @@ export function createHttpBookendTransports(
           VERIFY_BOOKEND_TIMEOUT_MS,
         )
         if (!response.ok) return null
-        return parseVerifyVerdict(await response.json())
+        return verifyVerdictFromRouteReply(await response.json())
       } catch {
         return null
       }

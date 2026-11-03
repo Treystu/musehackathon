@@ -24,12 +24,20 @@
  * and grounding here is a search.
  */
 import { findBannedConstruction } from '../../../src/core/ai/validator'
-import { MUSE_SPARK_MODEL, RESEARCH_PLACES_LIMIT } from '../../../src/core/ai/meta-client'
+import {
+  MUSE_SPARK_MODEL,
+  RESEARCH_PLACES_LIMIT,
+  RESEARCH_QUERY_MAX_CHARS,
+} from '../../../src/core/ai/meta-client'
 import { preCallGate, mapProviderError, attemptCall, accountCall, accountSearches, accountError, accountFailure, err, type ProxyDeps, type ProxyReply } from '../../../src/server/muse-proxy'
 import { museRoute } from '../../../src/server/muse-adapter'
 
 const ALLOWED_PATHS = new Set(['/api/muse/research'])
-const MAX_QUERY_CHARS = 500
+// The shared ceiling constant, not a local number: the runner
+// composes queryText against RESEARCH_QUERY_MAX_CHARS, and a
+// local literal here would let the two sides drift apart again
+// (the places ceiling below drifted exactly that way).
+const MAX_QUERY_CHARS = RESEARCH_QUERY_MAX_CHARS
 // The shared seam constant, not a local number: this ceiling sat at
 // 8 while the client's screened-research cap sent 10, and every
 // 9-10-place research pass was refused here as shape_invalid before

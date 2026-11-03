@@ -181,7 +181,7 @@ describe('P3c: summary-claim accounting (C5 shape)', () => {
       verifySummary: `status ${answer.status}`,
       placeDisplayLimit: 10,
     })
-    expect(packet.summary).toBe(answer.summary)
+    expect(packet.answerText).toBe(answer.summary)
     expect(JSON.stringify(packet)).not.toContain('meet the stated Census criteria')
     expect(JSON.stringify(packet)).toContain('partially_measured')
   })

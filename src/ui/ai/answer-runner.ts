@@ -47,6 +47,7 @@ import {
   createHttpFlexibleTransport,
   type FlexibleTransport,
 } from '../../core/ai/flexible'
+import { RESEARCH_QUERY_MAX_CHARS } from '../../core/ai/meta-client'
 import { composeFlexibleCompletion } from './flexible-runner'
 import {
   stateCodeForGeography,
@@ -626,6 +627,61 @@ export function decompositionReachesPipeline(queryText: string, research: boolea
   )
 }
 
+/**
+ * Compose one research pass's queryText within the research
+ * route's ceiling (RESEARCH_QUERY_MAX_CHARS — the shared constant
+ * the route validates against). Prioritization is explicit and
+ * fixed: the reader's question rides first and verbatim; steering
+ * additions (decision focus texts, the Jev loop's gap
+ * instructions) fill the remaining budget in the caller's order.
+ * An addition that fits whole rides whole; one that does not is
+ * trimmed at a word boundary into the remaining budget when at
+ * least MIN_RESEARCH_ADDITION_CHARS of it can ride (a shorter
+ * fragment is noise, so the addition is skipped instead). Either
+ * way the returned `trimmed` flag is set, and the caller discloses
+ * the shortening on the researched criteria's evidence lines —
+ * the question and the criteria are never the trimmed material:
+ * criteria travel in their own array, places in theirs, and the
+ * question is trimmed only in the defensive case where it alone
+ * exceeds the ceiling (the intent stage caps questions at the
+ * same 500, so that case is unreachable in the app flow).
+ * Measured 2026-11-03: without composition, question + proximity
+ * focus (370) was compliant but one patch round reached 572 and
+ * every iterative pass was refused by the route.
+ */
+export const MIN_RESEARCH_ADDITION_CHARS = 40
+
+export function composeResearchQueryText(
+  question: string,
+  additions: readonly string[],
+): { text: string; trimmed: boolean } {
+  let text = question
+  let trimmed = false
+  if (text.length > RESEARCH_QUERY_MAX_CHARS) {
+    const cut = text.slice(0, RESEARCH_QUERY_MAX_CHARS)
+    const lastSpace = cut.lastIndexOf(' ')
+    text = (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd()
+    trimmed = true
+  }
+  for (const addition of additions) {
+    if (!addition) continue
+    const remaining = RESEARCH_QUERY_MAX_CHARS - text.length - 1
+    if (remaining < MIN_RESEARCH_ADDITION_CHARS) {
+      trimmed = true
+      continue
+    }
+    if (addition.length <= remaining) {
+      text = `${text} ${addition}`
+      continue
+    }
+    const cut = addition.slice(0, remaining)
+    const lastSpace = cut.lastIndexOf(' ')
+    text = `${text} ${(lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd()}`
+    trimmed = true
+  }
+  return { text, trimmed }
+}
+
 /** The loop's criterion list: Census measures first, then researched criteria. */
 function loopCriteriaFor(
   intent: ValidatedIntent,
@@ -819,6 +875,10 @@ export async function composeAnswerForRequest(input: {
   // tests pin.
   const researchCriteria = input.research ? decomposeResearchCriteria(input.queryText) : []
   let researchQuery = input.queryText
+  // Set when any assembly below had to shorten steering text to
+  // fit the research route's ceiling; disclosed on the researched
+  // criteria's evidence lines before the answer returns.
+  let researchQueryTrimmed = false
   if (input.research) {
     const focuses: string[] = []
     const proximity = researchCriteria.find((c) => isProximityCriterion(c.id))
@@ -831,7 +891,15 @@ export async function composeAnswerForRequest(input: {
       const landed = decisions[branch]
       if (landed !== undefined) focuses.push(decisionEffect(branch, landed).focusText)
     }
-    if (focuses.length > 0) researchQuery = `${input.queryText} ${focuses.join(' ')}`
+    if (focuses.length > 0) {
+      // Composed within the route's ceiling (composeResearchQueryText):
+      // the joined text is identical when everything fits — the
+      // shape the runner tests pin — and shortens at a word
+      // boundary instead of being refused when it does not.
+      const composed = composeResearchQueryText(input.queryText, focuses)
+      researchQuery = composed.text
+      researchQueryTrimmed = composed.trimmed
+    }
   }
 
   const runPipeline = (query: string) =>
@@ -1037,9 +1105,16 @@ export async function composeAnswerForRequest(input: {
           // instruction; verify inside the pipeline re-runs before
           // the candidate can enter the loop state.
           if (!input.research) return null
-          const patched = await runPipeline(
-            `${researchQuery} Address these gaps: ${gaps.join('; ')}`,
-          )
+          // The gap instruction is composed within the research
+          // route's ceiling like every other assembly: appended
+          // raw, one patch round on a focused query measured 572
+          // chars against the 500 ceiling and the route refused
+          // every iterative pass (2026-11-03).
+          const composed = composeResearchQueryText(researchQuery, [
+            `Address these gaps: ${gaps.join('; ')}`,
+          ])
+          if (composed.trimmed) researchQueryTrimmed = true
+          const patched = await runPipeline(composed.text)
           return patched.status === 'blocked' ? null : patched
         },
         onTiming: (stage, ms) => {
@@ -1090,6 +1165,29 @@ export async function composeAnswerForRequest(input: {
           entry.criterion === proximity.label ? { ...entry, detail: blend } : entry,
         ),
       }
+    }
+  }
+
+  // Ceiling disclosure: when an assembly above shortened the
+  // research request's steering text to fit the research route's
+  // length limit, the researched criteria's evidence lines say so
+  // — the reader's question and stated criteria always rode in
+  // full (they travel in their own fields), and the accounting
+  // never presents a shortened request as the whole one.
+  if (researchQueryTrimmed && answer.criterionEvidence.length > 0) {
+    answer = {
+      ...answer,
+      criterionEvidence: answer.criterionEvidence.map((entry) =>
+        entry.kind === 'research'
+          ? {
+              ...entry,
+              detail:
+                `${entry.detail} The research request text was shortened to fit ` +
+                `the research service's length limit; the question and the ` +
+                `stated criteria were carried in full.`,
+            }
+          : entry,
+      ),
     }
   }
 

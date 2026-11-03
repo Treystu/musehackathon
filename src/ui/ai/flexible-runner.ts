@@ -20,6 +20,7 @@
  * bookend failure labels Wonder 'not-run' and claims nothing.
  */
 import {
+  conformFlexibleDraftRequest,
   flexibleAnswerText,
   parseFlexibleDraft,
   verifyFlexibleAnswer,
@@ -76,13 +77,18 @@ export function flexibleDraftRequestFor(input: {
     ...strictAnswer.places.flatMap((p) => p.claims),
     ...strictAnswer.generalClaims,
   ].map((claim) => ({ text: claim.text, sourceUrls: [...claim.sourceUrls] }))
-  return {
+  // Conformed to the route's packet limits at construction (core
+  // conformFlexibleDraftRequest): the gathered material of a
+  // multi-pass zero-match run legitimately exceeds the caps, and
+  // the unconformed packet was refused whole — the designed
+  // completion never engaged (measured 2026-11-03).
+  return conformFlexibleDraftRequest({
     question: input.queryText,
     criteria: strictAnswer.researchCriteria.map((c) => c.label),
     researchPlaces: [...researchNamedPlacesOf(strictAnswer)],
     claims,
     sources: strictAnswer.sources.map((s) => ({ title: s.title, url: s.url })),
-  }
+  })
 }
 
 /**
@@ -148,10 +154,12 @@ export async function composeFlexibleCompletion(input: {
       patch: async ({ answerText, gaps }) => {
         let raw: unknown = null
         try {
-          raw = await deps.flexibleTransport({
-            ...request,
-            revision: { draftText: answerText, gaps },
-          })
+          raw = await deps.flexibleTransport(
+            conformFlexibleDraftRequest({
+              ...request,
+              revision: { draftText: answerText, gaps },
+            }),
+          )
         } catch {
           raw = null
         }

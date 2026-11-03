@@ -1021,6 +1021,20 @@ export function createLiveProvider(options: LiveProviderOptions = {}): MuseProvi
   }
 }
 
+/**
+ * The research route's queryText ceiling — one contract, read by
+ * both sides: the route validates against this constant, and the
+ * conversational runner composes every pass's queryText within it
+ * (composeResearchQueryText in ui/ai/answer-runner.ts). The
+ * ceiling lived only in the route, and the runner's assemblies
+ * grew past it invisibly: measured 2026-11-03, question (83 chars)
+ * + a proximity focus text (286) is 370 and compliant, but one
+ * Jev patch round appends the gap instructions and reaches 572,
+ * so every iterative pass after the first patch was refused as
+ * shape_invalid and the enrichment it sought never returned.
+ */
+export const RESEARCH_QUERY_MAX_CHARS = 500
+
 /** Validate the general route's reply shape: prose only, no sources, no figures. */
 export function parseGeneralReply(value: unknown): GeneralResult {
   const rec = value as { prose?: unknown } | null

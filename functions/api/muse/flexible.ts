@@ -24,6 +24,17 @@
 import { MUSE_SPARK_MODEL } from '../../../src/core/ai/meta-client'
 import {
   buildFlexiblePacketText,
+  FLEXIBLE_MAX_CLAIM_CHARS,
+  FLEXIBLE_MAX_CLAIMS,
+  FLEXIBLE_MAX_CRITERIA,
+  FLEXIBLE_MAX_DRAFT_TEXT_CHARS,
+  FLEXIBLE_MAX_GAPS,
+  FLEXIBLE_MAX_GAP_CHARS,
+  FLEXIBLE_MAX_PLACES,
+  FLEXIBLE_MAX_QUESTION_CHARS,
+  FLEXIBLE_MAX_SOURCES,
+  FLEXIBLE_MAX_SOURCE_URLS_PER_CLAIM,
+  FLEXIBLE_MAX_SOURCE_URL_CHARS,
   type FlexibleDraftRequest,
 } from '../../../src/core/ai/flexible'
 import {
@@ -45,15 +56,21 @@ export const FLEXIBLE_TIMEOUT_MS = 40_000
 const FLAT_TOKENS_IN = 512
 const FLAT_TOKENS_OUT = 512
 
-const MAX_QUESTION_CHARS = 500
-const MAX_CRITERIA = 8
-const MAX_PLACES = 10
-const MAX_CLAIMS = 12
-const MAX_CLAIM_CHARS = 600
-const MAX_SOURCES = 12
-const MAX_DRAFT_TEXT_CHARS = 6000
-const MAX_GAPS = 8
-const MAX_GAP_CHARS = 300
+// The packet limits are the shared contract constants in
+// src/core/ai/flexible.ts, not local literals: the client
+// construction conforms to the same values before sending, so the
+// two sides cannot drift into a refusal again (the drift here —
+// construction sending gathered material past these caps — was
+// measured 2026-11-03 as the flexible lane's zero-match refusal).
+const MAX_QUESTION_CHARS = FLEXIBLE_MAX_QUESTION_CHARS
+const MAX_CRITERIA = FLEXIBLE_MAX_CRITERIA
+const MAX_PLACES = FLEXIBLE_MAX_PLACES
+const MAX_CLAIMS = FLEXIBLE_MAX_CLAIMS
+const MAX_CLAIM_CHARS = FLEXIBLE_MAX_CLAIM_CHARS
+const MAX_SOURCES = FLEXIBLE_MAX_SOURCES
+const MAX_DRAFT_TEXT_CHARS = FLEXIBLE_MAX_DRAFT_TEXT_CHARS
+const MAX_GAPS = FLEXIBLE_MAX_GAPS
+const MAX_GAP_CHARS = FLEXIBLE_MAX_GAP_CHARS
 
 const SYSTEM_PROMPT =
   'You complete a data-tool answer whose cited research named places that could not be ' +
@@ -92,7 +109,11 @@ function parseInput(body: Record<string, unknown>): FlexibleDraftRequest | null 
   for (const entry of body.claims) {
     if (!isRecord(entry) || typeof entry.text !== 'string') return null
     if (entry.text.length === 0 || entry.text.length > MAX_CLAIM_CHARS) return null
-    const urls = stringList(entry.sourceUrls ?? [], MAX_SOURCES, 500)
+    const urls = stringList(
+      entry.sourceUrls ?? [],
+      FLEXIBLE_MAX_SOURCE_URLS_PER_CLAIM,
+      FLEXIBLE_MAX_SOURCE_URL_CHARS,
+    )
     if (!urls) return null
     claims.push({ text: entry.text, sourceUrls: urls })
   }

@@ -130,8 +130,141 @@ export interface FlexibleDraftRequest {
   revision?: { draftText: string; gaps: readonly string[] }
 }
 
-const PACKET_CLAIM_LIMIT = 12
-const PACKET_PLACE_LIMIT = 10
+/**
+ * The flexible route's packet limits — ONE contract, read by both
+ * sides: the route (functions/api/muse/flexible.ts) validates
+ * against these constants, and the client construction
+ * (conformFlexibleDraftRequest below) conforms to the same values
+ * before sending. They lived as separate literals on each side and
+ * the construction never conformed: a zero-match run gathers its
+ * evidence across several research passes, and the merged packet
+ * legitimately exceeds the caps (measured 2026-11-03: 16 sources
+ * and 14 claims bisect to the route's 400; the same packet sliced
+ * to these limits returns the draft). The caps are prompt-economy
+ * limits — the packet builder below already worked to them — so
+ * conforming at construction loses nothing the draft would have
+ * seen; it only stops the route from refusing the packet whole.
+ */
+export const FLEXIBLE_MAX_QUESTION_CHARS = 500
+export const FLEXIBLE_MAX_CRITERIA = 8
+export const FLEXIBLE_MAX_PLACES = 10
+export const FLEXIBLE_MAX_CLAIMS = 12
+export const FLEXIBLE_MAX_CLAIM_CHARS = 600
+export const FLEXIBLE_MAX_SOURCES = 12
+export const FLEXIBLE_MAX_SOURCE_URLS_PER_CLAIM = 12
+export const FLEXIBLE_MAX_SOURCE_URL_CHARS = 500
+export const FLEXIBLE_MAX_DRAFT_TEXT_CHARS = 6000
+export const FLEXIBLE_MAX_GAPS = 8
+export const FLEXIBLE_MAX_GAP_CHARS = 300
+
+const PACKET_CLAIM_LIMIT = FLEXIBLE_MAX_CLAIMS
+const PACKET_PLACE_LIMIT = FLEXIBLE_MAX_PLACES
+
+/** Trim a text to a character budget at a word boundary. */
+function trimAtWordBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text
+  const cut = text.slice(0, maxChars)
+  const lastSpace = cut.lastIndexOf(' ')
+  return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd()
+}
+
+/**
+ * Split an over-cap claim text into consecutive claims at sentence
+ * boundaries (a single run-on sentence is split at word
+ * boundaries). The finding's words are all carried, in order —
+ * the cap governs how much text rides in ONE claim, not whether
+ * the finding reaches the packet.
+ */
+function splitClaimText(text: string): string[] {
+  if (text.length <= FLEXIBLE_MAX_CLAIM_CHARS) return [text]
+  const sentences = text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  const chunks: string[] = []
+  let current = ''
+  const flush = () => {
+    if (current) chunks.push(current)
+    current = ''
+  }
+  for (const sentence of sentences.length > 0 ? sentences : [text]) {
+    if (sentence.length > FLEXIBLE_MAX_CLAIM_CHARS) {
+      flush()
+      let rest = sentence
+      while (rest.length > FLEXIBLE_MAX_CLAIM_CHARS) {
+        const cut = trimAtWordBoundary(rest, FLEXIBLE_MAX_CLAIM_CHARS)
+        chunks.push(cut)
+        rest = rest.slice(cut.length).trimStart()
+      }
+      if (rest) current = rest
+      continue
+    }
+    const joined = current ? `${current} ${sentence}` : sentence
+    if (joined.length > FLEXIBLE_MAX_CLAIM_CHARS) {
+      flush()
+      current = sentence
+    } else {
+      current = joined
+    }
+  }
+  flush()
+  return chunks
+}
+
+/**
+ * Conform a draft request to the route's packet limits (the
+ * FLEXIBLE_MAX_* constants above) at the construction site.
+ * Prioritization is the pipeline's own order throughout: the
+ * leading criteria, places, claims, and sources the strict
+ * pipeline gathered are the ones the packet carries — the same
+ * leading material buildFlexiblePacketText would have used. A
+ * claim's source list slices to the cap and drops any URL too
+ * long to be a packet citation; an over-cap claim text is split,
+ * never dropped (splitClaimText). A revision's gaps and draft
+ * text trim at word boundaries: a patch instruction that exceeds
+ * the cap cannot ride whole, and a trimmed instruction still
+ * names its gap's subject, where a refused call would lose the
+ * patch round entirely. Criterion labels and place names are
+ * never truncated — a shortened name would mislabel the
+ * accounting — and both are catalog/extraction strings far under
+ * their caps in practice.
+ */
+export function conformFlexibleDraftRequest(
+  request: FlexibleDraftRequest,
+): FlexibleDraftRequest {
+  const claims: { text: string; sourceUrls: string[] }[] = []
+  for (const claim of request.claims) {
+    if (!claim.text.trim()) continue
+    const sourceUrls = claim.sourceUrls
+      .filter((u) => u.length > 0 && u.length <= FLEXIBLE_MAX_SOURCE_URL_CHARS)
+      .slice(0, FLEXIBLE_MAX_SOURCE_URLS_PER_CLAIM)
+    for (const text of splitClaimText(claim.text)) {
+      claims.push({ text, sourceUrls })
+      if (claims.length >= FLEXIBLE_MAX_CLAIMS) break
+    }
+    if (claims.length >= FLEXIBLE_MAX_CLAIMS) break
+  }
+  return {
+    question: request.question,
+    criteria: request.criteria.slice(0, FLEXIBLE_MAX_CRITERIA),
+    researchPlaces: request.researchPlaces.slice(0, FLEXIBLE_MAX_PLACES),
+    claims,
+    sources: request.sources.slice(0, FLEXIBLE_MAX_SOURCES),
+    ...(request.revision
+      ? {
+          revision: {
+            draftText: trimAtWordBoundary(
+              request.revision.draftText,
+              FLEXIBLE_MAX_DRAFT_TEXT_CHARS,
+            ),
+            gaps: request.revision.gaps
+              .slice(0, FLEXIBLE_MAX_GAPS)
+              .map((gap) => trimAtWordBoundary(gap, FLEXIBLE_MAX_GAP_CHARS)),
+          },
+        }
+      : {}),
+  }
+}
 
 /**
  * The route's user-packet text: the question, the evidence the

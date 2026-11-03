@@ -241,12 +241,20 @@ describe('Ask surface completion', () => {
     expect(html).not.toContain('Speak a question')
   })
 
-  it('renders add-place, add-measure, and add-filter controls', () => {
+  it('renders one add row with a place / measure / filter selector', () => {
+    // REVISED PIN (item-16 cure C9, 2026-11-02): this test used to
+    // pin three separate add-forms ('Add a place', 'Add a measure',
+    // 'Add a filter', each with its own submit). C9 collapsed them
+    // into one add row — a field-type selector, that type's input,
+    // and a single Add — so the pin now asserts the collapsed shape.
     const html = renderToStaticMarkup(<IntentEditor intent={base} onChange={() => {}} />)
-    expect(html).toContain('Add a place')
-    expect(html).toContain('Add a measure')
-    expect(html).toContain('Add a filter')
-    expect(html).toContain('greater than')
+    expect(html).toContain('intent-add-kind')
+    expect(html).toContain('>place</option>')
+    expect(html).toContain('>measure</option>')
+    expect(html).toContain('>filter</option>')
+    expect(html).not.toContain('Add a place')
+    expect(html).not.toContain('Add measure')
+    expect(html).not.toContain('Add filter')
   })
 
   it('renders clarification candidates before execution', () => {

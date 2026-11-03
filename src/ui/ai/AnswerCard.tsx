@@ -1,6 +1,7 @@
 import type {
   AnswerFigure,
   AnswerPlace,
+  AnswerSource,
   ComposedAnswer,
   ResearchedClaim,
 } from '../../core/ai/answer'
@@ -273,6 +274,9 @@ function ClaimText({
   answer: ComposedAnswer
   visibleUrls?: readonly string[]
 }) {
+  // A claim whose text is a source title renders nothing: titles
+  // are confined to the source list (FM-7, isSourceTitleClaim).
+  if (isSourceTitleClaim(claim, answer.sources)) return null
   return (
     <p className="mt-2 text-base leading-relaxed text-slate-700">
       {claim.text}
@@ -348,10 +352,52 @@ function PlaceBlock({
  * one. A claim whose sources all rendered earlier shows its text
  * with no link list; the sources themselves stay on the answer.
  */
+/** A source title normalized for comparison: case, punctuation,
+ * and spacing are presentation, not identity. */
+export function normalizeSourceTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
+/**
+ * Whether a claim's text IS one of the answer's source titles
+ * (Lane A9 FM-7 — the live Texas specimen rendered source-title
+ * strings as an entry's evidence lines: the title is the source's
+ * name, not a finding, and it renders once, in the source list).
+ * Compose drops prose segments CONTAINING a long title; a claim
+ * that is nothing but the title (up to a short suffix — a site
+ * name, a separator) can still arrive through channels that never
+ * pass that filter, so the render seam refuses it here. The match
+ * is equality-grade (the whole claim, normalized, is the title
+ * plus at most a short tail), never a substring test — a finding
+ * that merely mentions a titled work in prose is a finding.
+ */
+export function isSourceTitleClaim(
+  claim: ResearchedClaim,
+  sources: readonly AnswerSource[],
+): boolean {
+  const claimNorm = normalizeSourceTitle(claim.text)
+  if (claimNorm.length === 0) return false
+  return sources.some((source) => {
+    const titleNorm = normalizeSourceTitle(source.title)
+    if (titleNorm.length < 12) return false
+    if (claimNorm === titleNorm) return true
+    return claimNorm.startsWith(titleNorm) && claimNorm.length - titleNorm.length <= 12
+  })
+}
+
 export function claimSourceVisibility(
   answer: ComposedAnswer,
 ): Map<ResearchedClaim, string[]> {
   const seen = new Set<string>()
+  const seenTitles = new Set<string>()
+  const titleByUrl = new Map<string, string>()
+  for (const source of answer.sources) {
+    titleByUrl.set(source.url, normalizeSourceTitle(source.title))
+  }
   const visibility = new Map<ResearchedClaim, string[]>()
   const claimsInRenderOrder = [
     ...orderedPlaces(answer)
@@ -360,11 +406,26 @@ export function claimSourceVisibility(
     ...answer.generalClaims,
   ]
   for (const claim of claimsInRenderOrder) {
-    visibility.set(
-      claim,
-      claim.sourceUrls.filter((url) => !seen.has(url)),
-    )
-    for (const url of claim.sourceUrls) seen.add(url)
+    // A title-shaped claim renders nothing (isSourceTitleClaim),
+    // so it also consumes no citation visibility: the first REAL
+    // claim citing a source keeps its chip.
+    if (isSourceTitleClaim(claim, answer.sources)) continue
+    // Render-once is per SOURCE, not per URL (FM-7): the same
+    // article reachable at two URLs — a syndicated copy, a
+    // tracking-parameter variant — is one source, and its title
+    // renders once. The walk is sequential within the claim too:
+    // a claim carrying both URLs of one source shows it once. A
+    // URL hidden by its title still marks both seen, so no later
+    // claim resurrects the duplicate.
+    const visible: string[] = []
+    for (const url of claim.sourceUrls) {
+      const title = titleByUrl.get(url)
+      const titleSeen = title !== undefined && seenTitles.has(title)
+      if (!seen.has(url) && !titleSeen) visible.push(url)
+      seen.add(url)
+      if (title !== undefined) seenTitles.add(title)
+    }
+    visibility.set(claim, visible)
   }
   return visibility
 }

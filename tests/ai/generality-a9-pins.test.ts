@@ -501,3 +501,38 @@ describe('A9 pins — resolution (FM-5 bare names, FM-6 list genre)', () => {
     expect(answer.places[0]!.zcta).toBe('78839')
   })
 })
+
+describe('A9 pins — render-once scope (FM-7)', () => {
+  it('the same source at two URLs renders its title once; a title-shaped claim renders nothing and consumes no visibility', async () => {
+    const { claimSourceVisibility, isSourceTitleClaim } = await import('../../src/ui/ai/AnswerCard')
+    const r = await runScenario(SCENARIOS.culture_politics!)
+    const answer = r.answer
+    const title = '10 Most Liberal Cities in Texas'
+    const urlA = 'https://example.com/a'
+    const urlB = 'https://example.com/b'
+    const titleClaim = { text: title, sourceUrls: [urlA] }
+    const realClaim = { text: 'Athens, GA is described as a liberal college town.', sourceUrls: [urlA, urlB] }
+    const laterClaim = { text: 'Decatur, GA is described as liberal-leaning.', sourceUrls: [urlB] }
+    const mutated: ComposedAnswer = {
+      ...answer,
+      sources: [
+        { title, url: urlA },
+        { title, url: urlB },
+      ],
+      places: answer.places.map((p, i) =>
+        i === 0 ? { ...p, claims: [titleClaim, realClaim] } : p,
+      ),
+      generalClaims: [laterClaim],
+    }
+    expect(isSourceTitleClaim(titleClaim, mutated.sources)).toBe(true)
+    expect(isSourceTitleClaim(realClaim, mutated.sources)).toBe(false)
+    const visibility = claimSourceVisibility(mutated)
+    // The title claim is skipped entirely: no entry, no seen-marking.
+    expect(visibility.has(titleClaim)).toBe(false)
+    // The real claim shows the source once (first URL); the second
+    // URL carries the same title and is the same source.
+    expect(visibility.get(realClaim)).toEqual([urlA])
+    // And no later claim resurrects either URL.
+    expect(visibility.get(laterClaim)).toEqual([])
+  })
+})

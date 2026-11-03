@@ -1137,7 +1137,21 @@ const CANDIDATE_NAME_RE = /\b([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}), ([A
 export function extractCandidateNamesFromProse(prose: string): string[] {
   const names: string[] = []
   for (const match of prose.matchAll(CANDIDATE_NAME_RE)) {
-    const name = `${match[1]}, ${match[2]}`
+    let name = `${match[1]}, ${match[2]}`
+    // A sentence-final capitalized word glues to the next
+    // sentence's opening name through the token's period
+    // ("...in red Texas. Marfa, TX is described as..."): the
+    // capture reads "Texas. Marfa", the glued form resolves to
+    // nothing, and the qualifier the sentence actually names is
+    // lost with it — measured on finding-per-sentence research
+    // prose, where a name at a sentence start after a capitalized
+    // sentence-final word is the norm, not an edge (the Texas
+    // specimen's prose lost Marfa and Sebastian this way). The
+    // name the sentence names is the part after the sentence
+    // break; a short head ("St.", "Mt.", "Ft.") is part of the
+    // place's own name and is kept whole.
+    const breakAt = name.lastIndexOf('. ')
+    if (breakAt >= 3) name = name.slice(breakAt + 2)
     if (!names.includes(name)) names.push(name)
   }
   return names
@@ -1202,6 +1216,106 @@ export function filterBannedSentences(prose: string): { prose: string; dropped: 
   for (const sentence of sentences) {
     if (claimBannedLabel(sentence)) dropped.push(sentence)
     else kept.push(sentence)
+  }
+  return { prose: kept.join(' '), dropped }
+}
+
+/* ------------------------------------------------------------------ */
+/* Working-narration refusal (prose hygiene, 2026-11-03)              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The research model's WORKING text is not findings: first-person
+ * process narration ("I'll check the remaining towns next."),
+ * interim progress lines ("Marfa and Crystal City show liberal
+ * leanings so far."), meta statements about the research act
+ * ("Research covered the first 10 candidate places…"), question
+ * echoes, apparatus explanations, raw internal vocabulary (metric
+ * keys), and markdown scaffolding (bold markers, "Answer:"
+ * lead-ins, colon-terminated header lines). The Texas specimen
+ * (owner device, 2026-11-03) rendered every one of those classes
+ * verbatim as answer claims, with the actual conclusion buried
+ * among them wearing its "**Answer:**" scaffolding. The banned-
+ * construction scan above cannot see this class — narration is
+ * grammatical, cited, and about no place — so compose applies this
+ * filter beside it: narration segments are dropped and recorded
+ * in droppedClaims like any other compose drop, kept segments are
+ * stripped of scaffolding, and a segment carrying a cited source's
+ * raw title is dropped whole (titles render once, as links —
+ * AnswerCard's claimSourceVisibility — never as prose).
+ */
+const NARRATION_PROCESS_VERB_RE =
+  /\b(?:check|gather|map|look|search|examin|review|verif|compar|assess|investigat|research|compil|confirm|explor)\w*\b/i
+const NARRATION_FIRST_PERSON_RE = /\bI(?:'ll| will| have|'ve| am|'m|'d| would)\b/
+const NARRATION_FIRST_PERSON_PAST_RE =
+  /\bI\s+(?:checked|gathered|mapped|looked|searched|examined|reviewed|verified|compared|assessed|investigated|researched)\b/i
+const NARRATION_PROGRESS_RE =
+  /\b(?:show|shows|showed|showing|found|lean|leans|leaning|stand|stands|results?)\b[^.!?]*\bso far\b/i
+const NARRATION_META_RE =
+  /\bresearch covered the first\b|\bwere not researched\b|\bnot addressed here\b|\bno web support found for\b|\bper pre-screening\b|\bfigures are shown separately\b|\bnot from the web\b/i
+const RAW_METRIC_KEY_RE =
+  /\b(?:median_gross_rent|median_household_income|median_home_value|median_rent_burden_pct|no_internet_access)\b/
+
+function isWorkingNarration(segment: string, sources: readonly AnswerSource[]): boolean {
+  // A colon-terminated segment is a lead-in header by construction
+  // in this prose genre ("**What sources say about political
+  // character — liberal:**", "Crystal City, TX — meets liberal +
+  // Census, strongest support as most liberal:"): the finding it
+  // introduces rides in the segments after it.
+  if (segment.endsWith(':')) return true
+  if (NARRATION_FIRST_PERSON_PAST_RE.test(segment)) return true
+  if (NARRATION_FIRST_PERSON_RE.test(segment) && NARRATION_PROCESS_VERB_RE.test(segment)) {
+    return true
+  }
+  if (/^Let(?:'s| us| me)\b/i.test(segment)) return true
+  if (NARRATION_PROGRESS_RE.test(segment)) return true
+  if (NARRATION_META_RE.test(segment)) return true
+  if (/^Question:/i.test(segment)) return true
+  if (RAW_METRIC_KEY_RE.test(segment)) return true
+  const lower = segment.toLowerCase()
+  return sources.some(
+    // A title counts as a raw-title leak only when it is long
+    // enough to be a concatenation rather than an ordinary noun
+    // phrase: measured collision — the Hilo pin's source is
+    // titled "Store listing" (13 chars) and its prose says "per
+    // the cited store listing" as plain citation language, which
+    // a 12-char threshold dropped wholesale (the coffee criterion
+    // fell to not_measurable). The specimen's leaked title ran
+    // ~100 chars; the line is set at 24.
+    (source) => source.title.length >= 24 && lower.includes(source.title.toLowerCase()),
+  )
+}
+
+/**
+ * Split research prose into segments (sentences and lines — the
+ * research genre is markdown-ish, so a bullet line is a segment),
+ * drop the working-narration segments, and strip scaffolding from
+ * the kept ones: bullet markers, bold markers, and the "Answer:" /
+ * "Conclusion:" / "Summary:" lead-in labels a synthesis segment
+ * wears. The conclusion itself is a finding and survives —
+ * de-scaffolded.
+ */
+export function filterWorkingNarration(
+  prose: string,
+  sources: readonly AnswerSource[],
+): { prose: string; dropped: string[] } {
+  const segments = prose
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  const kept: string[] = []
+  const dropped: string[] = []
+  for (const rawSegment of segments) {
+    const segment = rawSegment
+      .replace(/^\*\s+/, '')
+      .replace(/\*\*/g, '')
+      .trim()
+    if (segment.length === 0) continue
+    if (isWorkingNarration(segment, sources)) {
+      dropped.push(segment)
+      continue
+    }
+    kept.push(segment.replace(/^(?:Answer|Conclusion|Summary):\s*/i, ''))
   }
   return { prose: kept.join(' '), dropped }
 }
@@ -1617,7 +1731,17 @@ export function composeAnswer(input: {
       droppedClaims.push({ text: droppedSentence, sourceUrls: [...rawClaim.sourceUrls] })
     }
     if (filtered.prose.length === 0) continue
-    const claim: ResearchedClaim = { ...rawClaim, text: filtered.prose }
+    // Working-narration refusal (2026-11-03, the Texas specimen):
+    // the research model's process text is not findings — dropped
+    // and recorded like the banned sentences above, at the same
+    // composition boundary, so no path that composes claims can
+    // render it.
+    const hygienic = filterWorkingNarration(filtered.prose, input.research?.sources ?? [])
+    for (const droppedSegment of hygienic.dropped) {
+      droppedClaims.push({ text: droppedSegment, sourceUrls: [...rawClaim.sourceUrls] })
+    }
+    if (hygienic.prose.length === 0) continue
+    const claim: ResearchedClaim = { ...rawClaim, text: hygienic.prose }
     for (const url of claim.sourceUrls) citedUrls.add(url)
     const row = claimPlace(claim, screen.rows)
     const place = row ? places.find((p) => p.zcta === row.zcta) : undefined
@@ -2029,11 +2153,39 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   const stateBounded =
     input.intent.geographies.length > 0 &&
     input.intent.geographies.every((g) => isStateGeography(g))
+  // Researched-only superlative widening (owner live failure,
+  // 2026-11-03: "what city in Texas is the most liberal" answered as
+  // a whole-state rent sort — the research decorated the ten
+  // cheapest-rent towns, the towns it called strongly conservative
+  // led the card, and the qualifying shortlist sat at the bottom).
+  // The class: decomposition yields ONLY researched criteria (the
+  // combined carry included — "liberal" has no catalog entry), no
+  // decomposed Census measure, and the question carries a
+  // superlative attribute phrase no Census measure claims
+  // (hasUnclaimedCriterionPhrase). The catalog-named arms above
+  // cannot see this class — namedResearchCriterion is false by
+  // construction — so a retained measure (the parse's guess at a
+  // measure to show; the reader stated none) silently made the
+  // screen the answer. The widening admits the class under the
+  // same geography fencing as the named arm (placeless or a state
+  // bound; a named place's own rows remain the question's universe
+  // and stay screen-first — the Nashville contract), and the phrase
+  // test is the B1 guard: "cheapest place to live" phrases its
+  // superlative over the ranking frame itself, claims it by
+  // construction, and stays the national screen. Measured on the
+  // specimen text: hasUnclaimedCriterionPhrase returns true; on
+  // the B1 text every phrase is place-frame or a measure head.
+  const researchedOnlySuperlative =
+    researchCriteria.length > 0 &&
+    researchCriteria.every((c) => !c.decomposedMetricKey) &&
+    !namedResearchCriterion &&
+    hasUnclaimedCriterionPhrase(input.queryText ?? input.researchQuery ?? '', researchCriteria)
   const researchFirst =
     researchCriteria.some((c) => !c.decomposedMetricKey) &&
     screenProbe.criteria.length === 0 &&
     (input.intent.metricKeys.length === 0 ||
-      ((input.intent.geographies.length === 0 || stateBounded) && namedResearchCriterion)) &&
+      ((input.intent.geographies.length === 0 || stateBounded) &&
+        (namedResearchCriterion || researchedOnlySuperlative))) &&
     !!input.provider &&
     !!input.researchQuery
 
@@ -2231,7 +2383,16 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           ? firstResearchFailed
             ? 'The research lookup for the stated criteria did not return, so no place is named here.'
             : 'Research for the stated criteria did not name a place that could be matched to Census data, so no place is named here.'
-          : undefined,
+          : // The researched-only superlative class stated no
+            // Census measure at all, so the pulled figures are
+            // context for the named places — the summary says so
+            // rather than letting a pulled figure read as the
+            // measure the question asked for (the specimen's
+            // screen-first summary claimed "the measures in this
+            // request" for a rent figure the reader never stated).
+            researchedOnlySuperlative
+            ? 'The places named here were named by the cited research for the stated criteria, with Census figures shown for context.'
+            : undefined,
     })
     const composedWithMarker = {
       ...composedRaw,

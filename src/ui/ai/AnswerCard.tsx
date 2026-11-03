@@ -214,8 +214,17 @@ function CriterionEvidenceList({ answer }: { answer: ComposedAnswer }) {
   )
 }
 
-function ClaimSources({ claim, answer }: { claim: ResearchedClaim; answer: ComposedAnswer }) {
+function ClaimSources({
+  claim,
+  answer,
+  visibleUrls,
+}: {
+  claim: ResearchedClaim
+  answer: ComposedAnswer
+  visibleUrls?: readonly string[]
+}) {
   const links = claim.sourceUrls
+    .filter((url) => visibleUrls === undefined || visibleUrls.includes(url))
     .map((url) => answer.sources.find((s) => s.url === url))
     .filter((s): s is NonNullable<typeof s> => s !== undefined)
   if (links.length === 0) return null
@@ -239,16 +248,32 @@ function ClaimSources({ claim, answer }: { claim: ResearchedClaim; answer: Compo
   )
 }
 
-function ClaimText({ claim, answer }: { claim: ResearchedClaim; answer: ComposedAnswer }) {
+function ClaimText({
+  claim,
+  answer,
+  visibleUrls,
+}: {
+  claim: ResearchedClaim
+  answer: ComposedAnswer
+  visibleUrls?: readonly string[]
+}) {
   return (
     <p className="mt-2 text-base leading-relaxed text-slate-700">
       {claim.text}
-      <ClaimSources claim={claim} answer={answer} />
+      <ClaimSources claim={claim} answer={answer} visibleUrls={visibleUrls} />
     </p>
   )
 }
 
-function PlaceBlock({ place, answer }: { place: AnswerPlace; answer: ComposedAnswer }) {
+function PlaceBlock({
+  place,
+  answer,
+  sourceVisibility,
+}: {
+  place: AnswerPlace
+  answer: ComposedAnswer
+  sourceVisibility?: Map<ResearchedClaim, string[]>
+}) {
   return (
     <article className="mt-4 border-t border-slate-100 pt-4">
       <h3 className="text-lg font-semibold leading-snug text-slate-900">
@@ -283,10 +308,49 @@ function PlaceBlock({ place, answer }: { place: AnswerPlace; answer: ComposedAns
         ))}
       </dl>
       {place.claims.map((claim, i) => (
-        <ClaimText key={i} claim={claim} answer={answer} />
+        <ClaimText
+          key={i}
+          claim={claim}
+          answer={answer}
+          visibleUrls={sourceVisibility?.get(claim)}
+        />
       ))}
     </article>
   )
+}
+
+/**
+ * Citation render-once (owner live failure, 2026-11-03: the Texas
+ * specimen repeated one research result's full source-title list
+ * after EVERY claim — the same wall of titles eight times down the
+ * card). The provider's citation gate is result-granularity, so
+ * every claim legitimately carries the result's whole source list;
+ * the repetition is a render artifact, and the cure is at render:
+ * walking the claims in the card's own render order (the shown
+ * places in display order, then the general claims), each source
+ * URL is visible at the FIRST claim that cites it and at no later
+ * one. A claim whose sources all rendered earlier shows its text
+ * with no link list; the sources themselves stay on the answer.
+ */
+export function claimSourceVisibility(
+  answer: ComposedAnswer,
+): Map<ResearchedClaim, string[]> {
+  const seen = new Set<string>()
+  const visibility = new Map<ResearchedClaim, string[]>()
+  const claimsInRenderOrder = [
+    ...orderedPlaces(answer)
+      .slice(0, ANSWER_CARD_PLACE_LIMIT)
+      .flatMap((place) => place.claims),
+    ...answer.generalClaims,
+  ]
+  for (const claim of claimsInRenderOrder) {
+    visibility.set(
+      claim,
+      claim.sourceUrls.filter((url) => !seen.has(url)),
+    )
+    for (const url of claim.sourceUrls) seen.add(url)
+  }
+  return visibility
 }
 
 /**
@@ -322,6 +386,7 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
   const notMeasurableLine = notMeasurableCountiesLine(answer)
   const disclosureLines = geographyDisclosureLines(answer)
   const stateLine = stateMethodLine(answer)
+  const sourceVisibility = claimSourceVisibility(answer)
 
   return (
     <section
@@ -396,7 +461,12 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
           {orderedPlaces(answer)
             .slice(0, ANSWER_CARD_PLACE_LIMIT)
             .map((place) => (
-              <PlaceBlock key={place.zcta} place={place} answer={answer} />
+              <PlaceBlock
+                key={place.zcta}
+                place={place}
+                answer={answer}
+                sourceVisibility={sourceVisibility}
+              />
             ))}
           {answer.places.length > ANSWER_CARD_PLACE_LIMIT && (
             <p className="mt-3 text-base text-slate-600">
@@ -407,7 +477,12 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
           {answer.generalClaims.length > 0 && (
             <div className="mt-4 border-t border-slate-100 pt-2">
               {answer.generalClaims.map((claim, i) => (
-                <ClaimText key={i} claim={claim} answer={answer} />
+                <ClaimText
+                  key={i}
+                  claim={claim}
+                  answer={answer}
+                  visibleUrls={sourceVisibility.get(claim)}
+                />
               ))}
             </div>
           )}

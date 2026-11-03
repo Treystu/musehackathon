@@ -17,7 +17,9 @@ import { diagnostics } from '../../core/ai/diagnostics'
 import {
   SALARY_FIGURE_RE,
   decomposeResearchCriteria,
+  filterWorkingNarration,
   hasUnclaimedCriterionContent,
+  type AnswerSource,
   type ResearchCriterion,
 } from '../../core/ai/answer'
 import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
@@ -81,6 +83,29 @@ const POLITICS_QUESTION_RE =
 
 export function politicsCoverageNote(queryText: string | undefined): string {
   return queryText && POLITICS_QUESTION_RE.test(queryText) ? POLITICS_COVERAGE_NOTE : ''
+}
+
+/**
+ * The standalone research section's prose, filtered (Lane
+ * completion K9): the section renders what it stores verbatim, so
+ * the model's working narration ("I'll research...", interim
+ * standings, raw source titles) could head the findings raw. The
+ * answer-card path drops the same class inside compose; this
+ * applies that filter (filterWorkingNarration, answer.ts) per
+ * paragraph, so the section shows findings in their paragraph
+ * shape and narration nowhere. An all-narration return filters
+ * to the empty string, and the caller stores the run as
+ * unavailable — there is no finding to show.
+ */
+export function filterStandaloneResearchProse(
+  prose: string,
+  sources: readonly AnswerSource[],
+): string {
+  return prose
+    .split(/\n\n+/)
+    .map((para) => filterWorkingNarration(para, sources).prose)
+    .filter((para) => para.length > 0)
+    .join('\n\n')
 }
 
 /**
@@ -741,8 +766,18 @@ export function AskPanel({
     void attempt().then(
       (result) => {
         if (session.counters.researchRun !== run) return
-        if (result.prose && result.sources.length > 0) {
-          setResearch({ status: 'done', prose: result.prose, sources: result.sources })
+        // Standalone-research narration corner (Lane completion
+        // K9): the stored prose renders verbatim in the "From the
+        // web" section below, so a line of the model's working
+        // narration could head it raw — the helper applies
+        // compose's narration filter to the standalone surface.
+        // A return that is all narration stores as unavailable:
+        // there is no finding to show.
+        const prose = result.prose
+          ? filterStandaloneResearchProse(result.prose, result.sources)
+          : ''
+        if (prose && result.sources.length > 0) {
+          setResearch({ status: 'done', prose, sources: result.sources })
           setCoverageNote('')
         } else {
           setResearch({ status: 'unavailable' })

@@ -2509,7 +2509,12 @@ export function filterBannedSentences(prose: string): { prose: string; dropped: 
  */
 const NARRATION_PROCESS_VERB_RE =
   /\b(?:check|gather|map|look|search|examin|review|verif|compar|assess|investigat|research|compil|confirm|explor)\w*\b/i
-const NARRATION_FIRST_PERSON_RE = /\bI(?:'ll| will| have|'ve| am|'m|'d| would)\b/
+// Apostrophe forms: both the straight and the typographic
+// apostrophe match (Lane completion K9 — model prose writes the
+// first person either way, and the curly form escaped every
+// first-person pattern here while the straight form was dropped).
+const NARRATION_FIRST_PERSON_RE =
+  /\bI(?:['\u2019]ll| will| have|['\u2019]ve| am|['\u2019]m|['\u2019]d| would)\b/
 const NARRATION_FIRST_PERSON_PAST_RE =
   /\bI\s+(?:checked|gathered|mapped|looked|searched|examined|reviewed|verified|compared|assessed|investigated|researched)\b/i
 const NARRATION_PROGRESS_RE =
@@ -2544,7 +2549,7 @@ function isWorkingNarration(segment: string, sources: readonly AnswerSource[]): 
   if (NARRATION_FIRST_PERSON_RE.test(segment) && NARRATION_PROCESS_VERB_RE.test(segment)) {
     return true
   }
-  if (/^Let(?:'s| us| me)\b/i.test(segment)) return true
+  if (/^Let(?:['\u2019]s| us| me)\b/i.test(segment)) return true
   if (NARRATION_PROGRESS_RE.test(segment)) return true
   if (NARRATION_INTERIM_RE.test(segment)) return true
   if (NARRATION_META_RE.test(segment)) return true

@@ -7,8 +7,12 @@ import {
 } from '../../src/core/ai/briefing'
 import { createStubProvider, deterministicBriefingProse } from '../../src/core/ai/provider'
 import type { SourceRef } from '../../src/core/types'
-import { BriefingPackView, MethodologyQa, requestBriefingPack } from '../../src/ui/ai/BriefingView'
-import { BriefingPanel } from '../../src/ui/ai/BriefingPanel'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { BriefingPackView, BriefingView, MethodologyQa, requestBriefingPack } from '../../src/ui/ai/BriefingView'
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 const ACS: SourceRef = {
   publisher: 'U.S. Census Bureau',
@@ -164,45 +168,44 @@ describe('MethodologyQa', () => {
   })
 })
 
-// Union hand-merge (Panel B1): the Entire tree's BriefingPanel tests.
-// BriefingPanel is retained as a component but is NOT mounted in the
-// union app — the single mounted briefing surface is BriefingView
-// (Panel B4 gap G4). These tests pin the panel's own render contract.
-describe('BriefingPanel', () => {
-  it('renders nothing without an action or a result', () => {
-    const html = renderToStaticMarkup(<BriefingPanel />)
-    expect(html).toBe('')
-  })
+// Item-16 audit cure C6 (2026-11-02): BriefingPanel was a second,
+// unmounted implementation of the briefing act — no production
+// surface imported it; App mounts BriefingView only. It is deleted,
+// and the briefing contract is pinned here on the survivor. The pack
+// prose / withheld / verification-failure paths the panel tests used
+// to cover are pinned on the survivor's own pieces above:
+// requestBriefingPack (generation + verification refusal) and
+// BriefingPackView (pack prose, withheld narrative, disclosure).
+// This block replaces the deleted component's render-contract tests;
+// the change is recorded here per the audit's pin discipline.
+describe('BriefingView (C6 survivor)', () => {
+  const baseProps = {
+    provider: createStubProvider(),
+    title: REQ.title,
+    viewKind: REQ.viewKind,
+    places: REQ.places,
+    resolveFigure: HONEST,
+  }
 
-  it('shows the brief action for the current view', () => {
-    const html = renderToStaticMarkup(<BriefingPanel onBrief={() => {}} />)
-    expect(html).toContain('Brief this view')
-  })
-
-  it('renders pack prose with the standing disclosure', () => {
-    const html = renderToStaticMarkup(
-      <BriefingPanel briefing={{ prose: 'The median gross rent is 1,200.' }} />,
-    )
+  it('with no figures open, asks for a place first and offers no generate action', () => {
+    const html = renderToStaticMarkup(<BriefingView {...baseProps} figures={[]} />)
     expect(html).toContain('Briefing pack')
-    expect(html).toContain('The median gross rent is 1,200.')
-    expect(html).toContain('This is a reading of the shown figures')
+    expect(html).toContain('Open a place first')
+    expect(html).not.toContain('Generate briefing pack')
   })
 
-  it('never renders withheld prose', () => {
-    const html = renderToStaticMarkup(
-      <BriefingPanel briefing={{ prose: 'Invented 9999', withheld: true }} />,
-    )
-    expect(html).toContain('Explanation withheld')
-    expect(html).not.toContain('Invented 9999')
+  it('with figures open, shows the single generate action for the pack', () => {
+    const html = renderToStaticMarkup(<BriefingView {...baseProps} figures={FIGURES} />)
+    expect(html).toContain('Generate briefing pack')
+    expect(html).not.toContain('Brief this view')
   })
+})
 
-  it('shows a route failure in plain words', () => {
-    const html = renderToStaticMarkup(
-      <BriefingPanel
-        briefing={{ error: 'A figure in this view failed source verification, so no pack was generated.' }}
-      />,
-    )
-    expect(html).toContain('failed source verification')
-    expect(html).not.toContain('house-disclosure')
+describe('C6 pin: exactly one component implements the briefing act', () => {
+  it('BriefingPanel is deleted and no source file references it', () => {
+    expect(existsSync(join(repoRoot, 'src/ui/ai/BriefingPanel.tsx'))).toBe(false)
+    const app = readFileSync(join(repoRoot, 'src/ui/App.tsx'), 'utf8')
+    expect(app).not.toContain('BriefingPanel')
+    expect(app).toContain('BriefingView')
   })
 })

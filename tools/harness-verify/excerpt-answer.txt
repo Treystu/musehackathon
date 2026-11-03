@@ -84,18 +84,9 @@ export function verifyAnswer(
 
   return { ok: failures.length === 0, failures }
 }
-
-/* ------------------------------------------------------------------ */
-/* The staged flow                                                     */
-/* ------------------------------------------------------------------ */
-
-export interface AnswerPipelineInput {
-  intent: ValidatedIntent
-  rows: readonly AreaRow[]
-  /** Caller-resolved ZCTAs for non-ZIP geographies (place index seam). */
     const composed = input.unresolvedGeographies
-      ? { ...composedRaw, unresolvedGeographies: [...input.unresolvedGeographies] }
-      : composedRaw
+      ? { ...composedWithMarker, unresolvedGeographies: [...input.unresolvedGeographies] }
+      : composedWithMarker
     if (composed.status === 'empty') return { ...composed, stage: 'verify' }
     input.onStage?.('verify')
     const verdict = verifyAnswer(composed, cappedRows)

@@ -39,8 +39,10 @@
  *     no SVG, no empty frame (spec section 4.6).
  *   - Geometry loads lazily, when the map approaches the viewport, so
  *     the card renders fully first and an answer nobody scrolls to
- *     costs no request. Where IntersectionObserver does not exist the
- *     load is offered as an explicit button instead of never firing.
+ *     costs no request. The observer is only a fetch deferral: where
+ *     IntersectionObserver does not exist the load starts on mount
+ *     instead (item-16 cure C4) — it is never a button the reader
+ *     must click to release a map whose data is already computed.
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -232,7 +234,6 @@ export function ResultMap({
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [started, setStarted] = useState(false)
-  const [needsButton, setNeedsButton] = useState(false)
   const [load, setLoad] = useState<LoadState>({ kind: 'idle' })
   const [metric, setMetric] = useState<string | null>(null)
   const [activeKey, setActiveKey] = useState<string | null>(null)
@@ -263,7 +264,13 @@ export function ResultMap({
     const wrap = wrapRef.current
     if (!wrap) return
     if (typeof IntersectionObserver === 'undefined') {
-      setNeedsButton(true)
+      // No observer means no deferral signal will ever arrive, so
+      // the load starts on mount (item-16 cure C4). This fallback
+      // used to offer a gate button — a click that released value
+      // already computed and made the flow's step count depend on
+      // the browser. The observer may defer a fetch; it must never
+      // gate one behind a user act.
+      setStarted(true)
       return
     }
     const observer = new IntersectionObserver(
@@ -708,16 +715,7 @@ export function ResultMap({
         </HelpTip>
       </div>
 
-      {!started && needsButton && (
-        <button
-          type="button"
-          onClick={() => setStarted(true)}
-          className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
-        >
-          Show the map for this answer
-        </button>
-      )}
-      {!started && !needsButton && (
+      {!started && (
         <p className="mt-2 text-sm text-slate-500">The map loads when it comes into view.</p>
       )}
       {started && load.kind === 'loading' && (

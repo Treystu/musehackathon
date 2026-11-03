@@ -171,21 +171,30 @@ async function flushUntil(check: () => boolean, timeoutMs = 15000): Promise<void
   throw new Error('condition not met before timeout')
 }
 
-/** jsdom has no IntersectionObserver, so the map offers its button — the click is the start. */
-async function startMap() {
+/**
+ * C4 pin (item-16 audit, section 6): jsdom has no IntersectionObserver,
+ * and that no-observer path must start the geometry load on mount —
+ * there is no gate button to click and no click is needed. This
+ * helper sits at the seam where these tests used to click the gate
+ * button ("Show the map for this answer"); it fails if that button
+ * returns, and every test below then reaches the map with zero
+ * clicks. Replaces the old click-to-start helper — the change is
+ * recorded here per the audit's pin discipline.
+ */
+function expectNoGateButton() {
   const button = [...container.querySelectorAll('button')].find((b) =>
     b.textContent?.includes('Show the map for this answer'),
   )
-  expect(button, 'the show-map button should render when IntersectionObserver is absent').toBeTruthy()
-  await act(async () => {
-    button!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-  })
+  expect(
+    button,
+    'the gate button must not render when IntersectionObserver is absent (item-16 cure C4)',
+  ).toBeUndefined()
 }
 
 describe('ResultMap — choropleth mode', () => {
   it('paints the answer places, carries the figures on the legend ends, and re-colors without refetching on a metric switch', async () => {
     render(<ResultMap answer={answer({ places: SEATTLE_PLACES })} />)
-    await startMap()
+    expectNoGateButton()
     await flushUntil(() => container.querySelectorAll('svg [data-result-place]').length === 3)
 
     const paths = [...container.querySelectorAll('svg [data-result-place]')]
@@ -212,7 +221,7 @@ describe('ResultMap — choropleth mode', () => {
 
   it('shows the hovered place its card figures in the place panel', async () => {
     render(<ResultMap answer={answer({ places: SEATTLE_PLACES })} />)
-    await startMap()
+    expectNoGateButton()
     await flushUntil(() => container.querySelectorAll('svg [data-result-place]').length === 3)
     const target = container.querySelector('svg [data-result-place="98103"]')!
     await act(async () => {
@@ -235,7 +244,7 @@ describe('ResultMap — choropleth mode', () => {
       place('98199', 'Seattle, WA', [['median_gross_rent', 1500], ['median_home_value', 700000]]),
     ]
     render(<ResultMap answer={answer({ places, screenedCount: 4 })} />)
-    await startMap()
+    expectNoGateButton()
     await flushUntil(() => (container.textContent ?? '').includes('shown as dots'))
     expect(container.textContent).toContain('the Census Bureau publishes no area boundary for them')
     // The missing place still gets a dot element (a circle), not a polygon path.
@@ -248,12 +257,32 @@ describe('ResultMap — failure', () => {
   it('renders one quiet line and no SVG when geometry fails', async () => {
     render(<ResultMap answer={answer({ places: SEATTLE_PLACES })} />)
     tigerwebStatus = 500
-    await startMap()
+    expectNoGateButton()
     await flushUntil(() => (container.textContent ?? '').includes('could not be loaded'))
     expect(container.textContent).toContain(
       'The map for this answer could not be loaded. Every figure is in the answer above and the screening table below.',
     )
     expect(container.querySelector('svg')).toBeNull()
+  }, 30000)
+})
+
+describe('ResultMap — no-observer path starts on mount (item-16 cure C4)', () => {
+  it('an answer with places shows its loading line and then the map with zero clicks, and never a gate button', async () => {
+    // jsdom has no IntersectionObserver, so this IS the no-observer
+    // path. Before C4 it rendered a gate button and nothing loaded
+    // until that button was clicked; the pin fails on either half of
+    // that returning — a button in the tree, or no load under way
+    // after mount with zero clicks.
+    render(<ResultMap answer={answer({ places: SEATTLE_PLACES })} />)
+    expectNoGateButton()
+    const text = container.textContent ?? ''
+    expect(
+      text.includes('Loading the map for this answer') || container.querySelector('svg') !== null,
+      'the no-observer path must start the geometry load on mount, with no click',
+    ).toBe(true)
+    await flushUntil(() => container.querySelectorAll('svg [data-result-place]').length === 3)
+    expectNoGateButton()
+    expect(tigerwebCalls).toBe(1)
   }, 30000)
 })
 
@@ -275,7 +304,7 @@ describe('ResultMap — county mode', () => {
         })}
       />,
     )
-    await startMap()
+    expectNoGateButton()
     await flushUntil(() => container.querySelectorAll('svg [data-result-place]').length === 1)
     const elements = [...container.querySelectorAll('svg [data-result-place]')]
     expect(elements).toHaveLength(1)
@@ -310,7 +339,7 @@ describe('ResultMap — mixed aggregate + plain place (P2e)', () => {
         })}
       />,
     )
-    await startMap()
+    expectNoGateButton()
     await flushUntil(() => container.querySelectorAll('svg [data-result-place]').length === 2)
 
     const elements = [...container.querySelectorAll('svg [data-result-place]')]
@@ -343,7 +372,7 @@ describe('ResultMap — mixed aggregate + plain place (P2e)', () => {
         })}
       />,
     )
-    await startMap()
+    expectNoGateButton()
     await flushUntil(() => container.querySelectorAll('svg [data-result-place]').length === 2)
 
     const elements = [...container.querySelectorAll('svg [data-result-place]')]
@@ -363,7 +392,7 @@ describe('ResultMap — national mode', () => {
       place('10001', 'New York, NY', [['median_gross_rent', 2100], ['median_home_value', 900000]]),
     ]
     render(<ResultMap answer={answer({ geographyLevel: 'national', places, screenedCount: 2 })} />)
-    await startMap()
+    expectNoGateButton()
     await flushUntil(() => container.querySelectorAll('svg circle[data-result-place]').length === 2)
     expect(container.textContent).toContain('across the country')
     expect(tigerwebCalls, 'national mode uses shipped centroids, not TIGERweb geometry').toBe(0)

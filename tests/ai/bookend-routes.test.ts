@@ -8,6 +8,7 @@ import {
 } from '../../src/core/ai/provider'
 import {
   bookendCountersSnapshot,
+  bookendLastSettleSnapshot,
   resetBookendCountersForTests,
 } from '../../src/core/ai/bookend-counters'
 import { handlePlan, withStageTimeout, PLAN_SETTLE_MICRO_USD } from '../../functions/api/muse/plan'
@@ -205,6 +206,66 @@ describe('bottom bookend route', () => {
     expect(r.body.wonder).toBe('not-run')
     expect(r.body.outcome).toBe('degraded')
     expect(bookendCountersSnapshot().bottom.notRun).toBe(1)
+  })
+})
+
+describe('K4 last-bookend attribution (harness H2, lane side)', () => {
+  it('a settled verdict records settled-ok with a timestamp and the outcome', async () => {
+    resetBookendCountersForTests()
+    expect(bookendLastSettleSnapshot()).toEqual({ top: null, bottom: null })
+    const d = deps({
+      async stageChat() {
+        return { text: '{"verdict":"sound","objections":[]}', model: 'muse-wonder-1.0' }
+      },
+    })
+    await handlePlan({ method: 'POST', path: '/api/muse/plan', body: planBody, clientId: 'c1' }, d)
+    const last = bookendLastSettleSnapshot().top
+    expect(last?.settle).toBe('settled-ok')
+    expect(last?.outcome).toBe('sound')
+    expect(Number.isNaN(Date.parse(last?.at ?? ''))).toBe(false)
+    expect(bookendLastSettleSnapshot().bottom).toBeNull()
+  })
+
+  it('a missing stage provider records skipped, not an error', async () => {
+    resetBookendCountersForTests()
+    await handlePlan({ method: 'POST', path: '/api/muse/plan', body: planBody, clientId: 'c1' }, deps())
+    expect(bookendLastSettleSnapshot().top?.settle).toBe('skipped')
+    expect(bookendLastSettleSnapshot().top?.outcome).toBe('degraded')
+    await handleVerify({ method: 'POST', path: '/api/muse/verify', body: verifyBody, clientId: 'c1' }, deps())
+    expect(bookendLastSettleSnapshot().bottom?.settle).toBe('skipped')
+    expect(bookendLastSettleSnapshot().bottom?.outcome).toBe('notRun')
+  })
+
+  it('a verdict-less call records settled-error on both bookends', async () => {
+    resetBookendCountersForTests()
+    const badText = deps({
+      async stageChat() {
+        return { text: 'no verdict here', model: 'muse-wonder-1.0' }
+      },
+    })
+    await handlePlan({ method: 'POST', path: '/api/muse/plan', body: planBody, clientId: 'c1' }, badText)
+    expect(bookendLastSettleSnapshot().top?.settle).toBe('settled-error')
+    const down = deps({
+      async stageChat(): Promise<never> {
+        throw new Error('down')
+      },
+    })
+    await handleVerify({ method: 'POST', path: '/api/muse/verify', body: verifyBody, clientId: 'c1' }, down)
+    expect(bookendLastSettleSnapshot().bottom?.settle).toBe('settled-error')
+    expect(bookendLastSettleSnapshot().bottom?.outcome).toBe('notRun')
+  })
+
+  it('a verify verdict records settled-ok on the bottom bookend', async () => {
+    resetBookendCountersForTests()
+    const d = deps({
+      async stageChat() {
+        return { text: '{"verdict":"verified","concerns":[]}', model: 'muse-wonder-1.0' }
+      },
+    })
+    await handleVerify({ method: 'POST', path: '/api/muse/verify', body: verifyBody, clientId: 'c1' }, d)
+    const last = bookendLastSettleSnapshot().bottom
+    expect(last?.settle).toBe('settled-ok')
+    expect(last?.outcome).toBe('verified')
   })
 })
 

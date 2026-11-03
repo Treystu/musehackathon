@@ -129,7 +129,9 @@ export async function handlePlan(
   const model = typeof body.model === 'string' ? body.model : MUSE_WONDER_MODEL
   const started = Date.now()
   if (!deps.stageProvider) {
-    recordTopBookend('degraded')
+    // K4: the bookend never ran here — the settle class says so,
+    // distinct from a call that ran and produced no verdict.
+    recordTopBookend('degraded', 'skipped')
     accountTopBookend(deps, 'degraded')
     return {
       status: 200,

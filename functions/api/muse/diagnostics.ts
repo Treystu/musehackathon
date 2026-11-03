@@ -55,7 +55,10 @@ import {
 import { MUSE_SPARK_MODEL } from '../../../src/core/ai/meta-client'
 import { PROXY_ERRORS } from '../../../src/core/ai/proxy-errors'
 import { VALIDATOR_FAILURES } from '../../../src/core/ai/validator'
-import { bookendCountersSnapshot } from '../../../src/core/ai/bookend-counters'
+import {
+  bookendCountersSnapshot,
+  bookendLastSettleSnapshot,
+} from '../../../src/core/ai/bookend-counters'
 import {
   computeTrueCosts,
   sanitizeUsageSnapshot,
@@ -186,6 +189,16 @@ export async function handleDiagnostics(context: PagesContext<MuseEnv>): Promise
       // view is readable; the in-isolate counters are the fallback
       // for a deployment whose meter cannot report them.
       hourglass: usageReadable ? usage.hourglass : bookendCountersSnapshot(),
+      // Last-bookend attribution (Lane completion K4, harness item
+      // H2's lane side): the latest settle per bookend on THIS
+      // isolate — timestamp, recorded outcome, and settle class
+      // (settled-ok / settled-error / skipped). Per-isolate by
+      // nature, like the fallback counters: a null entry means
+      // this isolate has not settled that bookend, which is the
+      // attribution signal when the aggregate counts and the app
+      // path disagree (R21 F4: bookends visibly executing while
+      // the counts read plan 0 / verify 2).
+      hourglassLastSettle: bookendLastSettleSnapshot(),
       errors,
       deployment: {
         pages: env.CF_PAGES === '1',

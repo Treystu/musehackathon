@@ -27,18 +27,66 @@ const counters: BookendCounters = {
   bottom: { verified: 0, concerns: 0, notRun: 0 },
 }
 
-export function recordTopBookend(outcome: keyof BookendCounters['top']): void {
-  counters.top[outcome] += 1
+/**
+ * Last-bookend attribution (Lane completion K4, harness item H2's
+ * lane side, 2026-11-03). The aggregate counts above could not
+ * answer the R21 F4 question — the bookends visibly executed on
+ * the app path while the counts read plan 0 / verify 2 in every
+ * diagnostics read — because a count carries no WHEN and no WHICH
+ * isolate settled last. Each settle now also records the latest
+ * settle per bookend: an ISO timestamp and a settle class.
+ * 'settled-ok' means a verdict landed (any verdict, including
+ * unsound/concerns); 'settled-error' means the call ran but
+ * produced no verdict (unparseable reply, timeout, provider
+ * failure); 'skipped' means the bookend never ran (no stage
+ * provider configured). The record is per-isolate by nature, like
+ * these counters; diagnostics exposes it beside the counts with
+ * that posture stated, and a null entry means this isolate has
+ * not settled that bookend yet — itself the attribution signal
+ * when the counts and the app disagree.
+ */
+export type BookendSettleClass = 'settled-ok' | 'settled-error' | 'skipped'
+
+export interface BookendLastSettle {
+  at: string
+  settle: BookendSettleClass
 }
 
-export function recordBottomBookend(outcome: keyof BookendCounters['bottom']): void {
+let lastTopSettle: (BookendLastSettle & { outcome: keyof BookendCounters['top'] }) | null = null
+let lastBottomSettle: (BookendLastSettle & { outcome: keyof BookendCounters['bottom'] }) | null =
+  null
+
+export function recordTopBookend(
+  outcome: keyof BookendCounters['top'],
+  settle: BookendSettleClass = outcome === 'degraded' ? 'settled-error' : 'settled-ok',
+): void {
+  counters.top[outcome] += 1
+  lastTopSettle = { at: new Date().toISOString(), outcome, settle }
+}
+
+export function recordBottomBookend(
+  outcome: keyof BookendCounters['bottom'],
+  settle: BookendSettleClass = outcome === 'notRun' ? 'settled-error' : 'settled-ok',
+): void {
   counters.bottom[outcome] += 1
+  lastBottomSettle = { at: new Date().toISOString(), outcome, settle }
 }
 
 export function bookendCountersSnapshot(): BookendCounters {
   return {
     top: { ...counters.top },
     bottom: { ...counters.bottom },
+  }
+}
+
+/** The latest settle per bookend (null until this isolate settles one). */
+export function bookendLastSettleSnapshot(): {
+  top: (BookendLastSettle & { outcome: string }) | null
+  bottom: (BookendLastSettle & { outcome: string }) | null
+} {
+  return {
+    top: lastTopSettle ? { ...lastTopSettle } : null,
+    bottom: lastBottomSettle ? { ...lastBottomSettle } : null,
   }
 }
 
@@ -50,4 +98,6 @@ export function resetBookendCountersForTests(): void {
   counters.bottom.verified = 0
   counters.bottom.concerns = 0
   counters.bottom.notRun = 0
+  lastTopSettle = null
+  lastBottomSettle = null
 }

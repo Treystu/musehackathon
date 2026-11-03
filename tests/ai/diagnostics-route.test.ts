@@ -61,6 +61,32 @@ describe('GET /api/muse/diagnostics', () => {
     resetMeterForTests()
   })
 
+  it('exposes the last-bookend attribution beside the aggregate counts (K4)', async () => {
+    const { recordTopBookend, resetBookendCountersForTests } =
+      await import('../../src/core/ai/bookend-counters')
+    resetBookendCountersForTests()
+    const res = await handleDiagnostics(context({}))
+    const body = (await res.json()) as {
+      hourglassLastSettle?: { top: unknown; bottom: unknown }
+    }
+    // Before any settle on this isolate, both entries are null —
+    // the attribution signal itself (R21 F4).
+    expect(body.hourglassLastSettle).toEqual({ top: null, bottom: null })
+    recordTopBookend('sound')
+    const res2 = await handleDiagnostics(context({}))
+    const body2 = (await res2.json()) as {
+      hourglassLastSettle?: {
+        top: { settle: string; outcome: string; at: string } | null
+        bottom: unknown
+      }
+    }
+    expect(body2.hourglassLastSettle?.top?.settle).toBe('settled-ok')
+    expect(body2.hourglassLastSettle?.top?.outcome).toBe('sound')
+    expect(Number.isNaN(Date.parse(body2.hourglassLastSettle?.top?.at ?? ''))).toBe(false)
+    expect(body2.hourglassLastSettle?.bottom).toBeNull()
+    resetBookendCountersForTests()
+  })
+
   it('reports a configured key as a boolean and never echoes the key', async () => {
     // The portal env: key set + METER binding present, so the durable
     // persistence report is earned by the binding, not hard-coded.

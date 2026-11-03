@@ -87,7 +87,8 @@ export async function handleVerify(
   const model = typeof body.model === 'string' ? body.model : MUSE_WONDER_MODEL
   const started = Date.now()
   if (!deps.stageProvider) {
-    recordBottomBookend('notRun')
+    // K4: skipped, not an error — see plan.ts.
+    recordBottomBookend('notRun', 'skipped')
     accountBottomBookend(deps, 'notRun')
     return {
       status: 200,

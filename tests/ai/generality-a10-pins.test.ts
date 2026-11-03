@@ -271,8 +271,11 @@ describe('FM-14 extraction precision (pipeline)', () => {
       'Burlington, VT anchors the scene with the widest tap lists in the state. ' +
       'Stowe-area draws skiers and beer travelers alike.'
     const answer = await runPipeline({ q, intent: { geographies: ['Vermont'], metricKeys: [] }, rows: VT_ROWS, prose })
-    expect(answer.places.map((p) => p.name)).toEqual(['Burlington, VT'])
-    expect(answer.unresolvedCandidates).toEqual(['Stowe-area'])
+    // FM-16 (cluster 3) completes the hyphenated area form against
+    // the bound index: Stowe-area now resolves to Stowe, VT and
+    // cards (under FM-14 alone it was recorded as written).
+    expect(answer.places.map((p) => p.name)).toEqual(['Burlington, VT', 'Stowe, VT'])
+    expect(answer.unresolvedCandidates).toEqual([])
     // Early + BeerAdvocate reached extraction and were gated out;
     // the narration sentence was filtered before extraction and is
     // not part of the count.
@@ -280,7 +283,10 @@ describe('FM-14 extraction precision (pipeline)', () => {
     expect(JSON.stringify(answer.unresolvedCandidates)).not.toContain("Now I'll")
   })
 
-  it('the FL weather shape: nothing materializes, fragments counted, the partial name the only recorded one', async () => {
+  it('the FL weather shape under FM-14 alone: nothing materializes, fragments counted, the partial name the only recorded one', async () => {
+    // The unit-level FM-14 reading (no bound index supplied to the
+    // bare pass) stands in the unit pins above; at pipeline level
+    // FM-16's completion now applies — see the FM-16 section.
     const q = 'What city in Florida has the best weather year-round?'
     const answer = await runPipeline({
       q,
@@ -288,9 +294,86 @@ describe('FM-14 extraction precision (pipeline)', () => {
       rows: FL_ROWS,
       prose: FL_FRAGMENT_PROSE,
     })
-    expect(answer.status).toBe('empty')
-    expect(answer.places).toEqual([])
-    expect(answer.unresolvedCandidates).toEqual(['Petersburg'])
+    expect(answer.unmatchedFragmentCount).toBe(5)
+    expect(answer.unresolvedCandidates).toEqual([])
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* FM-16 — name normalization against the bound index                  */
+/* ------------------------------------------------------------------ */
+
+describe('FM-16 name normalization (unit)', () => {
+  it('a suffix completion resolves when the bound index holds exactly one ("Petersburg" -> St. Petersburg, FL)', () => {
+    const bare = extractBareCandidateNames(
+      'Petersburg appears in several guides to the bay area.',
+      [],
+      FL_ROWS,
+      FL_ROWS,
+    )
+    expect(bare.names).toEqual(['St. Petersburg, FL'])
+    expect(bare.unresolved).toEqual([])
+    expect(bare.ambiguous).toEqual([])
+  })
+
+  it('the bound disambiguates what the nation leaves ambiguous (Petersburg, VA in the full row set)', () => {
+    const national = [...FL_ROWS, row('23803', 'Petersburg, VA', 900)]
+    const bare = extractBareCandidateNames(
+      'Petersburg appears in several guides to the bay area.',
+      [],
+      national,
+      FL_ROWS,
+    )
+    expect(bare.names).toEqual(['St. Petersburg, FL'])
+    expect(bare.ambiguous).toEqual([])
+  })
+
+  it('a hyphenated area form resolves through its head ("Stowe-area" -> Stowe, VT)', () => {
+    const bare = extractBareCandidateNames(
+      'Stowe-area draws skiers and beer travelers alike.',
+      [],
+      VT_ROWS,
+      VT_ROWS,
+    )
+    expect(bare.names).toEqual(['Stowe, VT'])
+    expect(bare.unresolved).toEqual([])
+  })
+
+  it('two distinct bound completions are recorded as ambiguous, never guessed', () => {
+    const bound = [row('33701', 'St. Petersburg, FL', 1450), row('33702', 'Fort Petersburg, FL', 1300)]
+    const bare = extractBareCandidateNames(
+      'Petersburg appears in several guides to the bay area.',
+      [],
+      bound,
+      bound,
+    )
+    expect(bare.names).toEqual([])
+    expect(bare.ambiguous).toEqual(['Petersburg'])
+  })
+
+  it('no bound index: normalization does not run and the written form is the record', () => {
+    const bare = extractBareCandidateNames(
+      'Stowe-area draws skiers and beer travelers alike.',
+      [],
+      VT_ROWS,
+    )
+    expect(bare.names).toEqual([])
+    expect(bare.unresolved).toEqual(['Stowe-area'])
+  })
+})
+
+describe('FM-16 name normalization (pipeline)', () => {
+  it('the FL weather specimen: the partial name completes and the did-not-name terminal becomes a card', async () => {
+    const q = 'What city in Florida has the best weather year-round?'
+    const answer = await runPipeline({
+      q,
+      intent: { geographies: ['Florida'], metricKeys: [] },
+      rows: FL_ROWS,
+      prose: FL_FRAGMENT_PROSE,
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name)).toEqual(['St. Petersburg, FL'])
+    expect(answer.unresolvedCandidates).toEqual([])
     expect(answer.unmatchedFragmentCount).toBe(5)
   })
 })

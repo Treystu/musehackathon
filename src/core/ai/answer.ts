@@ -1750,6 +1750,78 @@ function isPlaceShapedMention(mention: string, componentWords: ReadonlySet<strin
 }
 
 /**
+ * The bound geography's name index for normalization (Lane A10
+ * FM-16): every bound place name under its full bare form (exact)
+ * and under each trailing word sequence (suffix) — "St.
+ * Petersburg" is indexed at "st. petersburg", and at "petersburg".
+ * Values are the distinct full row names carrying the key, so a
+ * key held by two different bound places is an ambiguity to
+ * record, never a guess to make.
+ */
+interface BoundNameIndex {
+  exact: Map<string, ReadonlySet<string>>
+  suffix: Map<string, ReadonlySet<string>>
+}
+
+function boundNameIndex(rows: readonly AreaRow[]): BoundNameIndex {
+  const add = (map: Map<string, Set<string>>, key: string, name: string) => {
+    const set = map.get(key) ?? new Set<string>()
+    set.add(name)
+    map.set(key, set)
+  }
+  const exact = new Map<string, Set<string>>()
+  const suffix = new Map<string, Set<string>>()
+  for (const row of rows) {
+    const bare = row.name.split(',')[0]!.trim()
+    if (!bare) continue
+    const bareLower = bare.toLowerCase()
+    add(exact, bareLower, row.name)
+    const words = bareLower.split(/\s+/)
+    for (let start = 1; start < words.length; start++) {
+      add(suffix, words.slice(start).join(' '), row.name)
+    }
+  }
+  return { exact, suffix }
+}
+
+type BoundCompletion = { rowName: string } | { ambiguous: true }
+
+/**
+ * Normalize one bare mention against the bound index (FM-16):
+ * the written form first, then its hyphen head ("Stowe-area" is
+ * tested as "Stowe-area", then as "Stowe"); at each form, an
+ * exact bound name, then a suffix completion ("Petersburg" ->
+ * "St. Petersburg"). A form held by two or more distinct bound
+ * places completes ambiguously — recorded, not guessed. Returns
+ * null when the bound index holds nothing for the mention, and
+ * the caller falls through to the all-rows reading unchanged.
+ * The bound-only scope is the safety property: nationally,
+ * "Petersburg" also names exact rows in other states and several
+ * completions, so unbound completion would guess; inside the
+ * asked geography the index either holds exactly one completion
+ * or the ambiguity is the honest record. Suffix matching is
+ * word-aligned and trailing-only, so every prefix form the index
+ * holds (St., Fort, Mount, Lake, Port) completes without a
+ * prefix lexicon.
+ */
+function completeAgainstBound(candidate: string, index: BoundNameIndex): BoundCompletion | null {
+  const tries = [candidate.toLowerCase()]
+  const hyphenAt = candidate.indexOf('-')
+  if (hyphenAt > 0) tries.push(candidate.slice(0, hyphenAt).toLowerCase())
+  for (const t of tries) {
+    const exact = index.exact.get(t)
+    if (exact && exact.size > 0) {
+      return exact.size === 1 ? { rowName: [...exact][0]! } : { ambiguous: true }
+    }
+    const suffix = index.suffix.get(t)
+    if (suffix && suffix.size > 0) {
+      return suffix.size === 1 ? { rowName: [...suffix][0]! } : { ambiguous: true }
+    }
+  }
+  return null
+}
+
+/**
  * Bare-name candidate extraction (Lane A9 FM-5): findings prose
  * also names places with no state at all ("Sanibel is often praised
  * for its gentle coastal weather"), and the extraction above reads
@@ -1773,6 +1845,7 @@ export function extractBareCandidateNames(
   prose: string,
   alreadyExtracted: readonly string[],
   rows: readonly AreaRow[],
+  boundRows?: readonly AreaRow[],
 ): { names: string[]; ambiguous: string[]; unresolved: string[]; fragments: number } {
   const byBare = new Map<string, string[]>()
   for (const row of rows) {
@@ -1791,6 +1864,10 @@ export function extractBareCandidateNames(
   const unresolved: string[] = []
   let fragments = 0
   const componentWords = placeNameComponentWords(rows)
+  // Name normalization (FM-16) tests against the bound rows when
+  // the caller supplies them; without a bound there is no index
+  // to normalize against and the all-rows reading below stands.
+  const boundIndex = boundRows && boundRows.length > 0 ? boundNameIndex(boundRows) : null
   const seen = new Set<string>()
   for (const sentence of prose.split(/(?<=[.!?])\s+/)) {
     if (/^Answer:/.test(sentence)) continue
@@ -1805,6 +1882,26 @@ export function extractBareCandidateNames(
       if (covered.has(key)) {
         settled = true
         break
+      }
+      // Bound normalization (FM-16) runs before the all-rows
+      // reading: the bound is what disambiguates — "Petersburg"
+      // is ambiguous nationally and exactly one completion
+      // inside Florida. A completion settles the mention here;
+      // no completion falls through to the all-rows reading.
+      if (boundIndex) {
+        const completion = completeAgainstBound(candidate, boundIndex)
+        if (completion) {
+          settled = true
+          if (!seen.has(key)) {
+            seen.add(key)
+            if ('rowName' in completion) {
+              if (!names.includes(completion.rowName)) names.push(completion.rowName)
+            } else {
+              ambiguous.push(candidate)
+            }
+          }
+          break
+        }
       }
       const hits = byBare.get(key)
       if (!hits) continue
@@ -3164,6 +3261,17 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // compose), so a place the research names outside the asked
   // geography can appear on neither rendering.
   const candidateBound = candidateBoundForInput(input)
+  // The bound rows themselves, for name normalization (FM-16):
+  // bare extraction completes partial and hyphenated mentions
+  // against the asked geography's own places, never the nation's.
+  const candidateBoundRows = candidateBound.zctas
+    ? input.rows.filter((r) => candidateBound.zctas!.has(r.zcta))
+    : candidateBound.states
+      ? input.rows.filter((r) => {
+          const s = stateSuffixOf(r.name)
+          return s !== null && candidateBound.states!.has(s)
+        })
+      : undefined
 
   // The research stage's reader-facing subject, from the reader's own
   // words: the first named (non-combined) decomposed criterion's label,
@@ -3327,6 +3435,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
                   extractionProseNow,
                   extractedStdNow,
                   input.rows,
+                  candidateBoundRows,
                 )
                 const extractedNow = [
                   ...extractedStdNow,
@@ -3405,7 +3514,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // candidate list when the bound rows carry exactly one match
     // (FM-5, extractBareCandidateNames); ambiguous bare names are
     // recorded with the unresolved names below, never resolved.
-    const bare = extractBareCandidateNames(extractionProse, extractedStd, input.rows)
+    const bare = extractBareCandidateNames(extractionProse, extractedStd, input.rows, candidateBoundRows)
     const extracted = [
       ...extractedStd,
       ...bare.names.filter((n) => !extractedStd.includes(n)),

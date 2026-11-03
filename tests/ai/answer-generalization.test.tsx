@@ -189,13 +189,20 @@ describe('(ii) research-first: only external criteria', () => {
     })
     expect(answer.status).toBe('verified')
     expect(answer.places.map((p) => p.name)).toEqual(['Hilo, HI'])
-    // ADAPTED (Lane A9 FM-5): the provider's prose also names
-    // Nowhereville bare, as a sentence subject, and the bare-name
-    // pass records such mentions with the unresolved names instead
-    // of letting them vanish. The invariant this pin guards —
-    // unresolvable names are dropped and counted, never guessed —
-    // is unchanged: places still holds Hilo alone.
-    expect(answer.unresolvedCandidates).toEqual(['Atlantis, ZZ', 'Nowhereville'])
+    // ADAPTED (Lane A9 FM-5, then Lane A10 FM-14): the provider's
+    // prose also names Nowhereville bare, as a sentence subject.
+    // FM-5 recorded such mentions with the unresolved names so
+    // they could not vanish; FM-14's extraction-precision gate
+    // records a no-row bare mention as a NAME only when the loaded
+    // place index can test it as place-shaped (a component word of
+    // a real place name) — this fixture's rows cannot test
+    // "Nowhereville", so the mention is counted as a fragment on
+    // the answer instead of printed as a name. The invariant this
+    // pin guards — unresolvable names are dropped and counted,
+    // never guessed — is unchanged: places still holds Hilo alone,
+    // and the mention is accounted, not silent.
+    expect(answer.unresolvedCandidates).toEqual(['Atlantis, ZZ'])
+    expect(answer.unmatchedFragmentCount).toBe(1)
   })
 
   it('partial evidence stays labelled partial and is never silently upgraded', async () => {

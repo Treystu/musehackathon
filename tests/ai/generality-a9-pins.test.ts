@@ -416,13 +416,22 @@ describe('A9 pins — decomposition accounting (FM-2 / FM-3)', () => {
 })
 
 describe('A9 pins — resolution (FM-5 bare names, FM-6 list genre)', () => {
-  it('FM-5: a bare name with no bound row is recorded, not vanished (Sanibel)', async () => {
+  it('FM-5/FM-14: a bare name with no bound row is accounted, not vanished, and never guessed (Sanibel)', async () => {
     // The battery's bound FL rows carry no Sanibel: the phase-1
-    // defect was that the mention left NO record. It now lands in
-    // unresolvedCandidates under its written form.
+    // defect was that the mention left NO record. FM-5 recorded it
+    // in unresolvedCandidates under its written form. ADAPTED
+    // (Lane A10 FM-14): the extraction-precision gate records a
+    // no-row bare mention as a name only when the loaded place
+    // index can test it as place-shaped — this fixture's ten rows
+    // cannot test "Sanibel" (a production load carries it as a
+    // component of Sanibel, FL and records the name), so here the
+    // mention is counted as a fragment on the answer: accounted
+    // and disclosed by count, never printed as a name it cannot
+    // test, and never guessed into a place.
     const r = await runScenario(SCENARIOS.climate_weather!)
     expect(r.places).not.toContain('Sanibel, FL')
-    expect(r.unresolved).toContain('Sanibel')
+    expect(r.unresolved).not.toContain('Sanibel')
+    expect(r.answer.unmatchedFragmentCount).toBeGreaterThanOrEqual(1)
   })
 
   it('FM-5: a bare name carried by exactly one bound row resolves', async () => {

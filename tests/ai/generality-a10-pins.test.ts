@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   bindResolvedCandidates,
   candidateBoundForInput,
+  extractBareCandidateNames,
   runAnswerPipeline,
   type ComposedAnswer,
   type ResolvedCandidate,
@@ -161,5 +162,135 @@ describe('FM-15 geography binding (the Michigan specimen, sheet A Q4)', () => {
     const answer = await runPipeline({ q, intent: { geographies: [], metricKeys: [] }, rows: MI_ROWS, prose: MI_PROSE })
     expect(answer.places.map((p) => p.name)).toContain('Ford, KS')
     expect(answer.outOfBoundCandidates).toBeUndefined()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* FM-14 — extraction precision (the sheet-A fragment specimens)       */
+/* ------------------------------------------------------------------ */
+
+const FL_ROWS = [
+  row('32208', 'Jacksonville, FL', 1250),
+  row('33101', 'Miami, FL', 2100),
+  row('33602', 'Tampa, FL', 1650),
+  row('32801', 'Orlando, FL', 1550),
+  row('32301', 'Tallahassee, FL', 1100),
+  row('33901', 'Fort Myers, FL', 1700),
+  row('34102', 'Naples, FL', 2300),
+  row('32501', 'Pensacola, FL', 1050),
+  row('33701', 'St. Petersburg, FL', 1450),
+]
+
+// The FL weather specimen's prose shape (sheet A Q1): research
+// engaged and returned material, but its sentences open with
+// fragments, and the one real place mention is a partial name.
+const FL_FRAGMENT_PROSE =
+  'Initial findings cover the whole coast. ' +
+  'Described as mild year-round, the climate suits most visitors. ' +
+  'January-April is the driest window for outdoor plans. ' +
+  'Another consideration is hurricane season. ' +
+  'No month averages below sixty degrees. ' +
+  'Petersburg appears in several guides to the bay area.'
+
+const VT_ROWS = [
+  row('05401', 'Burlington, VT', 1500),
+  row('05301', 'Brattleboro, VT', 1050),
+  row('05602', 'Montpelier, VT', 1100),
+  row('05701', 'Rutland, VT', 900),
+  row('05201', 'Bennington, VT', 950),
+  row('05819', 'St. Johnsbury, VT', 800),
+  row('05478', 'St. Albans, VT', 1000),
+  row('05641', 'Barre, VT', 850),
+  row('05001', 'White River Junction, VT', 1050),
+  row('05346', 'Middlebury, VT', 1200),
+  row('05672', 'Stowe, VT', 1320),
+]
+
+describe('FM-14 extraction precision (unit, verbatim sheet-A lists)', () => {
+  it('the FL weather fragments are counted, never recorded; the partial name is recorded', () => {
+    const bare = extractBareCandidateNames(FL_FRAGMENT_PROSE, [], FL_ROWS)
+    expect(bare.unresolved).toEqual(['Petersburg'])
+    expect(bare.names).toEqual([])
+    expect(bare.ambiguous).toEqual([])
+    // Initial, Described, January-April, Another, No.
+    expect(bare.fragments).toBe(5)
+  })
+
+  it('the OR charming specimen list contributes zero recorded names', () => {
+    const orRows = [
+      row('97103', 'Astoria, OR', 1150),
+      row('97365', 'Newport, OR', 1200),
+      row('97110', 'Cannon Beach, OR', 1600),
+      row('97439', 'Florence, OR', 1050),
+      row('97411', 'Bandon, OR', 1100),
+      row('97415', 'Brookings, OR', 1150),
+      row('97367', 'Lincoln City, OR', 1250),
+      row('97138', 'Seaside, OR', 1300),
+    ]
+    const prose =
+      "Now I'll survey the coast towns next. " +
+      'No town on the list is large. ' +
+      'Downtown districts vary in charm. ' +
+      'One account after another praises the main streets. ' +
+      'Maritime Museum exhibits anchor the harbor towns. ' +
+      'Known for its galleries, the town draws weekend visitors. ' +
+      'Described as storybook, the village keeps its historic facades. ' +
+      'Boutique inns line the quiet streets. ' +
+      'Howard. ' +
+      'Called the prettiest town in the state by one guide, it keeps a busy farmers market. ' +
+      'Also notable are the river walks. ' +
+      'What gives the town its character is the preserved architecture. ' +
+      'They say the lighthouse views complete the picture.'
+    const bare = extractBareCandidateNames(prose, [], orRows)
+    expect(bare.unresolved).toEqual([])
+    expect(bare.names).toEqual([])
+    // Now I'll, No, Downtown, One, Maritime Museum, Known,
+    // Described, Boutique, Howard., Called, Also, What, They.
+    expect(bare.fragments).toBe(13)
+  })
+
+  it('the VT beer fragments are counted; the hyphenated area form is recorded as written (FM-16 normalizes it)', () => {
+    const prose =
+      'Early reviews praise the variety on offer. ' +
+      'BeerAdvocate ranks the state near the top for selection. ' +
+      'Stowe-area draws skiers and beer travelers alike.'
+    const bare = extractBareCandidateNames(prose, [], VT_ROWS)
+    expect(bare.unresolved).toEqual(['Stowe-area'])
+    // Early, BeerAdvocate.
+    expect(bare.fragments).toBe(2)
+  })
+})
+
+describe('FM-14 extraction precision (pipeline)', () => {
+  it('narration never reaches extraction, and fragments are counted on the answer, not printed as names', async () => {
+    const q = 'What town in Vermont has the best beer selection?'
+    const prose =
+      "Now I'll check the remaining towns next. " +
+      'Early reviews praise the variety on offer in the state. ' +
+      'BeerAdvocate ranks Vermont near the top for selection. ' +
+      'Burlington, VT anchors the scene with the widest tap lists in the state. ' +
+      'Stowe-area draws skiers and beer travelers alike.'
+    const answer = await runPipeline({ q, intent: { geographies: ['Vermont'], metricKeys: [] }, rows: VT_ROWS, prose })
+    expect(answer.places.map((p) => p.name)).toEqual(['Burlington, VT'])
+    expect(answer.unresolvedCandidates).toEqual(['Stowe-area'])
+    // Early + BeerAdvocate reached extraction and were gated out;
+    // the narration sentence was filtered before extraction and is
+    // not part of the count.
+    expect(answer.unmatchedFragmentCount).toBe(2)
+    expect(JSON.stringify(answer.unresolvedCandidates)).not.toContain("Now I'll")
+  })
+
+  it('the FL weather shape: nothing materializes, fragments counted, the partial name the only recorded one', async () => {
+    const q = 'What city in Florida has the best weather year-round?'
+    const answer = await runPipeline({
+      q,
+      intent: { geographies: ['Florida'], metricKeys: [] },
+      rows: FL_ROWS,
+      prose: FL_FRAGMENT_PROSE,
+    })
+    expect(answer.status).toBe('empty')
+    expect(answer.places).toEqual([])
+    expect(answer.unresolvedCandidates).toEqual(['Petersburg'])
+    expect(answer.unmatchedFragmentCount).toBe(5)
   })
 })

@@ -374,6 +374,16 @@ export interface ComposedAnswer {
    * Census data, in a geography the reader did not ask about.
    */
   outOfBoundCandidates?: string[]
+  /**
+   * Count of candidate-shaped tokens the extraction gate refused
+   * as sentence fragments rather than names (Lane A10 FM-14):
+   * capitalized prose tokens ("Initial", "January-April",
+   * "BeerAdvocate") that no place name in the loaded data uses as
+   * a component word. They are counted here so the card can count
+   * them (FM-17) without printing them — printing them as names
+   * was the sheet-A failure. Absent when none were counted.
+   */
+  unmatchedFragmentCount?: number
   geographyLevel: AnswerGeographyLevel
   /** A requested geography level the shipped data cannot serve ('county'), or null. */
   unsupportedGeography: string | null
@@ -1708,6 +1718,38 @@ const BARE_MENTION_OPENERS: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * The words the loaded place names themselves use, hyphen-split
+ * and lower-cased — the gazetteer the extraction-precision gate
+ * (Lane A10 FM-14) tests a written token against: a token is
+ * place-shaped when the place index itself uses one of its words
+ * inside a real place name ("petersburg" from St. Petersburg,
+ * "stowe" from Stowe). The test is deterministic and updates with
+ * the data; the alternative, a fragment stoplist, is open-ended
+ * and rots with the prose genre.
+ */
+function placeNameComponentWords(rows: readonly AreaRow[]): ReadonlySet<string> {
+  const words = new Set<string>()
+  for (const row of rows) {
+    const bare = row.name.split(',')[0]!.trim()
+    for (const word of bare.split(/[\s-]+/)) {
+      const w = word.toLowerCase().replace(/\.+$/, '')
+      if (w) words.add(w)
+    }
+  }
+  return words
+}
+
+/** Whether a mention the rows do not carry is still place-shaped (FM-14). */
+function isPlaceShapedMention(mention: string, componentWords: ReadonlySet<string>): boolean {
+  const words = mention
+    .toLowerCase()
+    .split(/[\s-]+/)
+    .map((w) => w.replace(/\.+$/, ''))
+    .filter((w) => w.length > 0)
+  return words.some((w) => componentWords.has(w))
+}
+
+/**
  * Bare-name candidate extraction (Lane A9 FM-5): findings prose
  * also names places with no state at all ("Sanibel is often praised
  * for its gentle coastal weather"), and the extraction above reads
@@ -1721,17 +1763,17 @@ const BARE_MENTION_OPENERS: ReadonlySet<string> = new Set([
  * of Dallas" is named in exactly that position, and resolving it
  * would rank the anchor among its own suburbs (measured in this
  * cure's first pin run: Dallas and Chicago entered the ranked
- * sets). Three outcomes, none of them a guess: the bound rows
+ * sets). Four outcomes, none of them a guess: the bound rows
  * carry the name exactly once (resolved), two or more times
- * (ambiguous — recorded, not resolved), or not at all (unresolved
- * — recorded with the other unmatched names, so the mention no
- * longer vanishes).
+ * (ambiguous — recorded, not resolved), or not at all — and then
+ * the mention is recorded as an unmatched name only when it is
+ * place-shaped (FM-14, below); a fragment is counted, not recorded.
  */
 export function extractBareCandidateNames(
   prose: string,
   alreadyExtracted: readonly string[],
   rows: readonly AreaRow[],
-): { names: string[]; ambiguous: string[]; unresolved: string[] } {
+): { names: string[]; ambiguous: string[]; unresolved: string[]; fragments: number } {
   const byBare = new Map<string, string[]>()
   for (const row of rows) {
     const bare = row.name.split(',')[0]!.trim()
@@ -1747,6 +1789,8 @@ export function extractBareCandidateNames(
   const names: string[] = []
   const ambiguous: string[] = []
   const unresolved: string[] = []
+  let fragments = 0
+  const componentWords = placeNameComponentWords(rows)
   const seen = new Set<string>()
   for (const sentence of prose.split(/(?<=[.!?])\s+/)) {
     if (/^Answer:/.test(sentence)) continue
@@ -1772,17 +1816,37 @@ export function extractBareCandidateNames(
       break
     }
     if (settled) continue
-    // No bound row carries the mention: record it unresolved
-    // under its written form, unless the lead is a sentence
-    // opener rather than a name.
+    // No bound row carries the mention. Unless the lead is a
+    // sentence opener rather than a name, the mention is recorded
+    // as an unmatched name only when it is place-shaped (Lane A10
+    // FM-14): a word the place index itself uses inside a real
+    // place name. Live research prose capitalizes far more than
+    // places — sheet A (production c7a6630) harvested "Initial,
+    // One, Described, January-April, Another, No", "BeerAdvocate",
+    // and "Now I'll, Downtown, Known, Described, Boutique,
+    // Howard., Called, Also, What, They" as candidate names and
+    // printed them in the unmatched line. Fragments are not names:
+    // they are counted (the card counts them, FM-17) and never
+    // enter the candidate stream. A fragment token that is also
+    // a real place-name component ("Howard") stays place-shaped
+    // by this test — a genuinely ambiguous token reads as a name
+    // rather than vanishing, the same trade FM-5 made for Sanibel.
+    // Recording is relative to the LOADED index: a production
+    // load carries the national place set, so a real place name
+    // is testable there and records as a name; a mention the
+    // loaded index cannot test is counted here and disclosed by
+    // count on the card (FM-17) — accounted, never silent, and
+    // never guessed into a place (the FM-5 invariant, restated
+    // for the sparser loads a fixture or a scoped sweep carries).
     const mention = words.join(' ')
     const key = mention.toLowerCase()
     if (BARE_MENTION_OPENERS.has(words[0]!.toLowerCase())) continue
     if (seen.has(key) || covered.has(key)) continue
     seen.add(key)
-    unresolved.push(mention)
+    if (isPlaceShapedMention(mention, componentWords)) unresolved.push(mention)
+    else fragments++
   }
-  return { names, ambiguous, unresolved }
+  return { names, ambiguous, unresolved, fragments }
 }
 
 /** Default resolution: an exact match against a loaded row's name. */
@@ -2494,6 +2558,8 @@ export function composeAnswer(input: {
   unresolvedCandidates?: readonly string[]
   /** Resolved candidates refused by the geography binding (FM-15), recorded on the answer. */
   outOfBoundCandidates?: readonly string[]
+  /** Candidate-shaped tokens the extraction gate counted as fragments, not names (FM-14). */
+  unmatchedFragmentCount?: number
   geographyLevel?: AnswerGeographyLevel
   unsupportedGeography?: string | null
   /** Research-first answers pull a headline Census figure even when the question named no measure. */
@@ -2747,6 +2813,9 @@ export function composeAnswer(input: {
     unresolvedCandidates: [...(input.unresolvedCandidates ?? [])],
     ...(input.outOfBoundCandidates && input.outOfBoundCandidates.length > 0
       ? { outOfBoundCandidates: [...input.outOfBoundCandidates] }
+      : {}),
+    ...(input.unmatchedFragmentCount && input.unmatchedFragmentCount > 0
+      ? { unmatchedFragmentCount: input.unmatchedFragmentCount }
       : {}),
     geographyLevel: input.geographyLevel ?? geographyLevelOfIntent(intent),
     unsupportedGeography,
@@ -3237,14 +3306,25 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
                 const extractor =
                   input.candidateExtractor ??
                   (({ prose }) => extractCandidateNamesFromProse(prose))
+                // Extraction reads hygienic prose (FM-14): the
+                // research model's working narration is refused
+                // as claims at compose, and it is refused here
+                // too — its sentence openings ("Now I'll check
+                // the remaining towns next") are not candidate
+                // mentions. The same filter compose applies,
+                // applied before extraction at both sites.
+                const extractionProseNow = filterWorkingNarration(
+                  accumulated.prose,
+                  accumulated.sources,
+                ).prose
                 const extractedStdNow = await extractor({
-                  prose: accumulated.prose,
+                  prose: extractionProseNow,
                   sources: accumulated.sources,
                 })
                 // The same bare-name pass as the terminal path
                 // (FM-5), so an interim place is a terminal place.
                 const bareNow = extractBareCandidateNames(
-                  accumulated.prose,
+                  extractionProseNow,
                   extractedStdNow,
                   input.rows,
                 )
@@ -3311,12 +3391,21 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // Stage order inverts: research -> extract -> resolve -> pull.
     const research = firstResearch
     const extractor = input.candidateExtractor ?? (({ prose }) => extractCandidateNamesFromProse(prose))
-    const extractedStd = await extractor({ prose: research.prose, sources: research.sources })
+    // Extraction reads hygienic prose (Lane A10 FM-14): compose
+    // has always refused the research model's working narration
+    // as claims, but extraction read the raw prose, so narration
+    // sentence openings entered the candidate stream as names —
+    // sheet A's unmatched lines carried "Now I'll" among the
+    // fragments. The same filter now runs before extraction;
+    // claims derivation is untouched (compose still filters per
+    // claim from the stage's prose).
+    const extractionProse = filterWorkingNarration(research.prose, research.sources).prose
+    const extractedStd = await extractor({ prose: extractionProse, sources: research.sources })
     // Bare names the prose carries with no state at all join the
     // candidate list when the bound rows carry exactly one match
     // (FM-5, extractBareCandidateNames); ambiguous bare names are
     // recorded with the unresolved names below, never resolved.
-    const bare = extractBareCandidateNames(research.prose, extractedStd, input.rows)
+    const bare = extractBareCandidateNames(extractionProse, extractedStd, input.rows)
     const extracted = [
       ...extractedStd,
       ...bare.names.filter((n) => !extractedStd.includes(n)),
@@ -3409,6 +3498,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       candidateCapApplied,
       unresolvedCandidates,
       outOfBoundCandidates: binding.outOfBound,
+      unmatchedFragmentCount: bare.fragments,
       geographyLevel,
       unsupportedGeography,
       pullMode: true,

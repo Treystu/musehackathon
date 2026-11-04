@@ -3658,9 +3658,20 @@ const SAFETY_DIRECTION_RE =
  * variation"). A place is direction-negative only when EVERY claim
  * serving a criterion carries a marker — one positive or neutral
  * serving claim keeps it ranked.
+ *
+ * Explicit exclusion joins the set (Q6 round 3, 2026-11-04): the
+ * captured live findings put their real candidates forward bare
+ * and named two further places only to exclude them ("Excluded
+ * from this list even though high-ranked for schools: Arlington,
+ * Virginia and The Woodlands, Texas, because ...") — extraction
+ * grounded the excluded pair and no marker read the sentence as
+ * what it is, so the card ranked the research's own exclusions as
+ * meeting the criteria. "Excluded from" is the exclusion's own
+ * wording; a claim carrying it about a place is against that
+ * place's inclusion by the sentence's own statement.
  */
 export const CLAIM_DIRECTION_AGAINST_RE =
-  /\bfewer\b|\bthinner\b|\blimited\b|\bscarce\b|\bthan the (?:leaders|best|safest|top)\b|\bonly moderately\b|\bless often\b|\bmost\s+\w*\s*variation\b|\b(?:significant|highest|severe|elevated|high)\s+(?:flood\s+)?risk\b|\bhigher reported crime\b/i
+  /\bfewer\b|\bthinner\b|\blimited\b|\bscarce\b|\bthan the (?:leaders|best|safest|top)\b|\bonly moderately\b|\bless often\b|\bmost\s+\w*\s*variation\b|\b(?:significant|highest|severe|elevated|high)\s+(?:flood\s+)?risk\b|\bhigher reported crime\b|\bexcluded from\b/i
 
 /** Whether every claim serving any researched criterion, among a
  * place's claims, carries a direction-against marker. A place with
@@ -4327,12 +4338,42 @@ export function criterionEvidenceFor(input: {
  * compose does: one attribution, scored once, rendered by code in
  * both the interim verdicts and the terminal evidence.
  */
+/**
+ * The full-state-name form of a row's name ("Arlington, VA" ->
+ * "arlington, virginia"), or null when the name carries no state
+ * suffix the code table knows. Research prose names places in
+ * both forms — the extraction patterns read both — while rows
+ * carry the abbreviated form only.
+ */
+function fullStateFormOf(name: string): string | null {
+  const comma = name.lastIndexOf(',')
+  if (comma < 0) return null
+  const suffix = name.slice(comma + 1).trim().toUpperCase()
+  if (!/^[A-Z]{2}$/.test(suffix)) return null
+  const full = STATE_NAME_BY_CODE[suffix]
+  if (!full) return null
+  const bare = name.slice(0, comma).trim().toLowerCase()
+  if (!bare) return null
+  return `${bare}, ${full.toLowerCase()}`
+}
+
 export function claimMentionsPlace(
   claim: ResearchedClaim,
   place: { name: string; zcta: string },
 ): boolean {
   const lower = claim.text.toLowerCase()
-  return zctaMentioned(lower, place.zcta) || lower.includes(place.name.toLowerCase())
+  if (zctaMentioned(lower, place.zcta) || lower.includes(place.name.toLowerCase())) return true
+  // The full-state-name mention (Q6 round 3, 2026-11-04): findings
+  // write "Arlington, Virginia" where the row is "Arlington, VA",
+  // so the claim that discussed the place — in the captured live
+  // yield, the sentence EXCLUDING it — attributed to no place at
+  // all, and direction accounting (FM-4) never saw it. The full
+  // form carries the state in the mention itself, so matching it
+  // is more precise than the bare name, never less: a same-named
+  // place in another state is written with its own state and does
+  // not match.
+  const full = fullStateFormOf(place.name)
+  return full !== null && lower.includes(full)
 }
 
 /**
@@ -5139,8 +5180,28 @@ export function composeAnswer(input: {
   if (input.pullMode) {
     const kept: AnswerPlace[] = []
     const notMeeting: string[] = []
+    // The direction test reads every claim that MENTIONS the
+    // place, not only the claims the attribution loop assigned
+    // to it (Q6 round 3, 2026-11-04): attribution is single-match
+    // (claimPlace returns the first place a claim names), so a
+    // sentence discussing two places lands on the first alone —
+    // and the captured live yield's exclusion sentence, which
+    // names Arlington and The Woodlands in one breath, left The
+    // Woodlands with no claims at all and therefore no direction,
+    // ranked as an answer on a claimless record while the
+    // research excluded it. A claim that mentions a place is
+    // evidence about that place wherever it was filed; the test
+    // stays exactly FM-4's (EVERY serving mention against), so a
+    // place with one positive or neutral serving mention keeps
+    // its rank exactly as before.
+    const mentionPool = [
+      ...places.flatMap((p) => p.claims),
+      ...generalClaims,
+    ]
     for (const place of places) {
-      if (placeDirectionNegative(place.claims, researchCriteria)) notMeeting.push(place.name)
+      const mentionClaims = mentionPool.filter((claim) => claimMentionsPlace(claim, place))
+      const directionClaims = mentionClaims.length > 0 ? mentionClaims : place.claims
+      if (placeDirectionNegative(directionClaims, researchCriteria)) notMeeting.push(place.name)
       else kept.push(place)
     }
     if (notMeeting.length > 0) {
@@ -5588,6 +5649,70 @@ function emptyAnswerFields(): Pick<
   }
 }
 
+/**
+ * The nomination steering for research-first passes (Q6 round 3,
+ * 2026-11-04). The research contract the provider's system prompt
+ * states — "the places named in the request were already screened;
+ * research ONLY the named places" — is the SCREEN path's contract.
+ * On the research-first path no places are named: research itself
+ * must nominate the candidates, in the groundable form extraction
+ * resolves ("City, State"). Asked with the bare question, the live
+ * research route returns methodology prose and declines to name
+ * any place at all ("No named places were provided to research,
+ * so no place can be named as meeting ALL of your criteria" —
+ * captured live 2026-11-04 from the production route on the demo
+ * question), and every downstream seam starves: extraction finds
+ * no candidates, grounding has nothing to ground, and the run
+ * dead-ends or, on a luckier prose variant, grounds only the
+ * suffixed fragments the prose happened to carry. The steering
+ * states the nomination contract in the pass's own text — the
+ * same sentence the K1 resolution re-ask has carried since
+ * 2026-11-03, promoted from the rescue to the first ask.
+ */
+export const RESEARCH_NOMINATION_STEERING =
+  'Name the places you find as specific incorporated cities or towns, each ' +
+  'with its U.S. state (for example, "Traverse City, Michigan"), and prefer ' +
+  'places that appear in U.S. Census data over neighborhoods, regions, or ' +
+  'organizations.'
+
+/**
+ * A research query carrying the nomination steering, appended
+ * once. The length guard follows the breadth steering's precedent
+ * (480, comfortably under the research route's 500-char ceiling):
+ * a refused pass is worse than an unsteered one — the stage would
+ * throw and the run would fall to its failure ladder — so a query
+ * already near the ceiling keeps its shipped shape and the
+ * resolution re-ask below remains its rescue.
+ */
+function researchNominationQuery(query: string): string {
+  if (query.includes('specific incorporated cities or towns')) return query
+  const steered = `${query}\n${RESEARCH_NOMINATION_STEERING}`
+  return steered.length <= 480 ? steered : query
+}
+
+/**
+ * The resolution re-ask's query (K1, extended Q6 round 3): the
+ * nomination steering, plus — when the first yield named candidate
+ * places it could not ground (unresolved extractions, ambiguous
+ * or unresolved bare mentions) — the grounding sentence: the
+ * candidates are named back to the research with the one thing
+ * they lack, their states, and the answer is asked for in the
+ * groundable form. The names ride the request's places slot as
+ * well (the provider presents them as the request's named places,
+ * the seam built for exactly this), so the re-ask researches THE
+ * candidates instead of re-rolling the question. The sentence is
+ * dropped when it cannot fit under the same 480 guard; the places
+ * slot still carries the names.
+ */
+function groundingReAskQuery(base: string, ungroundedNames: readonly string[]): string {
+  const query = researchNominationQuery(base)
+  if (ungroundedNames.length === 0) return query
+  const sentence =
+    ` The earlier findings named these places without settling their states: ${ungroundedNames.slice(0, 8).join('; ')}.` +
+    ' For each of them, give its U.S. state and write the place as "City, State" wherever it is discussed.'
+  return query.length + sentence.length <= 480 ? query + sentence : query
+}
+
 export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<ComposedAnswer> {
   const signal = input.signal ?? new AbortController().signal
   // Stage 1: parse gate. The intent arrived from the intent route,
@@ -5934,12 +6059,17 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       // set is extracted from the accumulated prose per pass.
       input.onProgress(buildProgress(0, [], [], [], []))
     }
+    // The first yield asks for nominations in groundable form
+    // (researchNominationQuery, Q6 round 3): on this path the
+    // research stage is the candidate source, and an unsteered
+    // pass returns prose that names no groundable place.
+    const firstPassQuery = researchNominationQuery(input.researchQuery!)
     try {
       firstResearch = await researchPerCriterion(
         input.provider!,
         input.intent.geographies,
         researchCriteria,
-        input.researchQuery!,
+        firstPassQuery,
         signal,
         input.onProgress
           ? {
@@ -6442,8 +6572,40 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // extraction-only condition deterministically declined to
     // re-ask on exactly that shape, and the run terminated in the
     // flexible lane with no Census figures.
+    // Round 3 widening (Q6, 2026-11-04): two more zero-answer
+    // shapes join the trigger. (1) The yield grounded ONLY places
+    // the research itself describes as not meeting the criteria —
+    // every capped row direction-negative under compose's own
+    // attribution (the captured live yield grounded exactly the
+    // two places its prose excluded): compose's FM-4 partition
+    // would empty the card, so the answer is as ungrounded as a
+    // zero-row yield and gets the same one re-ask. (2) When the
+    // yield carries candidate names it could not ground
+    // (unresolved extractions; ambiguous or unresolved bare
+    // mentions — the captured yield's real candidates, named
+    // bare: Berkeley, Cambridge, Carlsbad), the re-ask is a
+    // GROUNDING re-ask: the names ride the request's places slot
+    // and the query asks for each one's state in "City, State"
+    // form (groundingReAskQuery). An ambiguous name is thereby
+    // disambiguated by the research that named it, before it is
+    // counted unmatched — never by guessing a same-named place.
+    const ungroundedNames = [
+      ...new Set([
+        ...m.unresolvedCandidates,
+        ...m.bare.ambiguous,
+        ...m.bare.unresolved,
+      ]),
+    ]
+    const everyCappedRowDirectionNegative =
+      m.cappedRows.length > 0 &&
+      m.cappedRows.every((row) =>
+        placeDirectionNegative(
+          research.claims.filter((claim) => claimMentionsPlace(claim, row)),
+          researchCriteria,
+        ),
+      )
     if (
-      m.cappedRows.length === 0 &&
+      (m.cappedRows.length === 0 || everyCappedRowDirectionNegative) &&
       !firstResearchFailed &&
       !breadthActive &&
       (m.extracted.length + m.bare.ambiguous.length + m.bare.unresolved.length > 0 ||
@@ -6452,13 +6614,11 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       try {
         const steered = await researchPerCriterion(
           input.provider!,
-          input.intent.geographies,
+          ungroundedNames.length > 0
+            ? [...new Set([...input.intent.geographies, ...ungroundedNames])]
+            : input.intent.geographies,
           researchCriteria,
-          `${input.researchQuery!}\n` +
-            'Name the places you find as specific incorporated cities or towns, each ' +
-            'with its U.S. state (for example, "Traverse City, Michigan"), and prefer ' +
-            'places that appear in U.S. Census data over neighborhoods, regions, or ' +
-            'organizations.',
+          groundingReAskQuery(input.researchQuery!, ungroundedNames),
           signal,
         )
         research = mergeResearchStages(research, steered)
@@ -6548,7 +6708,17 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           (name) => !extracted.some((e) => e.toLowerCase() === name.toLowerCase()),
         ),
       ],
-      ...(cappedRows.length === 0 && !firstResearchFailed ? { noCensusMatch: true } : {}),
+      // The marker stamps the research-mismatch terminal: zero
+      // pulled rows, or every pulled row partitioned out by
+      // compose's direction accounting (Q6 round 3 — the yield
+      // that grounded only the places its prose excluded composes
+      // to zero places with rows in hand, and that terminal is
+      // the completion lane's ground exactly as the zero-row one
+      // is; the runner's material test would catch it on the
+      // names record regardless, and the marker now says so too).
+      ...((cappedRows.length === 0 || composedRaw.places.length === 0) && !firstResearchFailed
+        ? { noCensusMatch: true }
+        : {}),
       ...(research.failedCriteria?.length
         ? { researchFailures: research.failedCriteria }
         : {}),

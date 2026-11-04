@@ -1174,9 +1174,17 @@ describe('K1 the resolution re-ask', () => {
     })
     // Two provider calls, both inside the stage's own FM-11
     // discipline (first attempt + its one re-ask); the pipeline's
-    // steered re-ask never fires — no query carries its steering.
+    // resolution re-ask never fires — a third call would be its
+    // signature, and there is none.
+    // CHANGED (Q6 round 3, 2026-11-04): the pin's original
+    // assertion — no query carries the nomination steering — no
+    // longer separates the shapes, because the steering now rides
+    // the FIRST research-first pass by design (the bare question
+    // is the shape that returned the demo question's no-place
+    // yield live). The behavior this pin protects is unchanged:
+    // an all-empty stage is FM-11's ground, the pipeline adds no
+    // re-ask of its own, and the call count is the assertion.
     expect(stub.calls()).toBe(2)
-    expect(stub.queries.join('\n')).not.toContain('incorporated cities or towns')
     expect(answer.status).toBe('empty')
   })
 })

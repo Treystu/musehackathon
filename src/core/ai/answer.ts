@@ -163,7 +163,7 @@ import { STATE_NAME_BY_CODE } from '../sweep/states'
 import type { FlexibleAnswer } from './flexible'
 import { METRIC_DEFS_BY_KEY } from '../civicscope-registry'
 import type { AreaRow } from '../plugins/acs'
-import type { MuseProvider, ResearchResult, ValidatedIntent } from './provider'
+import type { IntentMode, MuseProvider, ResearchResult, ValidatedIntent } from './provider'
 import {
   createValidator,
   findBannedConstruction,
@@ -3599,6 +3599,132 @@ function claimPlace(claim: ResearchedClaim, places: readonly AreaRow[]): AreaRow
   return null
 }
 
+/** Mid-sentence form of a pulled figure key's registry label. */
+function figureClauseLabel(key: string): string {
+  const label = criterionDisplayLabel(key)
+  return label.charAt(0).toLowerCase() + label.slice(1)
+}
+
+function joinFigureLabels(keys: readonly string[]): string {
+  const labels = keys.map(figureClauseLabel)
+  if (labels.length <= 1) return labels.join('')
+  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`
+}
+
+/**
+ * The figure-framed comparative lead for the degraded named-places
+ * compose (the 26b2007 terminal: total research failure, the screen
+ * bounded to the named places' own rows, no measure retained
+ * anywhere, the headline money figures pulled as display figures).
+ * Live specimen, 2026-11-03 on production 2839881: that card named
+ * Hilo and East Honolulu with their figures ($1,346/$458,100 against
+ * $2,946/$1,457,700) under the generic "shown with their Census
+ * figures" summary and never stated the comparison the figures
+ * plainly make, while direct-compose runs of the same question lead
+ * with the conclusion. This lead states ONLY the ordering of the
+ * figures shown — never that the failed research criterion was
+ * measured; the summary's not-measured clauses follow it unchanged.
+ *
+ * The comparative signal is the validated intent's structured mode
+ * ('compare') — the parse's own output, never a keyword scan of the
+ * question text. A winner is named only when one place is uniquely
+ * lowest on EVERY measure at least two compared places carry, and
+ * the clean sentence ("on every measure shown") additionally
+ * requires the compared places' figure sets to be exactly those
+ * shared measures AND the card's margin-of-error bands to be
+ * pairwise disjoint — the summary validator's own precision rule
+ * (validator.ts step 4) withholds "lower than" prose whenever any
+ * two bands on the card overlap, measured here on the S4 fixture:
+ * Pahoa's rent band (1259 ±316) overlaps Hilo's (1346 ±52), so that
+ * card's lead falls to the per-measure form. Anything else — a
+ * split across measures, a tie, a one-sided figure set, overlapping
+ * bands — is stated per measure, plainly, with no winner picked.
+ * Numeral-free, like every composed summary.
+ */
+function degradedComparisonLead(input: {
+  mode: IntentMode
+  places: readonly AnswerPlace[]
+  keys: readonly string[]
+}): string | null {
+  if (input.mode !== 'compare' || input.keys.length === 0) return null
+  const valueOf = (place: AnswerPlace, key: string): number | undefined =>
+    place.figures.find((f) => f.key === key)?.value
+  const compared = input.places.filter((p) => input.keys.some((k) => valueOf(p, k) !== undefined))
+  if (compared.length < 2) return null
+  const sharedKeys = input.keys.filter(
+    (k) => compared.filter((p) => valueOf(p, k) !== undefined).length >= 2,
+  )
+  if (sharedKeys.length === 0) return null
+  const lows = sharedKeys.map((key) => {
+    const carriers = compared.filter((p) => valueOf(p, key) !== undefined)
+    const min = Math.min(...carriers.map((p) => valueOf(p, key) as number))
+    return { key, lowest: carriers.filter((p) => valueOf(p, key) === min) }
+  })
+  const uniqueLowestEverywhere = compared.find((p) =>
+    lows.every((l) => l.lowest.length === 1 && l.lowest[0] === p),
+  )
+  const uniformSets = compared.every(
+    (p) =>
+      sharedKeys.every((k) => valueOf(p, k) !== undefined) &&
+      p.figures.every((f) => sharedKeys.includes(f.key)),
+  )
+  // The validator's precision rule, mirrored: "lower than" prose is
+  // withheld when ANY two margin-of-error bands among the card's
+  // figures overlap, so the winner sentence is available only when
+  // every band on the card is disjoint from every other.
+  const bands = compared.flatMap((p) =>
+    p.figures
+      .filter((f) => typeof f.marginOfError === 'number' && f.marginOfError > 0)
+      .map((f) => ({ lo: f.value - Math.abs(f.marginOfError as number), hi: f.value + Math.abs(f.marginOfError as number) })),
+  )
+  // No bands at all is clean (nothing for the rule to bite on); a
+  // single band is conservatively NOT clean — the validator's
+  // one-band branch turns on other figures' values falling inside
+  // it, and the per-measure form below states the same ordering
+  // without the risk.
+  const bandsDisjoint =
+    bands.length !== 1 &&
+    bands.every((a, i) => bands.every((b, j) => i === j || a.hi < b.lo || b.hi < a.lo))
+  if (uniqueLowestEverywhere && uniformSets && bandsDisjoint) {
+    return compared.length === 2
+      ? `On the Census figures shown, ${uniqueLowestEverywhere.name} is lower than ${compared.find((p) => p !== uniqueLowestEverywhere)!.name} on every measure shown.`
+      : `On the Census figures shown, ${uniqueLowestEverywhere.name} is lower than the other places shown on every measure shown.`
+  }
+  if (compared.length === 2) {
+    const first = compared[0] as AnswerPlace
+    const second = compared[1] as AnswerPlace
+    const lowerFor = (place: AnswerPlace) =>
+      lows.filter((l) => l.lowest.length === 1 && l.lowest[0] === place).map((l) => l.key)
+    const tiedKeys = lows.filter((l) => l.lowest.length === 2).map((l) => l.key)
+    if (tiedKeys.length === sharedKeys.length) {
+      return `On the Census figures shown, ${first.name} and ${second.name} are equal on every measure shown.`
+    }
+    const clauses: string[] = []
+    for (const place of compared) {
+      const won = lowerFor(place)
+      if (won.length > 0) clauses.push(`${place.name} is lower for ${joinFigureLabels(won)}`)
+    }
+    if (tiedKeys.length > 0) clauses.push(`both places are equal for ${joinFigureLabels(tiedKeys)}`)
+    const split = compared.every((p) => lowerFor(p).length > 0)
+    return `On the Census figures shown, ${split ? 'the comparison is split: ' : ''}${clauses.join('; ')}.`
+  }
+  const parts: string[] = []
+  for (const place of compared) {
+    const won = lows
+      .filter((l) => l.lowest.length === 1 && l.lowest[0] === place)
+      .map((l) => l.key)
+    if (won.length > 0) parts.push(`${place.name} is lower for ${joinFigureLabels(won)}`)
+  }
+  for (const low of lows) {
+    if (low.lowest.length >= 2) {
+      parts.push(
+        `the lowest ${figureClauseLabel(low.key)} is shared by ${low.lowest.map((p) => p.name).join(' and ')}`,
+      )
+    }
+  }
+  return `On the Census figures shown, ${parts.join('; ')}.`
+}
+
 export function composeAnswer(input: {
   intent: ValidatedIntent
   screen: ScreenResult
@@ -3834,6 +3960,14 @@ export function composeAnswer(input: {
     notMeasuredLabels.length > 0
       ? ` Not measured here: ${notMeasuredLabels.map(criterionDisplayLabel).join(', ')}.`
       : ''
+  // The degraded named-places conclusion: only the 26b2007
+  // figure-pull shape (boundDisplayKeys) can carry it, and only when
+  // the parse's structured mode is a comparison — every other
+  // compose keeps the summary it has today, byte for byte.
+  const comparisonLead =
+    boundDisplayKeys.length > 0
+      ? degradedComparisonLead({ mode: intent.mode, places, keys: boundDisplayKeys })
+      : null
   const summary =
     input.summaryOverride ??
     (screen.rows.length === 0
@@ -3844,7 +3978,9 @@ export function composeAnswer(input: {
           ? 'The counties named here are formed from the ZIP areas assigned to each county, with the deciding figures aggregated from those ZIP areas and shown from Census data.'
           : accountingComplete
             ? 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.'
-            : `The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`)
+            : comparisonLead
+              ? `${comparisonLead} The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`
+              : `The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`)
   // Candidate direction (Lane A9 FM-4): on the research-first path
   // (pullMode — the places ARE the research's candidates), a place
   // whose serving claims all describe it as not meeting the stated

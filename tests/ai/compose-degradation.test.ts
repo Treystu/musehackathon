@@ -222,6 +222,148 @@ describe('pipeline: research-first, total research failure', () => {
     expectEveryCriterionAccounted(answer)
   })
 
+  // Degraded-card conclusion (live specimen, 2026-11-03 on
+  // production 2839881): the specimen card above carried both
+  // places' figures under the generic summary and never stated the
+  // comparison, while direct-compose runs of the same question lead
+  // with the conclusion. The lead is figure-framed only — it states
+  // the ordering of the figures shown, and the card's not-measured
+  // accounting for the failed criterion follows it unchanged. The
+  // comparative signal is the intent's structured mode ('compare'),
+  // never the question text.
+  it('degraded named-places compare: the summary leads with the figure conclusion', async () => {
+    const answer = await runAnswerPipeline({
+      intent: intent({ mode: 'compare', geographies: ['Hilo, HI', 'East Honolulu, HI'], metricKeys: [] }),
+      rows: HI_COMPARE_ROWS,
+      geographyZctas: new Set(['96720', '96821']),
+      researchQuery: CHEAPER_Q,
+      queryText: CHEAPER_Q,
+      provider: downProvider(),
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.failures).toEqual([])
+    expect(answer.summary.startsWith(
+      'On the Census figures shown, Hilo, HI is lower than East Honolulu, HI on every measure shown. ',
+    )).toBe(true)
+    // The honesty accounting is untouched: the generic sentence and
+    // the not-measured clause follow the lead verbatim.
+    expect(answer.summary).toContain(
+      'The places named here are shown with their Census figures for the measures in this request. Not measured here: Outside-Census criteria.',
+    )
+    const hilo = answer.places.find((p) => p.name === 'Hilo, HI')!
+    const east = answer.places.find((p) => p.name === 'East Honolulu, HI')!
+    expect(hilo.figures).toContainEqual(expect.objectContaining({ key: 'median_gross_rent', value: 1346 }))
+    expect(east.figures).toContainEqual(expect.objectContaining({ key: 'median_gross_rent', value: 2946 }))
+    expect(answer.researchFailures).toContain('Outside-Census criteria')
+    expectEveryCriterionAccounted(answer)
+  })
+
+  it('CONTROL — degraded named-places card with ONE place keeps the generic summary byte for byte', async () => {
+    const answer = await runAnswerPipeline({
+      intent: intent({ mode: 'compare', geographies: ['Hilo, HI'], metricKeys: [] }),
+      rows: HI_COMPARE_ROWS,
+      geographyZctas: new Set(['96720']),
+      researchQuery: CHEAPER_Q,
+      queryText: CHEAPER_Q,
+      provider: downProvider(),
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name)).toEqual(['Hilo, HI'])
+    expect(answer.summary).toBe(
+      'The places named here are shown with their Census figures for the measures in this request. Not measured here: Outside-Census criteria.',
+    )
+  })
+
+  it('CONTROL — degraded named-places card without compare mode keeps the generic summary byte for byte', async () => {
+    const answer = await runAnswerPipeline({
+      intent: intent({ mode: 'lookup', geographies: ['Hilo, HI', 'East Honolulu, HI'], metricKeys: [] }),
+      rows: HI_COMPARE_ROWS,
+      geographyZctas: new Set(['96720', '96821']),
+      researchQuery: CHEAPER_Q,
+      queryText: CHEAPER_Q,
+      provider: downProvider(),
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.summary).toBe(
+      'The places named here are shown with their Census figures for the measures in this request. Not measured here: Outside-Census criteria.',
+    )
+  })
+
+  // Split figures: each place lower on a different measure (income
+  // tied). The lead must state the split per measure and pick no
+  // winner — a single "lower than" sentence would be false.
+  const SPLIT_ROWS: AreaRow[] = [
+    { zcta: '96720', name: 'Alpha, HI', metrics: { median_gross_rent: 1000, median_home_value: 500000, median_household_income: 80000 }, moes: { median_gross_rent: 40, median_home_value: 9000, median_household_income: 3000 } },
+    { zcta: '96821', name: 'Beta, HI', metrics: { median_gross_rent: 1200, median_home_value: 400000, median_household_income: 80000 }, moes: { median_gross_rent: 45, median_home_value: 8000, median_household_income: 3100 } },
+  ]
+
+  it('degraded compare with split figures states the split plainly and names no winner', async () => {
+    const answer = await runAnswerPipeline({
+      intent: intent({ mode: 'compare', geographies: ['Alpha, HI', 'Beta, HI'], metricKeys: [] }),
+      rows: SPLIT_ROWS,
+      geographyZctas: new Set(['96720', '96821']),
+      researchQuery: CHEAPER_Q,
+      queryText: CHEAPER_Q,
+      provider: downProvider(),
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.summary.startsWith('On the Census figures shown, the comparison is split: ')).toBe(true)
+    expect(answer.summary).toContain('Alpha, HI is lower for median gross rent')
+    expect(answer.summary).toContain('Beta, HI is lower for median home value')
+    expect(answer.summary).toContain('both places are equal for median household income')
+    expect(answer.summary).not.toContain('is lower than')
+    expect(answer.summary).toContain('Not measured here: Outside-Census criteria.')
+    expectEveryCriterionAccounted(answer)
+  })
+
+  it('degraded compare with identical figures states the tie and names no winner', async () => {
+    const tieRows: AreaRow[] = SPLIT_ROWS.map((row) => ({
+      ...row,
+      metrics: { median_gross_rent: 1000, median_home_value: 450000, median_household_income: 80000 },
+    }))
+    const answer = await runAnswerPipeline({
+      intent: intent({ mode: 'compare', geographies: ['Alpha, HI', 'Beta, HI'], metricKeys: [] }),
+      rows: tieRows,
+      geographyZctas: new Set(['96720', '96821']),
+      researchQuery: CHEAPER_Q,
+      queryText: CHEAPER_Q,
+      provider: downProvider(),
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.summary).toContain('Alpha, HI and Beta, HI are equal on every measure shown.')
+    expect(answer.summary).not.toContain('is lower')
+    expect(answer.summary).toContain('Not measured here: Outside-Census criteria.')
+    expectEveryCriterionAccounted(answer)
+  })
+
+  // Overlapping margin bands: one place IS lowest on every figure,
+  // but Pahoa's rent band (1259 ±316) overlaps Hilo's (1346 ±52), so
+  // the validator's precision rule withholds "lower than" prose and
+  // the lead falls to the per-measure form — the conclusion is
+  // stated, in the shape the precision rule sanctions, and the card
+  // stays verified rather than withheld.
+  it('degraded compare with overlapping bands states the conclusion per measure', async () => {
+    const answer = await runAnswerPipeline({
+      intent: intent({
+        mode: 'compare',
+        geographies: ['Hilo, HI', 'Pahoa, HI', 'East Honolulu, HI'],
+        metricKeys: [],
+      }),
+      rows: HI_COMPARE_ROWS,
+      geographyZctas: new Set(['96720', '96778', '96821']),
+      researchQuery: 'Which is cheapest, Hilo, Pahoa, or East Honolulu?',
+      queryText: 'Which is cheapest, Hilo, Pahoa, or East Honolulu?',
+      provider: downProvider(),
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.failures).toEqual([])
+    expect(answer.summary.startsWith(
+      'On the Census figures shown, Pahoa, HI is lower for median gross rent, median home value and median household income. ',
+    )).toBe(true)
+    expect(answer.summary).toContain('Not measured here: Outside-Census criteria.')
+    expectEveryCriterionAccounted(answer)
+  })
+
   // S4 (multi-place comparison): the named-places classes above are
   // stated for a LIST of places, not a pair — the three-place shapes
   // pin that nothing in the compose or the degrade is pair-shaped.

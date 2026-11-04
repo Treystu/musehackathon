@@ -179,6 +179,7 @@ import {
   type BreadthStanding,
   type RunProgressSnapshot,
 } from './run-progress'
+import { isFrameSegmentText, type NearFrameContext } from './near-frame'
 
 /* ------------------------------------------------------------------ */
 /* Stage types                                                         */
@@ -3091,7 +3092,7 @@ const NARRATION_PROGRESS_RE =
 const NARRATION_INTERIM_RE =
   /\b(?:initial|early|preliminary)\s+(?:results?|findings?)\b[^.!?]*\b(?:points?|suggests?|indicates?|shows?|leans?|favou?rs?)\b/i
 const NARRATION_META_RE =
-  /\bresearch covered the first\b|\bwere not researched\b|\bnot addressed here\b|\bno web support found for\b|\bper pre-screening\b|\bfigures are shown separately\b|\bnot from the web\b/i
+  /\bresearch covered the first\b|\bwere not researched\b|\bnot addressed here\b|\bno web support found for\b|\bper pre-screening\b|\bfigures are shown separately\b|\bnot from the web\b|\bmeets all (?:of the |the )?(?:reader's |reader |stated )criteria\b|\bthe web (?:does not|doesn't|cannot|can't) support\b/i
 const RAW_METRIC_KEY_RE =
   /\b(?:median_gross_rent|median_household_income|median_home_value|median_rent_burden_pct|no_internet_access)\b/
 
@@ -3113,7 +3114,7 @@ function isWorkingNarration(segment: string, sources: readonly AnswerSource[]): 
   if (/^Question:/i.test(segment)) return true
   if (RAW_METRIC_KEY_RE.test(segment)) return true
   const lower = segment.toLowerCase()
-  return sources.some(
+  const verbatimTitle = sources.some(
     // A title counts as a raw-title leak only when it is long
     // enough to be a concatenation rather than an ordinary noun
     // phrase: measured collision — the Hilo pin's source is
@@ -3124,6 +3125,34 @@ function isWorkingNarration(segment: string, sources: readonly AnswerSource[]): 
     // ~100 chars; the line is set at 24.
     (source) => source.title.length >= 24 && lower.includes(source.title.toLowerCase()),
   )
+  if (verbatimTitle) return true
+  // Title-concatenation test (the Philadelphia specimen,
+  // 2026-11-03): the verbatim test above assumes the model's
+  // prose reproduces a source's title exactly, and the
+  // specimen's card carried a run of eight research titles NONE
+  // of which appeared verbatim — site suffixes dropped, one
+  // title garbled with a stray Cyrillic character — so the run
+  // rendered whole as a place's prose. A segment carrying the
+  // token core of TWO OR MORE distinct sources' titles is a
+  // concatenation of the source list, whatever its exact
+  // characters: a finding quotes or paraphrases one source at a
+  // time, and one title's partial overlap stays under the
+  // two-source bar (measured against the specimen's own titles:
+  // the two "Best Public ..." variants share most tokens, and a
+  // claim quoting one covers ~0.71 of the other — the coverage
+  // line is set at 0.8 so that claim survives).
+  const segmentTokens = new Set(lower.split(/[^a-z0-9]+/).filter((t) => t.length >= 3))
+  let titleCores = 0
+  for (const source of sources) {
+    if (source.title.length < 24) continue
+    const titleTokens = [
+      ...new Set(source.title.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3)),
+    ]
+    if (titleTokens.length < 4) continue
+    const covered = titleTokens.filter((t) => segmentTokens.has(t)).length
+    if (covered / titleTokens.length >= 0.8) titleCores++
+  }
+  return titleCores >= 2
 }
 
 /**
@@ -3411,6 +3440,18 @@ export function criterionEvidenceFor(input: {
    * call.
    */
   researchReAsked?: boolean
+  /**
+   * The near frame (core/ai/near-frame.ts), when the pipeline ran
+   * under one, with the label of the frame criterion it retired.
+   * Arms the frame's three evidence rules below: the frame entry
+   * itself (measured by construction from the product's geography),
+   * the relative cost reading (assessed against the reference's
+   * aggregate baseline, stated in the detail), and per-place
+   * assessment for researched criteria (the frame's promise is a
+   * per-place comparison; the shipped specimen stamped every
+   * criterion measured off one claim about the reference alone).
+   */
+  nearFrame?: (NearFrameContext & { frameCriterionLabel: string | null }) | null
 }): CriterionEvidence[] {
   const evidence: CriterionEvidence[] = []
   for (const criterion of input.criteria) {
@@ -3530,6 +3571,17 @@ export function criterionEvidenceFor(input: {
             }).length
           : 0
       const unranked = input.places.length > carrying
+      // Near frame: the cost reading is RELATIVE — assessed
+      // against the reference's own aggregate figure, formed from
+      // all of its ZIP areas and stated in the detail, so the
+      // baseline the candidates were screened against is itself
+      // on the card. (The specimen's cost line claimed a reading
+      // "as compared to philadelphia itself" while no baseline
+      // existed anywhere in the answer.)
+      const frameBaseline =
+        input.nearFrame?.baseline && input.nearFrame.baseline.key === key
+          ? input.nearFrame.baseline
+          : null
       evidence.push({
         criterion: criterion.label,
         kind: 'census',
@@ -3544,7 +3596,9 @@ export function criterionEvidenceFor(input: {
             ? failingInternet > 0
               ? 'Assessed from the Census figures shown for each place: a place where more than a quarter of households have no internet access does not meet a good internet access criterion, and at least one shown place is above that share, so the criterion is not met for every shown place.'
               : `Assessed from the Census figure for households with no internet access shown for each place; a lower figure means better internet access.${unranked ? ' Places without a published figure for it are not assessed on it.' : ''}`
-            : `Assessed from the Census cost figures shown for each place, read on median gross rent as the headline cost measure.${unranked ? ' Places without a published rent figure are not ranked on that measure.' : ''}`,
+            : frameBaseline && input.nearFrame
+              ? `Assessed from the Census cost figures shown for each place, read on median gross rent as the headline cost measure, against ${input.nearFrame.anchorLabel}'s own median gross rent of $${Math.round(frameBaseline.value).toLocaleString('en-US')}/mo — formed from all ${input.nearFrame.anchorZipCount} of its ZIP areas, not one ZIP: every place shown is strictly below that baseline.`
+              : `Assessed from the Census cost figures shown for each place, read on median gross rent as the headline cost measure.${unranked ? ' Places without a published rent figure are not ranked on that measure.' : ''}`,
         sourceUrls: [],
       })
       continue
@@ -3613,6 +3667,51 @@ export function criterionEvidenceFor(input: {
           'A cited source speaks to this criterion in qualitative terms only, so no count is shown for it.',
         sourceUrls,
       })
+    } else if (input.nearFrame) {
+      // Near frame, per-place assessment: the frame's promise is
+      // a comparison of PLACES, so a researched criterion is
+      // measured only where a serving claim actually speaks to
+      // the place — a claim for every shown place stamps met, a
+      // claim for some stamps partially measured, and material
+      // that speaks to the area without naming any shown place
+      // stamps partially measured with that reason. The shipped
+      // specimen is the failure this fence exists for: one claim
+      // about the reference city stamped "School quality —
+      // measured" on an answer whose only place was the reference
+      // itself. Outside the frame the shipped rule below stands
+      // untouched: a state screen's criterion is served by its
+      // cited sources as a set, and per-place tightening there
+      // would falsify shapes the batteries pin.
+      const assessed = input.places.filter((place) =>
+        serving.some((claim) => claimMentionsPlace(claim, place)),
+      ).length
+      if (assessed === input.places.length) {
+        evidence.push({
+          criterion: criterion.label,
+          kind: 'research',
+          status: 'met',
+          detail: 'Served by the cited sources shown with the places.',
+          sourceUrls,
+        })
+      } else if (assessed > 0) {
+        evidence.push({
+          criterion: criterion.label,
+          kind: 'research',
+          status: 'partially_measured',
+          detail:
+            'The cited sources shown with the places speak to this criterion for some of the places shown, not all of them, so it is measured only for the places whose entries cite it.',
+          sourceUrls,
+        })
+      } else {
+        evidence.push({
+          criterion: criterion.label,
+          kind: 'research',
+          status: 'partially_measured',
+          detail:
+            'A cited source speaks to this criterion for the area generally, but not for any individual place shown, so it is not measured place by place.',
+          sourceUrls,
+        })
+      }
     } else {
       evidence.push({
         criterion: criterion.label,
@@ -3622,6 +3721,28 @@ export function criterionEvidenceFor(input: {
         sourceUrls,
       })
     }
+  }
+  // Near frame: the frame criterion's own entry, in the reader's
+  // words (the label the pipeline retired from the research list).
+  // Its measurement is the frame itself — the candidate set was
+  // drawn at the stated radius from the product's own place
+  // geography, and the reference is accounted as the reference,
+  // not as a candidate that passed its own distance test (the
+  // specimen's "As the reference point itself, it is within 20
+  // miles").
+  const frameLabel = input.nearFrame?.frameCriterionLabel ?? null
+  if (input.nearFrame && frameLabel) {
+    const frame = input.nearFrame
+    evidence.push({
+      criterion: frameLabel,
+      kind: 'census',
+      status: input.places.length > 0 ? 'met' : 'not_measurable',
+      detail:
+        input.places.length > 0
+          ? `Measured from the product's own place geography: every place shown is within ${frame.radiusMiles} miles of ${frame.anchorLabel} (ZIP-area centroid distance), and ${frame.anchorLabel} itself is the comparison reference for this question, not one of the candidates.${frame.radiusStated ? '' : ` The question stated no radius; ${frame.radiusMiles} miles is the reading used for "near".`}`
+          : 'No place within the stated radius is shown, so the distance test has nothing to measure here.',
+      sourceUrls: [],
+    })
   }
   // Criterion-slot accounting (P3 step 3, battery A4): a stated
   // income the reader asks to "live well on" has no slot in any
@@ -3947,6 +4068,14 @@ export function composeAnswer(input: {
    * lead occupies on its own shape.
    */
   rankedLead?: string | null
+  /**
+   * The near frame the pipeline ran under (core/ai/near-frame.ts),
+   * with the label of the frame criterion the pipeline retired
+   * from the research list. Drives the frame's evidence rules in
+   * criterionEvidenceFor and the reference-claim drop in the claim
+   * loop below. Absent = no frame.
+   */
+  nearFrame?: (NearFrameContext & { frameCriterionLabel: string | null }) | null
 }): ComposedAnswer {
   const { intent, screen } = input
   // Pull mode (research-first): candidates arrived from research, so
@@ -4055,9 +4184,30 @@ export function composeAnswer(input: {
     }
     if (hygienic.prose.length === 0) continue
     const claim: ResearchedClaim = { ...rawClaim, text: hygienic.prose }
-    for (const url of claim.sourceUrls) citedUrls.add(url)
     const row = claimPlace(claim, screen.rows)
     const place = row ? places.find((p) => p.zcta === row.zcta) : undefined
+    // Near frame: a claim about the REFERENCE alone is not a
+    // finding about any candidate. The reference's role on this
+    // card is accounted by construction — the baseline figures,
+    // the frame evidence entry, the reference disclosure — and a
+    // research claim that names the anchor and no shown place is
+    // the specimen's verdict prose ("Meets ALL reader criteria ...
+    // Philadelphia, PA — 0 miles from itself"), the research model
+    // narrating the reference's self-match as the answer. Dropped
+    // and recorded like every other compose drop. A claim naming
+    // a shown place keeps its attribution exactly as before,
+    // anchor mentions and all.
+    if (!place && input.nearFrame) {
+      const lower = claim.text.toLowerCase()
+      const mentionsAnchor =
+        lower.includes(input.nearFrame.anchorLabel.toLowerCase()) ||
+        lower.includes(input.nearFrame.anchorName.toLowerCase())
+      if (mentionsAnchor) {
+        droppedClaims.push(claim)
+        continue
+      }
+    }
+    for (const url of claim.sourceUrls) citedUrls.add(url)
     if (place) place.claims.push(claim)
     else generalClaims.push(claim)
   }
@@ -4081,6 +4231,7 @@ export function composeAnswer(input: {
     queryText: researchCriteria[0]?.text,
     failedResearchCriteria: input.research?.failedCriteria,
     researchReAsked: input.research?.reAsked,
+    nearFrame: input.nearFrame ?? null,
   })
   // Summary-claim rule (P3 step 4, battery A1/B5/C5/D2): the
   // "meet all of the stated Census criteria" sentence renders ONLY
@@ -4422,6 +4573,21 @@ export interface AnswerPipelineInput {
    * and the stage line carries them.
    */
   onProgress?: (snapshot: RunProgressSnapshot) => void
+  /**
+   * The near frame (core/ai/near-frame.ts), built by the caller
+   * when the question names one place as its anchor and reference
+   * ("where near Philadelphia has good schools and lower cost of
+   * living, within 20 miles, as compared to Philadelphia itself").
+   * When supplied, the caller's geographyZctas IS the frame's
+   * candidate set (the anchor excluded by construction), and the
+   * pipeline: retires the decomposed criterion that is only the
+   * frame phrase (the frame is served by construction, accounted
+   * in the evidence, never researched), applies the relative cost
+   * bound against the frame's baseline at the screen, and hands
+   * the frame to compose for its evidence rules. Absent = no
+   * frame; every shipped shape is untouched.
+   */
+  nearFrame?: NearFrameContext | null
 }
 
 function emptyAnswerFields(): Pick<
@@ -4487,6 +4653,33 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     input.researchCriteria && input.researchCriteria.length > 0
       ? input.researchCriteria.flatMap((text) => decomposeResearchCriteria(text))
       : decomposeResearchCriteria(input.researchQuery)
+  // Near frame: the decomposed criterion that is only the frame
+  // phrase ("within 20 miles (as compared to philadelphia itself)")
+  // is retired from the research list — the frame is served by
+  // construction (the candidate set IS the radius test, drawn at
+  // the runner), and researching it was the specimen's degenerate
+  // loop: the research model certified the reference against the
+  // frame ("0 miles from itself") and the criterion stamped
+  // measured. Its label is kept for the evidence entry
+  // criterionEvidenceFor composes from the frame, in the reader's
+  // own words. Only a combined (residue) criterion can be the
+  // frame phrase; a catalog criterion is a criterion, never a
+  // frame.
+  let frameCriterionLabel: string | null = null
+  if (input.nearFrame) {
+    const frameIndex = researchCriteria.findIndex(
+      (c) =>
+        c.id === 'combined' &&
+        isFrameSegmentText(c.text, {
+          anchorName: input.nearFrame!.anchorName,
+          radiusMiles: input.nearFrame!.radiusMiles,
+        }),
+    )
+    if (frameIndex >= 0) {
+      frameCriterionLabel = researchCriteria[frameIndex]!.label
+      researchCriteria.splice(frameIndex, 1)
+    }
+  }
   const countyRequested = requestsCountyLevel(input.queryText ?? input.researchQuery, input.intent)
   const unsupportedGeography = countyRequested ? 'county' : null
   const geographyLevel: AnswerGeographyLevel = countyRequested
@@ -5367,12 +5560,36 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   }
 
   // Stage 2: deterministic Census screen.
-  const screen = screenRows(
+  const screenResult = screenRows(
     input.intent,
     input.rows,
     input.geographyZctas,
     rankDirectionFromQuery(input.queryText ?? input.researchQuery),
   )
+  // Near frame, the relative bound: the reader's cost comparative
+  // ("lower cost of living ... as compared to philadelphia
+  // itself") is a bound whose threshold is the reference's own
+  // aggregate figure, applied here where every stated bound is
+  // applied — at the screen, over the frame's candidate rows (the
+  // caller's geographyZctas). A candidate qualifies only strictly
+  // below the baseline; a row with no published figure for the
+  // measure is excluded, the screen's own rule for a stated bound
+  // (an area with no rent figure is not an answer to "rent under
+  // the bound"). The shipped specimen applied no bound at all:
+  // the only screened place was the reference, whose figures are
+  // neither below nor above themselves, and the cost criterion
+  // stamped measured on presence alone.
+  const nearBaseline = input.nearFrame?.relativeCost ? input.nearFrame.baseline : null
+  const screen: ScreenResult =
+    input.nearFrame && nearBaseline
+      ? {
+          ...screenResult,
+          rows: screenResult.rows.filter((row) => {
+            const value = row.metrics[nearBaseline.key]
+            return typeof value === 'number' && Number.isFinite(value) && value < nearBaseline.value
+          }),
+        }
+      : screenResult
 
   // Stage 2b (county): when the question asks for counties and the
   // caller supplied the crosswalk, aggregate the screened rows to
@@ -5695,6 +5912,9 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     stateSupported,
     rankedLead: stateRankedLead,
     summaryOverride: countyEmptySummary,
+    nearFrame: input.nearFrame
+      ? { ...input.nearFrame, frameCriterionLabel }
+      : undefined,
   })
   const composedWithFailures =
     research?.failedCriteria?.length

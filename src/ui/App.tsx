@@ -7,6 +7,9 @@ import { validateCensusKey as validateCensusKeyLive } from '../core/censusKey'
 import { DISPLAYABLE_KEYS } from '../core/ai/intent-schema'
 import type { ValidatedIntent } from '../core/ai/provider'
 import { asStateCode, loadPlaceIndex, splitStateSuffix, type PlaceIndex, type PlaceSuggestion } from '../core/zcta-place-index'
+import { detectNearFrame, nearCandidatePrefixes } from '../core/ai/near-frame'
+import { loadCentroids } from '../core/map/projection'
+import type { ZctaPoint } from '../core/map/centroids'
 import { loadCountyIndex, type CountyIndex } from '../core/zcta-county-index'
 import { FairHousingNotice } from './FairHousingNotice'
 import { GuidedTour } from './GuidedTour'
@@ -234,6 +237,19 @@ export default function App() {
    * pipeline had before the crosswalk shipped.
    */
   const [countyIndex, setCountyIndex] = useState<CountyIndex | null | undefined>(undefined)
+  /**
+   * The baked ZIP-area centroids, loaded on demand for the Ask
+   * flow's near frame (core/ai/near-frame.ts): a question naming
+   * one place as anchor and reference draws its candidates from
+   * the places around the anchor, which needs centroid distances.
+   * Same undefined/null discipline as the indexes: `undefined` =
+   * not loaded (loaded lazily when a question prechecks as a
+   * frame), `null` = the load failed and the frame cannot engage
+   * — the shipped path then stands, so a centroid failure never
+   * strands a request.
+   */
+  const [askCentroids, setAskCentroids] = useState<readonly ZctaPoint[] | null | undefined>(undefined)
+  const centroidsLoadStarted = useRef(false)
   /**
    * Tour dialog state. The dialog opens only when asked for (the header's
    * "How this works" button); there is no standing first-visit notice card
@@ -738,6 +754,7 @@ export default function App() {
             provider: HOUSE_PROVIDER,
             research: needsResearch(context.queryText),
             placeIndex: placeIndex ?? null,
+            centroids: askCentroids ?? null,
             provisional: answer,
             branch,
             option: optionId,
@@ -754,7 +771,7 @@ export default function App() {
         }
       })()
     },
-    [modalState, answer, q.sweep, placeIndex],
+    [modalState, answer, q.sweep, placeIndex, askCentroids],
   )
 
   const handleDecisionDismiss = useCallback(() => {
@@ -886,12 +903,46 @@ export default function App() {
       }
       return
     }
+    // Near frame precheck (core/ai/near-frame.ts): the question
+    // names one place as anchor and reference ("where near
+    // Philadelphia ..., within 20 miles, as compared to
+    // Philadelphia itself"). The frame's candidates are NOT inside
+    // the anchor's resolved scope — the sweep must cover them — so
+    // when the question prechecks as a frame, the centroid
+    // geography is loaded under the same bounded wait as the index
+    // waits, and the coverage test below reads the union of the
+    // anchor's scope and the frame's candidate prefixes. A
+    // centroid load failure engages nothing: the shipped path
+    // stands, unchanged.
+    const frameSpec = placeIndex ? detectNearFrame(queryText, intent) : null
+    let coverageResolved = resolved
+    if (frameSpec && placeIndex) {
+      if (askCentroids === undefined) {
+        if (!centroidsLoadStarted.current) {
+          centroidsLoadStarted.current = true
+          loadCentroids().then(
+            (points) => setAskCentroids(points),
+            () => setAskCentroids(null),
+          )
+        }
+        if (stillWaiting()) return
+      } else if (askCentroids) {
+        const framePrefixes =
+          nearCandidatePrefixes({ spec: frameSpec, placeIndex, centroids: askCentroids }) ?? []
+        if (framePrefixes.length > 0) {
+          coverageResolved = {
+            ...resolved,
+            scopePrefixes: [...new Set([...resolved.scopePrefixes, ...framePrefixes])],
+          }
+        }
+      }
+    }
     const covered =
       q.sweepStatus === 'ready' &&
       answerScopeCovered({
         rowCount: q.sweep.length,
         sweepScope: q.sweepScope,
-        resolved,
+        resolved: coverageResolved,
         placeless: intent.geographies.length === 0,
       })
     if (!covered) {
@@ -917,7 +968,7 @@ export default function App() {
       // re-runs as the load lands and composes then.
       if (!answerLoadIds.current.has(id) && q.sweepStatus !== 'loading') {
         answerLoadIds.current.add(id)
-        void q.applyScope(intent.geographies.length === 0 ? [] : resolved.scopePrefixes)
+        void q.applyScope(intent.geographies.length === 0 ? [] : coverageResolved.scopePrefixes)
         // The scoped attempt is now in flight; the wait for its
         // coverage runs on the bounded clock like the index waits.
         stillWaiting()
@@ -1005,6 +1056,7 @@ export default function App() {
           signal: new AbortController().signal,
           placeIndex: placeIndex ?? null,
           countyIndex: countyIndex ?? null,
+          centroids: askCentroids ?? null,
           onStage: (stage, subject) => sessionStore.setStage(runToken, stage, subject ?? null),
           onProgress: (snapshot) => sessionStore.setStageProgress(runToken, snapshot),
         })
@@ -1068,7 +1120,7 @@ export default function App() {
     void composeRun
     // answerWaitTick is the bounded wait's re-check signal: the
     // timer it arms changes no other dependency when it fires.
-  }, [answerRequest, placeIndex, countyIndex, q.sweep, q.sweepStatus, q.sweepScope, q.applyScope, answerWaitTick])
+  }, [answerRequest, placeIndex, countyIndex, askCentroids, q.sweep, q.sweepStatus, q.sweepScope, q.applyScope, answerWaitTick])
 
   // The bounded wait's timer never outlives the page.
   useEffect(() => {

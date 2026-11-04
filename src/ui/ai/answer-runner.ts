@@ -46,6 +46,12 @@ import {
   proximityFocus,
 } from '../../core/ai/nearby'
 import {
+  buildNearFrameContext,
+  detectNearFrame,
+  type NearFrameContext,
+} from '../../core/ai/near-frame'
+import type { ZctaPoint } from '../../core/map/centroids'
+import {
   createHttpFlexibleTransport,
   type FlexibleTransport,
 } from '../../core/ai/flexible'
@@ -852,6 +858,16 @@ export async function composeAnswerForRequest(input: {
    */
   placeIndex?: PlaceIndex | null
   /**
+   * ZIP-area centroids (the baked map geography), for the near
+   * frame: a question naming one place as anchor and reference
+   * ("where near Philadelphia ..., within 20 miles") draws its
+   * candidate set from the places around the anchor, which needs
+   * the centroid distances. Absent = the frame cannot engage and
+   * the shipped path stands; the App loads the centroids for a
+   * prechecked question (detectNearFrame) before composing.
+   */
+  centroids?: readonly ZctaPoint[] | null
+  /**
    * County index for county-level answers: the pipeline's
    * countyAssignments seam is built from it over the request's
    * rows. Absent (the artefact failed to load), a county request
@@ -952,6 +968,53 @@ export async function composeAnswerForRequest(input: {
   // tests pin.
   const researchCriteria = input.research ? decomposeResearchCriteria(input.queryText) : []
   let researchQuery = input.queryText
+
+  // Near frame (core/ai/near-frame.ts): the question names one
+  // place as its anchor and reference. The frame engages only
+  // with the place index AND the centroid geography in hand;
+  // without either, the shipped path stands unchanged. When it
+  // engages, the resolution handed to the pipeline is the
+  // frame's: the candidate set (places within the radius, the
+  // anchor excluded) replaces the anchor's single resolved ZIP
+  // as the screen bound, the anchor's single-ZIP granularity
+  // disclosure is retired (the baseline is formed from ALL of
+  // the anchor's ZIP areas, so the shortfall it stated no
+  // longer exists) in favour of the reference disclosure, and
+  // the frame context rides into the pipeline for its screen
+  // bound, evidence rules, and claim discipline.
+  let nearFrame: NearFrameContext | null = null
+  if (input.placeIndex && input.centroids && input.centroids.length > 0) {
+    const spec = detectNearFrame(input.queryText, input.intent)
+    if (spec) {
+      const costCriterion = researchCriteria.find((c) => c.id === 'cost_of_living')
+      const baselineKey = costCriterion?.decomposedMetricKey ?? 'median_gross_rent'
+      const decomposedKeys = researchCriteria
+        .map((c) => c.decomposedMetricKey)
+        .filter((k): k is string => !!k)
+      nearFrame = buildNearFrameContext({
+        spec,
+        placeIndex: input.placeIndex,
+        centroids: input.centroids,
+        rows,
+        figureKeys: [...new Set([...input.intent.metricKeys, ...decomposedKeys, baselineKey])],
+        baselineKey,
+        costReading: !!costCriterion || input.intent.metricKeys.includes(baselineKey),
+      })
+    }
+  }
+  const frameResolved: ResolvedAnswerGeographies = nearFrame
+    ? {
+        ...resolved,
+        zctas: nearFrame.candidateZctas,
+        scopePrefixes: nearFrame.candidatePrefixes,
+        geographyDisclosures: [
+          `${nearFrame.anchorLabel} is the comparison reference for this question: the places shown are the places within ${nearFrame.radiusMiles} miles of it, and its own baseline figures are formed from all ${nearFrame.anchorZipCount} of its ZIP areas.`,
+          ...resolved.geographyDisclosures.filter(
+            (line) => !line.startsWith(`${input.intent.geographies[0]!.trim()} spans `),
+          ),
+        ],
+      }
+    : resolved
   // Set when any assembly below had to shorten steering text to
   // fit the research route's ceiling; disclosed on the researched
   // criteria's evidence lines before the answer returns.
@@ -988,14 +1051,15 @@ export async function composeAnswerForRequest(input: {
     runAnswerPipeline({
       intent: input.intent,
       rows,
-      geographyZctas: resolved.zctas.size > 0 ? resolved.zctas : undefined,
+      geographyZctas: frameResolved.zctas.size > 0 ? frameResolved.zctas : undefined,
       // The pipeline reads the SAME resolution result this runner
       // resolved from: its per-geography failures and its region
       // readings ride in, so the card's geography lines can never
       // contradict the resolution the card was composed from.
-      unresolvedGeographies: resolved.unresolvedGeographies,
-      geographyDisclosures: resolved.geographyDisclosures,
-      stateAggregates: resolved.stateAggregates,
+      unresolvedGeographies: frameResolved.unresolvedGeographies,
+      geographyDisclosures: frameResolved.geographyDisclosures,
+      stateAggregates: frameResolved.stateAggregates,
+      nearFrame,
       researchQuery: input.research ? query : undefined,
       // Decomposition always reads the reader's original words, never
       // the focused research query: the focus text names modes and
@@ -1399,6 +1463,8 @@ export async function refineAnswerForRequest(input: {
   signal?: AbortSignal
   placeIndex?: PlaceIndex | null
   countyIndex?: CountyIndex | null
+  /** Centroids for the near frame, forwarded to the refinement's compose. */
+  centroids?: readonly ZctaPoint[] | null
   stack?: ConversationalStackDeps | false
   /** The provisional answer the decision floated over. */
   provisional: ComposedAnswer
@@ -1423,6 +1489,7 @@ export async function refineAnswerForRequest(input: {
       signal: input.signal,
       placeIndex: input.placeIndex,
       countyIndex: input.countyIndex,
+      centroids: input.centroids,
       stack:
         input.stack === false
           ? false

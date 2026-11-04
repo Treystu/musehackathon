@@ -302,6 +302,32 @@ export function zoomAround(
   }
 }
 
+/**
+ * Loads ONLY the baked centroids, cached at module level: the Ask
+ * flow's near frame (core/ai/near-frame.ts) needs ZIP-area
+ * distances without the basemap, and the map's own loadMapAssets
+ * path stays untouched. A failed load clears the cache so a later
+ * question can retry; the frame simply does not engage until a
+ * load succeeds (the caller's shipped path stands in the
+ * meantime).
+ */
+let centroidsPromise: Promise<readonly ZctaPoint[]> | null = null
+export function loadCentroids(): Promise<readonly ZctaPoint[]> {
+  if (!centroidsPromise) {
+    centroidsPromise = (async () => {
+      const response = await fetch(CENTROIDS_URL)
+      if (!response.ok) {
+        throw new Error(`map centroids unavailable: HTTP ${response.status}`)
+      }
+      return decodeCentroids(await response.arrayBuffer())
+    })().catch((error: unknown) => {
+      centroidsPromise = null
+      throw error
+    })
+  }
+  return centroidsPromise
+}
+
 /** Loads the baked assets. Same-origin, so the CSP is unaffected. */
 export async function loadMapAssets(
   signal?: AbortSignal,

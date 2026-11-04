@@ -84,7 +84,9 @@ describe('canRun mode minimums (single owner)', () => {
       }),
     ).toBe(true)
     // Similarity runs on the seed alone (2026-11-01): its execution
-    // consumes no measure. A named measure must still be filter-legal.
+    // consumes no measure. A named measure must still be rank-legal
+    // (FM-9, owner ruling 2026-11-03: median_age qualifies; a
+    // display-only demographic figure does not).
     expect(
       canRun({
         mode: 'similarity',
@@ -99,6 +101,15 @@ describe('canRun mode minimums (single owner)', () => {
         mode: 'similarity',
         geographies: ['96778'],
         metricKeys: ['median_age'],
+        filters: [],
+        clarificationNeeded: false,
+      }),
+    ).toBe(true)
+    expect(
+      canRun({
+        mode: 'similarity',
+        geographies: ['96778'],
+        metricKeys: ['below_poverty_count'],
         filters: [],
         clarificationNeeded: false,
       }),

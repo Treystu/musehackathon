@@ -15,7 +15,11 @@
  * percentage is allowed only when code computed it elsewhere and
  * passed it in as a figure (conventionally key `derived:<name>`).
  */
-import { isDisplayableKey, isFilterLegal as isFilterLegalKey } from './intent-schema'
+import {
+  isDisplayableKey,
+  isFilterLegal as isFilterLegalKey,
+  isRankLegal as isRankLegalKey,
+} from './intent-schema'
 
 export interface FigureForValidation {
   key: string
@@ -121,10 +125,14 @@ function rejectIntent(detail: string): ValidatorVerdict {
 
 /**
  * Mechanical fair-housing gate, run before generation. Rejects any
- * proxy / school / health (i.e. non-filter-legal) key used to filter,
- * sort, rank by similarity, or build a composite. Displayable-but-not-
- * filter-legal keys (e.g. `renter_occupied`, `median_age`) are exactly
- * the keys blocked here. Lookup/compare display keys are not filtered
+ * proxy / school / health (i.e. non-filter-legal) key used to filter
+ * or build a composite, and any non-rank-legal key used to sort, rank
+ * by similarity, or drive a sweep. The two standards differ since the
+ * owner's 2026-11-03 ruling made median_age rank-legal: it may order
+ * a screen (sort keys, sweep/similarity measures) but still may never
+ * filter. Displayable-but-not-rank-legal keys (e.g. `renter_occupied`,
+ * `below_poverty_count`) are exactly the keys blocked as measures here.
+ * Lookup/compare display keys are not filtered
  * by this gate, except explicit demographic-proxy keys.
  */
 export function intentGate(
@@ -186,23 +194,43 @@ export function intentGate(
     return null
   }
 
+  // The ranking standard: a key that may ORDER a screen. Rank-legal is
+  // filter-legal plus median_age (owner ruling 2026-11-03); everything
+  // displayable beyond that (poverty, attainment, broadband, crowding,
+  // tenure, population) still refuses as a ranking input.
+  const checkRankLegal = (keys: string[], context: string): ValidatorVerdict | null => {
+    for (const k of keys) {
+      if (!isRankLegalKey(k)) {
+        const kind = PROXY_OR_SENSITIVE_KEY.test(k)
+          ? 'proxy/school/health key'
+          : isDisplayableKey(k)
+            ? 'displayable but not rank-legal key'
+            : 'key not rank-legal'
+        return rejectIntent(`${context} uses ${kind}: ${k}`)
+      }
+    }
+    return null
+  }
+
   const gated: Array<[string[], string]> = [
     [filterKeys, 'filter'],
-    [sortKeys, 'sort'],
-    [similarityKeys, 'similarity'],
     [compositeKeys, 'composite'],
   ]
   for (const [keys, context] of gated) {
     const bad = checkFilterLegal(keys, context)
     if (bad) return bad
   }
+  const badSort = checkRankLegal(sortKeys, 'sort')
+  if (badSort) return badSort
+  const badSimilarity = checkRankLegal(similarityKeys, 'similarity')
+  if (badSimilarity) return badSimilarity
 
   if (mode === 'similarity' || mode === 'composite') {
-    const bad = checkFilterLegal(metricKeys, mode)
+    const bad = checkRankLegal(metricKeys, mode)
     if (bad) return bad
   }
   if (mode === 'sweep_filter' || mode === 'filter' || mode === 'sweep' || mode === 'sort') {
-    const bad = checkFilterLegal(metricKeys, mode)
+    const bad = checkRankLegal(metricKeys, mode)
     if (bad) return bad
   }
 

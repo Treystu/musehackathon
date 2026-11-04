@@ -3,8 +3,16 @@
  * src/core/civicscope-registry.ts, pre-existing Civicscope surface).
  * Filter-legal keys are exactly the sortable surface; protected-class and
  * school/health keys can never appear in filters by construction.
+ * Rank-legal keys (the sortable surface plus median_age, owner ruling
+ * 2026-11-03) are the measures a sweep/similarity intent may ORDER its
+ * screen by; a rank-only key still can never appear in a filter.
  */
-import { METRIC_KEYS, SORTABLE_METRIC_KEYS } from '../civicscope-registry'
+import {
+  DEMOGRAPHIC_DISPLAY_ONLY_KEYS,
+  METRIC_KEYS,
+  RANK_LEGAL_METRIC_KEYS,
+  SORTABLE_METRIC_KEYS,
+} from '../civicscope-registry'
 import type { DomainClassification, IntentMode, ValidatedIntent } from './provider'
 
 /** The closed domain-classification enum (plan C13, three-way). */
@@ -60,6 +68,20 @@ export function isFilterLegal(key: string): key is FilterLegalKey {
   return FILTER_LEGAL_KEYS.some((legal) => legal === key)
 }
 
+/**
+ * Rank-legal keys: exactly the registry's RANK_LEGAL_METRIC_KEYS (the
+ * sortable surface plus median_age). A rank-legal key may order a
+ * sweep/similarity screen; only a filter-legal key may appear in a
+ * filter. Filter-legal is a strict subset of rank-legal.
+ */
+export const RANK_LEGAL_KEYS: readonly string[] = RANK_LEGAL_METRIC_KEYS
+
+export type RankLegalKey = (typeof RANK_LEGAL_METRIC_KEYS)[number]
+
+export function isRankLegal(key: string): boolean {
+  return RANK_LEGAL_KEYS.some((legal) => legal === key)
+}
+
 export function isDisplayableKey(key: string): boolean {
   return DISPLAYABLE_KEYS.some((displayable) => displayable === key)
 }
@@ -75,22 +97,22 @@ export function isKnownFigureKey(key: string): boolean {
  * §2.5 runs nothing until the geography/metric ambiguity is resolved, and
  * every hermetic golden executable pairs >=1 place with >=1 measure.
  * Legality reuses the helpers above as the single source (displayable
- * everywhere; filter-legal additionally for sweep_filter/similarity, the
- * same list the schema and the intent gate enforce — never a second
- * list). Mode minimums: compare needs >=2 places (one place compares
+ * everywhere; rank-legal additionally for sweep_filter/similarity
+ * measures, filter-legal for every filter — the same lists the schema
+ * and the intent gate enforce, never a second list). Mode minimums: compare needs >=2 places (one place compares
  * against nothing); a placed sweep_filter needs >=1 filter (zero filters
  * returns the full set). One exception, measured 2026-11-01: a placeless
  * sweep_filter is the national screen — its scope is the whole country
  * and its sort is the request ("cheapest rent in America"), so it runs
  * with zero geographies and zero filters as long as it names a
- * filter-legal measure. Every other mode still needs a place.
+ * rank-legal measure. Every other mode still needs a place.
  * Third exception (2026-11-02): a placed sweep with no filter is the
  * geography-bounded screen — its scope is the named geography and
- * its sort is the request — so it likewise runs on a filter-legal
+ * its sort is the request — so it likewise runs on a rank-legal
  * measure alone. Second exception, same day:
  * similarity consumes only its seed place (the view scores its own
  * dimensions), so it runs with zero measures; a named measure must
- * still be filter-legal.
+ * still be rank-legal.
  */
 export function canRun(intent: ValidatedIntent): boolean {
   if (intent.mode !== 'sweep_filter' && intent.geographies.length === 0) return false
@@ -104,7 +126,7 @@ export function canRun(intent: ValidatedIntent): boolean {
   if (!intent.metricKeys.every(isDisplayableKey)) return false
   if (intent.mode === 'compare' && intent.geographies.length < 2) return false
   if (intent.mode === 'sweep_filter' || intent.mode === 'similarity') {
-    if (!intent.metricKeys.every(isFilterLegal)) return false
+    if (!intent.metricKeys.every(isRankLegal)) return false
   }
   // Bounded-screen exception (2026-11-02, generalization item 4): a
   // placed sweep with no filter is a geography-bounded screen whose
@@ -212,11 +234,11 @@ export function validateIntent(raw: unknown):
 
   if (raw.mode === 'sweep_filter' || raw.mode === 'similarity') {
     for (const k of metricKeys) {
-      if (!isFilterLegal(k)) {
+      if (!isRankLegal(k)) {
         return {
           ok: false,
           error: 'proxy_metric_blocked',
-          detail: `${raw.mode} cannot use non-filter-legal metric: ${k}`,
+          detail: `${raw.mode} cannot use non-rank-legal metric: ${k}`,
         }
       }
     }
@@ -232,5 +254,66 @@ export function validateIntent(raw: unknown):
       clarificationNeeded: raw.clarificationNeeded,
       ...(isDomainClassification(raw.domain) ? { domain: raw.domain } : {}),
     },
+  }
+}
+
+const DEMOGRAPHIC_DISPLAY_ONLY_SET: ReadonlySet<string> = new Set(DEMOGRAPHIC_DISPLAY_ONLY_KEYS)
+
+/**
+ * The research-first degrade for the demographic figures that stay
+ * display-only (owner ruling 2026-11-03; the A9 program's FM-9
+ * degrade-don't-block shape, gated proceed / 0.04 / 0.95).
+ *
+ * validateIntent stays closed-world and pure: a sweep/similarity
+ * intent naming below_poverty_count, bachelors_count,
+ * no_internet_access, or average_household_size as a measure still
+ * fails proxy_metric_blocked there, and the pipeline's intent gate
+ * still refuses the same shape — no layer ever RANKS places by one of
+ * these figures. What this helper does, at the Ask panel's accept
+ * seam only (the seam that already rebuilds refused parses — see
+ * rescueNationalScreen), is return a copy of the raw intent with the
+ * display-only demographic keys removed from metricKeys, so the
+ * question proceeds on its remaining measures and the demographic
+ * criterion is answered research-first from the reader's words, with
+ * the figure still displayed on the named places.
+ *
+ * Returns null unless every condition holds: the raw intent is a
+ * record in sweep_filter or similarity mode; metricKeys is an array
+ * of displayable strings; at least one metricKey is a display-only
+ * demographic key; every metricKey is rank-legal or display-only
+ * demographic (any other non-rank-legal key keeps the refusal); and
+ * every filter present is filter-legal (filters are never touched —
+ * a non-filter-legal filter keeps the refusal). The caller
+ * re-validates the returned copy through validateIntent; nothing here
+ * stamps validity itself. When the strip empties metricKeys, the copy
+ * carries clarificationNeeded: true — a measure-less intent cannot
+ * validate as runnable, and clarifying is its true state: the panel's
+ * research-first handoff is what serves it.
+ */
+export function degradeDisplayOnlyDemographicIntent(
+  raw: unknown,
+): Record<string, unknown> | null {
+  if (!isRecord(raw)) return null
+  if (raw.mode !== 'sweep_filter' && raw.mode !== 'similarity') return null
+  if (!Array.isArray(raw.metricKeys)) return null
+  const keys: string[] = []
+  for (const k of raw.metricKeys) {
+    if (typeof k !== 'string' || !isDisplayableKey(k)) return null
+    keys.push(k)
+  }
+  if (!keys.some((k) => DEMOGRAPHIC_DISPLAY_ONLY_SET.has(k))) return null
+  if (!keys.every((k) => isRankLegal(k) || DEMOGRAPHIC_DISPLAY_ONLY_SET.has(k))) return null
+  if (Array.isArray(raw.filters)) {
+    for (const f of raw.filters) {
+      if (!isRecord(f) || typeof f.metricKey !== 'string' || !isFilterLegal(f.metricKey)) {
+        return null
+      }
+    }
+  }
+  const remaining = keys.filter((k) => !DEMOGRAPHIC_DISPLAY_ONLY_SET.has(k))
+  return {
+    ...raw,
+    metricKeys: remaining,
+    ...(remaining.length === 0 ? { clarificationNeeded: true } : {}),
   }
 }

@@ -143,7 +143,7 @@ export const METRIC_DEFS: MetricDef[] = [
     unit: 'count',
     category: 'demographics',
     betterWhen: 'higher',
-    note: 'Age in years, as published. Shown for reading; never offered as a sort or filter control, because ordering places by the age of the people in them is not a question this tool will answer for you.',
+    note: 'Age in years, as published. Since the owner\u2019s 2026-11-03 ruling it may order an Ask answer (oldest or youngest first); it is never a filter, and it is not offered as a sort control in the tables.',
   },
   {
     key: 'below_poverty_count',
@@ -184,10 +184,13 @@ export const METRIC_KEYS: readonly string[] = METRIC_DEFS.map((d) => d.key)
  * with disclosure rather than excluded; it correlates with protected classes
  * without encoding one.
  *
- * Everything the ACS screen loads but this list omits — population, age, poverty
+ * Everything the ACS screen loads but this list omits — population, poverty
  * rate, educational attainment, broadband, crowding — is display-only. Several
  * of those are the demographic figures the rule exists to keep out of a ranking
- * control, and their absence here is the rule working.
+ * control, and their absence here is the rule working. Age was in this class
+ * until the owner\u2019s 2026-11-03 ruling made median_age rank-legal in the Ask
+ * layer (RANK_LEGAL_METRIC_KEYS below); it stays out of this list, so the
+ * reader-facing sort surface is unchanged.
  */
 export const SORTABLE_METRIC_KEYS = [
   'median_rent_burden_pct',
@@ -203,3 +206,49 @@ export type SortableMetricKey = (typeof SORTABLE_METRIC_KEYS)[number]
 export function isSortableMetricKey(key: string): key is SortableMetricKey {
   return (SORTABLE_METRIC_KEYS as readonly string[]).includes(key) && METRIC_DEFS_BY_KEY.has(key)
 }
+
+/**
+ * Rank-legal keys: the measures an Ask answer may ORDER its screened
+ * places by. Exactly the sortable surface plus median_age.
+ *
+ * Hackathon-layer policy addition (not part of the pre-existing port
+ * above), owner ruling 2026-11-03: median age is rank-legal. Rank is
+ * not filter: a rank-only key may order a screen's results but may
+ * never appear in a filter — filters stay limited to
+ * SORTABLE_METRIC_KEYS (the Ask layer's FILTER_LEGAL_KEYS derives from
+ * that list alone). The reader-facing sort controls read
+ * SORTABLE_METRIC_KEYS only, so this widening changes no table surface;
+ * it opens the Ask layer's two gates (intent schema + intent gate) to
+ * an age superlative ("which town in Arizona has the highest median
+ * age?") that previously refused whole. The A9 generality program
+ * designed this cure (degrade, don't block: a displayable key becomes
+ * a rank-only measure) and its gate receipt is on file (Jev proceed,
+ * is_destructive 0.04, advances_goal 0.95); the ruling picked it.
+ */
+export const RANK_LEGAL_METRIC_KEYS = [
+  ...SORTABLE_METRIC_KEYS,
+  'median_age',
+] as const
+
+export type RankLegalMetricKey = (typeof RANK_LEGAL_METRIC_KEYS)[number]
+
+export function isRankLegalMetricKey(key: string): key is RankLegalMetricKey {
+  return (RANK_LEGAL_METRIC_KEYS as readonly string[]).includes(key) && METRIC_DEFS_BY_KEY.has(key)
+}
+
+/**
+ * The demographic distribution figures that stay display-only under
+ * the same 2026-11-03 ruling: poverty, educational attainment,
+ * broadband access, household crowding. An Ask superlative over one of
+ * these never ranks places by the figure; the panel degrades the
+ * intent (the key leaves the measure list) and the question routes
+ * research-first, where the figure still displays on the named places.
+ * Population and the tenure/vacancy/commuting counts are NOT in this
+ * set: their blocks stand untouched, with no degrade.
+ */
+export const DEMOGRAPHIC_DISPLAY_ONLY_KEYS = [
+  'below_poverty_count',
+  'bachelors_count',
+  'no_internet_access',
+  'average_household_size',
+] as const

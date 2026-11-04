@@ -22,7 +22,12 @@ import {
   type AnswerSource,
   type ResearchCriterion,
 } from '../../core/ai/answer'
-import { canRun, validateIntent, withRunnability } from '../../core/ai/intent-schema'
+import {
+  canRun,
+  degradeDisplayOnlyDemographicIntent,
+  validateIntent,
+  withRunnability,
+} from '../../core/ai/intent-schema'
 import {
   INQUIRY_WAVE_OFF_CLOSE,
   dataIntentForHybrid,
@@ -855,7 +860,28 @@ export function AskPanel({
     spokenTranscript?: string,
     queryText?: string,
   ): ValidatedIntent | null {
-    const check = validateIntent(result.intent)
+    let check = validateIntent(result.intent)
+    let degradedDemographic = false
+    // Research-first degrade (FM-9, owner ruling 2026-11-03): a parse
+    // blocked ONLY because a display-only demographic figure rides as
+    // a measure (poverty / attainment / broadband / crowding) is
+    // rebuilt without that key and re-validated, so the question
+    // proceeds on its remaining measures and the demographic criterion
+    // is served research-first further down instead of refusing
+    // whole. validateIntent itself stays closed-world; the rebuild is
+    // this seam's, mirroring the national-screen rescue's posture
+    // below. A block for any other reason (a non-filter-legal filter,
+    // a protected-class key) is untouched and keeps its refusal.
+    if (!check.ok && check.error === 'proxy_metric_blocked') {
+      const degraded = degradeDisplayOnlyDemographicIntent(result.intent)
+      if (degraded) {
+        const recheck = validateIntent(degraded)
+        if (recheck.ok) {
+          check = recheck
+          degradedDemographic = true
+        }
+      }
+    }
     // National-screen rescue: a placeless superlative ("cheapest rent in
     // America") clarifies with neither a place nor a measure, and the
     // clarification's only forward path was adding a place — which
@@ -912,7 +938,13 @@ export function AskPanel({
     // the question arrived in — the lexical rescue above is additive
     // only and its silence here is not a veto. Runs before the
     // handoff so a declared screen is screened, not researched.
-    if (!rescued && parsed.clarificationNeeded) {
+    // Exception (FM-9 degrade, 2026-11-03): a degraded demographic
+    // parse is measure-less because its named measure was display-
+    // only, not because the parse declared no measure — completing it
+    // onto the default rent measure would answer a different question
+    // than the one asked. It skips completion and goes to the
+    // research-first handoff below.
+    if (!rescued && parsed.clarificationNeeded && !degradedDemographic) {
       const completed = completeParsedBoundedScreen(parsed)
       if (completed) {
         parsed = completed

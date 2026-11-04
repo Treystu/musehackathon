@@ -120,7 +120,7 @@ describe('canRun (one predicate for executable intent)', () => {
     expect(canRun(base)).toBe(true)
   })
 
-  it('needs filter-legal measures in sweep_filter/similarity via the one allowlist', () => {
+  it('needs rank-legal measures in sweep_filter/similarity via the one allowlist', () => {
     expect(
       canRun({
         mode: 'sweep_filter',
@@ -130,11 +130,24 @@ describe('canRun (one predicate for executable intent)', () => {
         clarificationNeeded: false,
       }),
     ).toBe(true)
+    // FM-9 (owner ruling 2026-11-03): median_age is rank-legal, so a
+    // bounded age sweep runs where this pin previously read false.
     expect(
       canRun({
         mode: 'sweep_filter',
         geographies: ['HI'],
         metricKeys: ['median_age'],
+        filters: [],
+        clarificationNeeded: false,
+      }),
+    ).toBe(true)
+    // A display-only demographic figure is not rank-legal: the
+    // allowlist still refuses it as a sweep measure.
+    expect(
+      canRun({
+        mode: 'sweep_filter',
+        geographies: ['HI'],
+        metricKeys: ['below_poverty_count'],
         filters: [],
         clarificationNeeded: false,
       }),
@@ -169,11 +182,21 @@ describe('canRun (one predicate for executable intent)', () => {
         metricKeys: ['median_gross_rent'],
       }),
     ).toBe(true)
+    // FM-9 (owner ruling 2026-11-03): a place plus the rank-legal
+    // median_age resolves — this case read false before the ruling.
     expect(
       canResolveClarification({
         mode: 'sweep_filter',
         geographies: ['HI'],
         metricKeys: ['median_age'],
+      }),
+    ).toBe(true)
+    // A place plus a display-only figure still does not resolve.
+    expect(
+      canResolveClarification({
+        mode: 'sweep_filter',
+        geographies: ['HI'],
+        metricKeys: ['below_poverty_count'],
       }),
     ).toBe(false)
     const unclear = { ...base, geographies: [], metricKeys: [], clarificationNeeded: true }

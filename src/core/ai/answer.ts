@@ -1704,6 +1704,72 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
   return []
 }
 
+/**
+ * Whether every criterion a question decomposes to is a researched
+ * (non-Census) criterion: at least one criterion, and none of them
+ * decomposed onto a Census metric. The route-discipline class (Q6
+ * round 2, 2026-11-04): a superlative/conjunctive question in this
+ * class asks the Census for nothing — research names the places and
+ * the Census only grounds their figures — so it is research-first
+ * on EVERY parse realization, and no Census-screen refusal ("a
+ * joint ranking needs both criteria measurable per place") may
+ * fire for it. The refusal keeps its rights exactly when the class
+ * does not hold: at least one criterion genuinely requires a Census
+ * measure (a decomposed criterion, or a reader-stated bound below).
+ * Shared by the pipeline's research-first condition and AskPanel's
+ * research-first handoff, so the two layers can never drift into
+ * seeing different classes — the drift between layers is the seam
+ * family this battery keeps finding.
+ */
+export function allResearchedCriteria(
+  criteria: readonly ResearchCriterion[],
+): boolean {
+  return criteria.length > 0 && criteria.every((c) => !c.decomposedMetricKey)
+}
+
+/**
+ * Whether a filter's bound value appears in the reader's own words,
+ * as a number token equal to it ("under $1,200" states 1200; "$2k"
+ * states 2000). A filter whose value the reader never wrote is the
+ * parse's invention — the reader stated no bound — and on an
+ * all-researched question it must not veto the research-first route
+ * (Q6 round 2: a parse of the demo question that expressed it as a
+ * national screen carrying an invented rent bound dead-ended at
+ * 0-of-0, both researched criteria stamped not measurable, because
+ * every research-first door reads a filter as a Census bound). A
+ * value the reader DID state is their Census content: the screen
+ * path and its refusal keep their rights over it.
+ */
+export function filterValueStatedInWords(
+  value: number,
+  queryText: string | undefined,
+): boolean {
+  if (!queryText) return false
+  const plain = queryText.match(/\$?\d[\d,]*(?:\.\d+)?/g) ?? []
+  for (const token of plain) {
+    const parsed = Number(token.replace(/[$,]/g, ''))
+    if (Number.isFinite(parsed) && Math.abs(parsed - value) < 0.051) return true
+  }
+  const kForms = queryText.match(/\d+(?:\.\d+)?\s?k\b/gi) ?? []
+  for (const token of kForms) {
+    const parsed = Number(token.replace(/\s?k$/i, '')) * 1000
+    if (Number.isFinite(parsed) && Math.abs(parsed - value) < 0.051) return true
+  }
+  return false
+}
+
+/**
+ * Whether every filter an intent carries is unstated by the reader
+ * (see filterValueStatedInWords). Vacuously true for a filter-less
+ * intent; call sites that need the distinction check the length.
+ */
+export function everyFilterUnstated(
+  intent: ValidatedIntent,
+  queryText: string | undefined,
+): boolean {
+  return intent.filters.every((filter) => !filterValueStatedInWords(filter.value, queryText))
+}
+
 /** An explicit county subject: the county itself is what is asked
  * about ("which county...", "counties with..."). */
 const COUNTY_SUBJECT_RE = /\bwhich (?:county|counties)\b|\bcounties\b/i
@@ -4937,7 +5003,7 @@ export function composeAnswer(input: {
     input.geographyGate && screen.rows.length > 0 && !input.summaryOverride && !input.pullMode
       ? geographyGateLead({ gate: input.geographyGate, rows: screen.rows, headlineKey: gateHeadlineKey })
       : null
-  const summary = gateLead ? `${gateLead} ${baseSummary}` : baseSummary
+  let summary = gateLead ? `${gateLead} ${baseSummary}` : baseSummary
   // The gate record for the answer: per-state standings from the
   // bounded rows (the cheapest screened row per bound state on the
   // headline measure), the frame the gate map draws. The grouping
@@ -5026,6 +5092,36 @@ export function composeAnswer(input: {
           externalCriteria.every((criterion) => placeStanding(place.claims, criterion) === 'positive'),
         ).length
       : undefined
+  // Near-frame lead truthfulness (Q6 round 2, 2026-11-04 — the
+  // Philadelphia specimen on e99a324): the card shows the first
+  // card-limit places of a larger screened set whose per-place
+  // verdicts are mixed, while the summary's generic forms describe
+  // the list without ever saying what it is — and a lead that lets
+  // the shown slice read as the places meeting the stated criteria
+  // overclaims against the card's own count line (which correctly
+  // states how many of the screened places meet all of them). On a
+  // frame answer whose shown list is a slice of a larger set with
+  // a meeting count below the set's size, the lead describes the
+  // shown list truthfully — the first screened places, in screening
+  // order, each with its assessed findings — and leaves the meeting
+  // count to the count line that owns it. Figure-free by
+  // construction (the summary validator rejects bare numerals the
+  // figures do not carry), so the slice size is named by the card's
+  // own limit lines, not here. All-meeting and full-shown frame
+  // answers keep the shipped summary untouched.
+  if (
+    input.nearFrame &&
+    !input.pullMode &&
+    !input.summaryOverride &&
+    rankedPlaces.length > SCREENED_RESEARCH_CANDIDATE_CAP &&
+    placesMeetingAllCriteria !== undefined &&
+    placesMeetingAllCriteria < rankedPlaces.length
+  ) {
+    summary =
+      'The places below are the first of the screened places, in screening order, each ' +
+      'shown with the measures and findings assessed for it; not every place shown meets ' +
+      `every stated criterion, and the line below the list states how many do. ${summary}`
+  }
   return {
     status,
     stage: 'compose',
@@ -5587,6 +5683,25 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     researchCriteria.every((c) => !c.decomposedMetricKey) &&
     !namedResearchCriterion &&
     hasUnclaimedCriterionPhrase(input.queryText ?? input.researchQuery ?? '', researchCriteria)
+  // All-researched route discipline (Q6 round 2, 2026-11-04): the
+  // demo question ("best schools + fewest fast food") has two parse
+  // realizations. The research-first one was cured in the regression
+  // battery; the other expresses the question as a national screen
+  // carrying a bound the reader never stated, and the screen-probe
+  // veto below then refused it up front — 0 places, both researched
+  // criteria stamped not measurable, on the premise that a joint
+  // ranking needs both criteria measurable per place from Census.
+  // That premise is valid only when a criterion genuinely requires
+  // a Census measure. When EVERY decomposed criterion is researched
+  // and no filter value appears in the reader's words, the filters
+  // are the parse's invention, not a stated bound: the veto lifts
+  // and the question is research-first on this realization too. A
+  // reader-stated bound (its value in their words) keeps the veto —
+  // the screen, and its refusal when the bound cannot be met, are
+  // the honest Census answer to a bound the reader actually set.
+  const allResearchedRoute =
+    allResearchedCriteria(researchCriteria) &&
+    everyFilterUnstated(input.intent, input.queryText ?? input.researchQuery)
   const researchFirst =
     // A supplied geography gate owns this run's ordering: the
     // classification already resolved into the caller's bound, and
@@ -5594,7 +5709,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // place-naming flow never engages under a gate.
     !input.geographyGate &&
     researchCriteria.some((c) => !c.decomposedMetricKey) &&
-    screenProbe.criteria.length === 0 &&
+    (screenProbe.criteria.length === 0 || allResearchedRoute) &&
     (input.intent.metricKeys.length === 0 ||
       ((input.intent.geographies.length === 0 || stateBounded) &&
         (namedResearchCriterion || researchedOnlySuperlative))) &&

@@ -177,6 +177,168 @@ describe('R-A: the demo question cards its places and assesses its criteria', ()
 })
 
 /* ------------------------------------------------------------------ */
+/* Q6 round 2 — route discipline + the near-frame lead                 */
+/* ------------------------------------------------------------------ */
+
+describe('Q6 round 2: the national-comparison realization routes research-first', () => {
+  it('a placeless screen parse carrying an invented bound serves the demo question research-first', async () => {
+    const provider = createStubProvider({
+      async research() {
+        return { prose: Q6_PROSE, sources: Q6_SOURCES }
+      },
+    })
+    // The second parse realization (parent live re-verification on
+    // e99a324): the question expressed as a national screen — a
+    // retained rent measure and a bound the reader never stated
+    // (no figure appears anywhere in the question). On the shipped
+    // build the screen-probe veto refused it up front: the bound
+    // emptied the screen and the terminal was 0-of-0 with both
+    // researched criteria not measurable.
+    const answer = await runAnswerPipeline({
+      intent: intent({
+        mode: 'sweep_filter',
+        metricKeys: ['median_gross_rent'],
+        filters: [{ metricKey: 'median_gross_rent', op: 'lt', value: 100 }],
+        clarificationNeeded: false,
+      }),
+      rows: Q6_ROWS,
+      researchQuery: Q6,
+      queryText: Q6,
+      provider,
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name)).toEqual(['Carmel, IN', 'Fishers, IN', 'Zionsville, IN'])
+    expect(answer.researchNamedPlaces).toEqual(['Carmel, IN', 'Fishers, IN', 'Zionsville, IN'])
+    const schools = answer.criterionEvidence.find((e) => e.criterion === 'School quality')
+    expect(schools?.status).toBe('met')
+    const fastFood = answer.criterionEvidence.find((e) => e.criterion === 'Fast food restaurants')
+    expect(fastFood?.status).toBe('partially_measured')
+    expect(answer.summary).not.toContain('No place in the loaded data')
+  })
+
+  it('a reader-stated bound keeps the screen path — the refusal stays legitimate there', async () => {
+    const provider = createStubProvider({
+      async research() {
+        return { prose: Q6_PROSE, sources: Q6_SOURCES }
+      },
+    })
+    // The same question with the bound IN the reader's words: the
+    // bound is a Census-measure requirement the reader themselves
+    // set, so the route discipline does not lift the veto — the
+    // screen runs, no loaded place meets the stated bound, and the
+    // Census refusal is the honest answer to what was asked.
+    const bounded =
+      'Where can I find the best schools but also the fewest fast food restaurants, in places with rent under $100?'
+    const answer = await runAnswerPipeline({
+      intent: intent({
+        mode: 'sweep_filter',
+        metricKeys: ['median_gross_rent'],
+        filters: [{ metricKey: 'median_gross_rent', op: 'lt', value: 100 }],
+        clarificationNeeded: false,
+      }),
+      rows: Q6_ROWS,
+      researchQuery: bounded,
+      queryText: bounded,
+      provider,
+    })
+    expect(answer.status).toBe('empty')
+    expect(answer.places).toEqual([])
+    expect(answer.researchNamedPlaces).toBeUndefined()
+    expect(answer.summary).toBe('No place in the loaded data meets all of the stated Census criteria.')
+  })
+})
+
+describe('Q6 round 2: the near-frame lead describes the shown list truthfully', () => {
+  const phillyIntent: ValidatedIntent = {
+    mode: 'lookup',
+    geographies: ['Philadelphia, PA'],
+    metricKeys: ['median_gross_rent', 'median_home_value'],
+    filters: [],
+    clarificationNeeded: false,
+  }
+
+  it('a sliced frame list with mixed verdicts: the lead defers the meeting count to the count line', async () => {
+    const provider = createStubProvider({
+      async research() {
+        return {
+          prose: PHILLY_PROSE,
+          sources: [{ title: 'Regional school directory', url: 'https://example.org/schools' }],
+        }
+      },
+    })
+    const answer = await composeAnswerForRequest({
+      intent: phillyIntent,
+      queryText: PHILLY_Q,
+      rows: PHILLY_ROWS,
+      resolved: resolveAnswerGeographies(phillyIntent, PHILLY_INDEX),
+      provider,
+      research: true,
+      placeIndex: PHILLY_INDEX,
+      centroids: PHILLY_CENTROIDS,
+    })
+    expect(answer?.status).toBe('verified')
+    expect(answer?.placesMeetingAllCriteria).toBe(6)
+    // The lead describes the shown list — the first screened places
+    // in screening order, with per-place findings — and makes no
+    // meeting claim of its own; the count line below the list owns
+    // the count, and still states it.
+    expect(answer?.summary).toContain(
+      'The places below are the first of the screened places, in screening order',
+    )
+    expect(answer?.summary).not.toContain('meet all of the stated criteria')
+    const text = cardText(answer!)
+    expect(text).toContain(
+      '6 of the 12 places in the screening table meet all of the stated criteria',
+    )
+  })
+
+  it('a frame list shown in full carries no slice lead', async () => {
+    const subsetNames = [
+      'Philadelphia',
+      'Bala Cynwyd',
+      'Upper Darby',
+      'Ardmore',
+      'Havertown',
+      'Drexel Hill',
+      'Lansdowne',
+    ]
+    const subsetPlaces = PHILLY_PLACES.filter((p) => subsetNames.includes(p.displayName))
+    const subsetZips = new Set(subsetPlaces.flatMap((p) => p.zips))
+    const subsetIndex = new PlaceIndex(
+      new Map([...PHILLY_BY_ZIP].filter(([zip]) => subsetZips.has(zip))),
+      subsetPlaces,
+    )
+    const subsetCentroids = PHILLY_CENTROIDS.filter((c) => subsetZips.has(c.zcta))
+    const subsetRows = PHILLY_ROWS.filter((r) => subsetZips.has(r.zcta))
+    const subsetProse = POSITIVE_SCHOOLS.map(
+      (name) =>
+        `${name}, PA is served by a school district whose schools are rated among the strongest in the state.`,
+    ).join(' ')
+    const provider = createStubProvider({
+      async research() {
+        return {
+          prose: subsetProse,
+          sources: [{ title: 'Regional school directory', url: 'https://example.org/schools' }],
+        }
+      },
+    })
+    const answer = await composeAnswerForRequest({
+      intent: phillyIntent,
+      queryText: PHILLY_Q,
+      rows: subsetRows,
+      resolved: resolveAnswerGeographies(phillyIntent, subsetIndex),
+      provider,
+      research: true,
+      placeIndex: subsetIndex,
+      centroids: subsetCentroids,
+    })
+    expect(answer?.status).toBe('verified')
+    expect(answer?.places.length).toBe(6)
+    expect(answer?.summary).not.toContain('first of the screened places')
+  })
+})
+
+/* ------------------------------------------------------------------ */
 /* R-D — Colorado: assessed set and rendered claims agree              */
 /* ------------------------------------------------------------------ */
 

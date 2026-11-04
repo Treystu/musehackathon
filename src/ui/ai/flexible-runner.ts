@@ -130,12 +130,24 @@ export async function composeFlexibleCompletion(input: {
   // draft fails the gate alongside the validator's own failures
   // when the research named places — a completion that names no
   // place does not answer a place question (Lane completion K0).
+  //
+  // The zero-place failure widens to gathered material (Q6 round
+  // 3, 2026-11-04): the K0 form armed only on the extraction
+  // record, so a run whose findings produced claims but no
+  // recordable name — fragments only — admitted a zero-place
+  // completion whose prose reported that nothing could be shown:
+  // the dead-end terminal wearing the completion's label, on a
+  // question the research had served with material. The floor's
+  // contract is a labeled PLACE answer whenever material exists;
+  // a draft that names no place fails against the claims record
+  // exactly as against the names record, and the one bounded
+  // re-draft (below) is its cure, as before.
   const gateFailures = (candidate: FlexibleAnswer | null): string[] => {
     if (!candidate) return ['the draft could not be read']
     const failures = [...verifyFlexibleAnswer(candidate, validationContext).failures]
     if (
       candidate.places.length === 0 &&
-      validationContext.researchNamedPlaces.length > 0
+      (validationContext.researchNamedPlaces.length > 0 || request.claims.length > 0)
     ) {
       failures.push(
         'the completion named no places, though the research named places for the stated criteria',

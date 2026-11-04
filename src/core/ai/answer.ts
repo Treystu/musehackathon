@@ -926,6 +926,17 @@ export const RESEARCH_CRITERION_CATALOG: readonly {
   // sort with no nature line at all. Nature and the outdoors are
   // research-servable like schools or climate, and now have a slot.
   { id: 'nature', label: 'Nature and outdoors', pattern: /\bnature\b|\boutdoors?\b|\bscenery\b|\bscenic\b|\bgreenery\b|\bgreen spaces?\b|\bnatural beauty\b|\bwilderness\b/i, keywords: ['nature', 'outdoor', 'scenic', 'trail', 'forest', 'wilderness', 'national park', 'state park', 'mountain'] },
+  // Crowding (FM-9 coverage round 2, 2026-11-03): "most crowded
+  // housing" decomposed to NOTHING and never engaged research,
+  // because the superlative-phrase claim rule reads any phrase
+  // containing a measure head word ("housing") as a Census-measure
+  // reading and swallows the criterion word. Crowding is one of the
+  // four demographic figures the owner's 2026-11-03 ruling keeps
+  // display-only with research-first superlatives, so this entry
+  // carries NO decomposedMetricKey: the criterion is researched
+  // (research names the places; average_household_size only ever
+  // displays), never figure-assessed or figure-ranked.
+  { id: 'crowding', label: 'Crowded housing', pattern: /\bcrowd(?:ed|ing)?\b|\bovercrowd\w*\b/i, keywords: ['crowded', 'overcrowded', 'cramped'] },
   // Current-events arm (P3 step 7, battery E4): news phrasing is a
   // research criterion, so the pipeline researches it with citations
   // instead of the question stranding in clarification.

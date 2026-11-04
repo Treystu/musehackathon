@@ -379,6 +379,7 @@ describe('cure 2 correspondence pin: every catalog criterion reaches the pipelin
     farmers_markets: 'places with farmers markets',
     climate: 'somewhere with a warm climate',
     nature: 'places with nature nearby',
+    crowding: 'the most crowded housing',
     current_events: 'the latest housing news',
     internet: 'places with good internet access',
     cost_of_living: 'places with a lower cost of living',

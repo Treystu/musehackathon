@@ -10,18 +10,26 @@ proxy (see README.md in this directory for the evidence and for what this
 does NOT claim).
 
 Model invariant (enforced here, not by convention):
-  * every panel/judge model id must be in ALLOWED_MODELS (Meta Muse ids on
-    OpenRouter); anything else aborts before any call;
+  * every panel/judge model id must be in ALLOWED_MODELS (bare Meta API
+    ids on the harness's direct Meta lane, api.meta.ai); anything else
+    aborts before any call;
   * HARNESS_USE_FREE=false is forced, so no free-pool rotation can bring a
     non-Muse model into the run; judge fallbacks are drawn only from the
     panel pool above, which is Muse-only;
+  * HARNESS_MODEL_PRESET=muse and HARNESS_META_BUDGET_USD are forced in
+    the subprocess env (see the env block in main): the preset is what
+    routes bare muse- ids to the direct Meta lane instead of OpenRouter,
+    and the local Meta budget defaults to 0.0 in the harness -- a cap of
+    zero refuses every Meta call;
   * the spend governor's pre-flight ceiling (--max-cost) refuses the run
     before dispatch if the worst case exceeds it.
 
-Credentials: the harness reads its OpenRouter key from its own config path
-(~/.config/harness/openrouter.env or $OPENROUTER_API_KEY) -- harness.config
-owns that lookup. No key is read, printed, or stored by this script.
-The portal's MUSE_API_KEY is NOT used here and is never needed for this path.
+Credentials: the harness resolves its Meta (Muse) API key itself
+(harness.config.resolve_meta_key): ~/.config/scmorc/meta.env, then
+~/.config/harness/meta.env, then $META_API_KEY / $MUSE_API_KEY in the
+environment. The key is the Muse API key (the $150 hackathon credits);
+OpenRouter is not involved on this rail. No key is read, printed, or
+stored by this script.
 
 Usage:
   python3 run_harness_verify.py [--out-dir DIR] [--max-cost 1.00]
@@ -34,16 +42,23 @@ import argparse, json, os, subprocess, sys, time
 from pathlib import Path
 
 REQUIRED_VERSION = "0.5.1"
-ALLOWED_MODELS = {"meta/muse-spark-1.3", "meta/muse-wonder"}
-PANEL = ["meta/muse-spark-1.3", "meta/muse-wonder"]  # strongest/preferred first
-JUDGE = "meta/muse-wonder"
+# Muse-only pinning (owner directive 2026-11-03): bare Meta API ids on
+# the harness's direct Meta lane (api.meta.ai, priced from the committed
+# offers in harness/meta.py) -- never OpenRouter slugs. A bare muse- id
+# with no committed offer fails closed at pricing time.
+ALLOWED_MODELS = {"muse-spark-1.3", "muse-wonder-1.0"}
+PANEL = ["muse-spark-1.3", "muse-wonder-1.0"]  # strongest/preferred first
+JUDGE = "muse-wonder-1.0"
 # The structured-claims convergence specialist defaults to a non-Muse model
 # in harness.config (observed in a live preflight reserve, 2026-11-02:
 # 'z-ai/glm-5.3-flash (convergence attempt ...)'). It is therefore pinned
 # explicitly on every run; without these two settings the Muse-only
-# invariant does NOT hold even with a Muse-only panel and judge.
-CONVERGENCE_MODEL = "meta/muse-wonder"
-SPECIALIST_POOL = ["meta/muse-wonder", "meta/muse-spark-1.3"]
+# invariant does NOT hold even with a Muse-only panel and judge. The seat
+# renders the structured tally -- the cheap rung of the panel's shape --
+# so it is pinned to Spark; Wonder stays where the decision weight is
+# (the judge). The specialist pool is the seat's fallback set.
+CONVERGENCE_MODEL = "muse-spark-1.3"
+SPECIALIST_POOL = ["muse-spark-1.3", "muse-wonder-1.0"]
 HERE = Path(__file__).resolve().parent
 
 
@@ -82,6 +97,18 @@ def main():
 
     env = dict(os.environ)
     env["HARNESS_USE_FREE"] = "false"  # no free-pool rotation into this run
+    # The Muse rail is carried by the runner itself, not by whoever
+    # invokes it: recorded runs through 2026-11-03 left the preset unset
+    # by hand, which is exactly what kept them on OpenRouter. The preset
+    # re-pins every harness surface to bare Meta ids and makes the
+    # governor skip OpenRouter key verification entirely.
+    env["HARNESS_MODEL_PRESET"] = "muse"
+    # The local Meta budget is this rail's spend control. Its harness
+    # default is 0.0, and a cap of zero refuses every Meta call
+    # (spend.assert_meta_budget) -- forgetting it fails the run closed
+    # before its first call. $2.00 mirrors the two $1.00 --max-cost
+    # manifest ceilings.
+    env["HARNESS_META_BUDGET_USD"] = "2.00"
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out_dir = Path(args.out_dir) / stamp

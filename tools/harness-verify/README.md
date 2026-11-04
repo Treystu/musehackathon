@@ -22,9 +22,9 @@ the harness's hermetic claims lint, then invokes, per manifest:
 ```
 python -m harness.cli verify \
   --claims-file claims-<name>.json --source-file excerpt-<name>.txt \
-  --panel meta/muse-spark-1.3,meta/muse-wonder --judge meta/muse-wonder \
-  --convergence-model meta/muse-wonder \
-  --specialist-pool meta/muse-wonder,meta/muse-spark-1.3 \
+  --panel muse-spark-1.3,muse-wonder-1.0 --judge muse-wonder-1.0 \
+  --convergence-model muse-spark-1.3 \
+  --specialist-pool muse-spark-1.3,muse-wonder-1.0 \
   --max-cost 1.00 --task-id civicscope-ai-<name>
 ```
 
@@ -38,34 +38,56 @@ verify stage). A verification pass = panel + judge reject every defect
 claim. A claim upheld is a finding against the code, not a runner failure
 to be tuned away.
 
-## The Muse-only invariant (all four settings are load-bearing)
+## The Muse-only invariant (all settings are load-bearing)
 
-* panel + judge are passed explicitly (above);
+* panel + judge are passed explicitly (above), as bare Meta API ids: the
+  run dispatches on the harness's direct Meta lane (api.meta.ai) under
+  `HARNESS_MODEL_PRESET=muse`, which the runner forces in the subprocess
+  env together with `HARNESS_META_BUDGET_USD=2.00` (the harness default
+  is 0.0, and a zero cap refuses every Meta call). OpenRouter is not in
+  this path: runs through 2026-11-03 used OpenRouter slugs
+  (`meta/muse-*`) because the preset was left unset by hand; that rail
+  is retired for Muse lane work by owner directive (2026-11-03);
 * the convergence specialist and its specialist pool are ALSO passed
   explicitly: harness 0.5.1's default convergence model is a non-Muse
   model, and a live preflight reserve for it was observed on 2026-11-02
   when only panel/judge were pinned. Pinning panel/judge alone does not
-  make a structured-claims run Muse-only;
+  make a structured-claims run Muse-only. The seat renders the
+  structured tally (the cheap rung), so it is pinned to Spark; Wonder
+  stays on the judge seat;
 * the runner forces `HARNESS_USE_FREE=false`, so no free-pool rotation can
   enter the run (judge fallbacks are drawn only from the panel pool);
 * after each run the runner audits the harness events file: every model
   named anywhere in it, preflight reserves included, must be in
-  {`meta/muse-spark-1.3`, `meta/muse-wonder`}, or the run is a failure.
+  {`muse-spark-1.3`, `muse-wonder-1.0`}, or the run is a failure. On
+  this rail the audit also proves the route: a stray `meta/` OpenRouter
+  slug anywhere in the events would fail the allowlist.
 
 ## Credentials and spend
 
-The harness reads its OpenRouter key from its own config path
-(`~/.config/harness/openrouter.env`, or `$OPENROUTER_API_KEY`); OpenRouter
-serves `meta/muse-spark-1.3` and `meta/muse-wonder` from Meta's endpoint.
-No key is read or stored by anything in this directory. The portal's
-`MUSE_API_KEY` (deployment env, api.meta.ai) is never used here. Spend
-governance is the harness's: a key-identity/spend check, a pre-flight
-worst-case reserve compared against `--max-cost` before any dispatch
-(observed 2026-11-02: $0.87 / $0.86 reserved against a $1.00 ceiling),
-per-call ceilings, and fail-closed aborts -- the same 2026-11-02 runs
-stopped at $0.00 known cost when the upstream Meta endpoint returned
-HTTP 402 (provider spend limit exhausted), so no panel verdicts exist
-from that date; re-run when the endpoint's limit resets.
+The panel runs on the Muse API key (the hackathon credits), through the
+harness's Meta lane: `harness.config.resolve_meta_key` reads
+`~/.config/scmorc/meta.env`, then `~/.config/harness/meta.env`, then
+`$META_API_KEY` / `$MUSE_API_KEY` in the environment. No key is read or
+stored by anything in this directory. Under the preset the spend
+governor skips OpenRouter key verification entirely (there is no
+OpenRouter key in these runs to verify); the spend controls are the
+local Meta budget (`HARNESS_META_BUDGET_USD`, forced to $2.00 by the
+runner), the pre-flight worst-case reserve compared against `--max-cost`
+before any dispatch, per-call ceilings, and fail-closed aborts. Bare
+muse- ids are priced from the committed offers in `harness/meta.py`
+(Spark $1.25 in / $4.25 out per 1M, Wonder $4 / $20 per 1M) -- never
+the OpenRouter catalog. Historical note: the runs through 2026-11-03
+dispatched through OpenRouter and stopped at $0.00 spent on
+OpenRouter's account spend limit (HTTP 402 `[provider_spend_limit]`),
+so no panel verdicts exist from those attempts. Worst-case reserves:
+$0.87 / $0.86 observed 2026-11-02 (OpenRouter shape, pre-re-point
+excerpts); recomputed 2026-11-03 for the re-pointed manifests on the
+Muse rail (Spark convergence): $0.7896 (meta-client) / $0.7707
+(answer) against the $1.00-per-manifest ceiling -- a reserve, not an
+expected spend; the audit's expected actual is on the order of
+$0.07 per manifest, booked from the API's usage counts at the
+committed rates.
 
 ## What this does NOT claim
 

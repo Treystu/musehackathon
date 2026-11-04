@@ -101,16 +101,27 @@ export function detectGeographyGate(input: {
 
 /**
  * The classification research ask: the reader's question, plus the
- * instruction the classification extraction below reads — name every
- * qualifying state, and name any single state the sources identify
- * as the strongest example. Appending a focus instruction to the
- * question text is the runner's established research-query pattern.
+ * instruction the classification extraction below reads — enumerate
+ * the criterion's standing across the whole domain, and name any
+ * single state the sources identify as the strongest example.
+ * Appending a focus instruction to the question text is the
+ * runner's established research-query pattern. Round 2 (2026-11-04,
+ * measured live on 2e04268): the round-1 ask ("list every state")
+ * still returned prose centered on ONE state (Oregon's
+ * decriminalization) with the favorable class carried as background,
+ * and the classifier followed the narrative focus to a one-state
+ * class. The ask now requires the domain-wide enumeration itself —
+ * the standing state by state, as an explicit list covering the
+ * full set the sources support — so the prose the classifier reads
+ * enumerates the class instead of exemplifying it.
  */
 export function gateClassificationQueryText(queryText: string, spec: GeographyGateSpec): string {
   return (
-    `${queryText} For the state part of the question, answer from current sources: ` +
-    `list every U.S. state that currently meets this criterion — ${spec.criterion.text} — ` +
-    'naming each state in its own sentence with the basis the sources give, and name any ' +
+    `${queryText} For the state part of the question, answer from current sources with the ` +
+    `criterion's standing across the whole country, state by state: enumerate every U.S. state ` +
+    `that currently meets this criterion — ${spec.criterion.text} — as an explicit list, ` +
+    'naming each state in its own sentence with the basis the sources give, covering the ' +
+    'full set the sources support rather than focusing on any single state; then name any ' +
     'single state the sources identify as the strongest example.'
   )
 }
@@ -160,6 +171,64 @@ export function statesMentionedIn(sentence: string): GateStateRef[] {
   return [...found.values()]
 }
 
+const ENUM_COUNT_RE = /\b\d+\s+(?:states|jurisdictions)\b/i
+const ENUM_NEGATION_RE = /\b(?:not|never|no)\b/i
+
+/**
+ * Whether a sentence ANNOUNCES an enumerated class for the
+ * criterion's pole: it carries the pole's marker, no opposite-pole
+ * marker and no negation, and it either ends in a colon (a list
+ * follows), carries a class count ("fully legal in 24 states"),
+ * uses an announcing verb ("the states ... include"), or is a
+ * short favorable heading naming the class ("Fully legal states"),
+ * whose items follow on the next lines. Round 2 (2026-11-04,
+ * measured live on 2e04268): the round-1 classifier read prose
+ * sentence by sentence on markers alone, so when the live research
+ * centered its narrative on one state and carried the favorable
+ * class as a bare list under a lead-in, the list items — carrying
+ * no marker of their own — classified nothing, and the class
+ * collapsed to the narrative's focus (Oregon alone). An announced
+ * enumeration is the research's explicit membership assertion for
+ * the whole domain; it outranks elimination-by-focus.
+ */
+function isEnumerationLead(sentence: string, favorableRe: RegExp, unfavorableRe: RegExp): boolean {
+  if (!favorableRe.test(sentence)) return false
+  if (unfavorableRe.test(sentence)) return false
+  if (ENUM_NEGATION_RE.test(sentence)) return false
+  if (sentence.trimEnd().endsWith(':')) return true
+  if (ENUM_COUNT_RE.test(sentence)) return true
+  if (/\b(?:following|include|including)\b/i.test(sentence)) return true
+  // A short favorable heading that names the class but no state of
+  // its own: the list itself follows on the next lines.
+  return (
+    statesMentionedIn(sentence).length === 0 &&
+    /\bstates?\b|\bjurisdictions\b/i.test(sentence) &&
+    sentence.split(/\s+/).filter(Boolean).length <= 7
+  )
+}
+
+/**
+ * Whether a unit continues an announced enumeration: it carries no
+ * opposite-pole marker, and either it is itself a further lead
+ * (a colon announcement naming no state — the counted lead and the
+ * list lead often arrive as two consecutive lines) or it is shaped
+ * like a list item naming states — a bare name or short comma run,
+ * or a longer run naming several states at once. The block ends at
+ * the first unit that is neither.
+ */
+function enumerationContinuation(
+  sentence: string,
+  favorableRe: RegExp,
+  unfavorableRe: RegExp,
+): boolean {
+  if (unfavorableRe.test(sentence)) return false
+  const states = statesMentionedIn(sentence)
+  if (states.length === 0) return isEnumerationLead(sentence, favorableRe, unfavorableRe)
+  if (states.length >= 3) return true
+  const words = sentence.replace(/[,;]/g, ' ').split(/\s+/).filter(Boolean)
+  return words.length <= 8
+}
+
 export interface StateClassification {
   /** Every state the research classifies as meeting the criterion. */
   favorableStates: GateStateRef[]
@@ -187,6 +256,14 @@ export interface StateClassification {
  * drug laws" classifies on the restrictive markers). A sentence
  * with a superlative marker, a favorable marker, and exactly one
  * state marks that state as the research's singled-out winner.
+ *
+ * Before that pass, an enumeration pass collects any ANNOUNCED
+ * class (isEnumerationLead): the lead sentence plus its list-shaped
+ * continuation units classify every state they name, markers or
+ * not — a counted/listed class in the prose is the domain-wide
+ * assertion and outranks the narrative's focus. Prose carrying no
+ * announced enumeration is untouched by the pass, so a genuinely
+ * narrow classification stays narrow.
  */
 export function classifyStatesFromResearch(
   prose: string,
@@ -201,6 +278,26 @@ export function classifyStatesFromResearch(
     .filter((s) => s.length > 0)
   const favorable = new Map<string, GateStateRef>()
   const claims: string[] = []
+  const claimed = new Set<string>()
+  const pushClaim = (sentence: string) => {
+    if (!claimed.has(sentence)) {
+      claimed.add(sentence)
+      claims.push(sentence)
+    }
+  }
+  // Enumeration pass: collect each announced class as a class.
+  for (let i = 0; i < sentences.length; i++) {
+    const lead = sentences[i]!
+    if (!isEnumerationLead(lead, favorableRe, unfavorableRe)) continue
+    pushClaim(lead)
+    for (const state of statesMentionedIn(lead)) favorable.set(state.code, state)
+    for (let j = i + 1; j < sentences.length; j++) {
+      const unit = sentences[j]!
+      if (!enumerationContinuation(unit, favorableRe, unfavorableRe)) break
+      pushClaim(unit)
+      for (const state of statesMentionedIn(unit)) favorable.set(state.code, state)
+    }
+  }
   const winners = new Map<string, GateStateRef>()
   for (const sentence of sentences) {
     const states = statesMentionedIn(sentence)
@@ -209,7 +306,7 @@ export function classifyStatesFromResearch(
     const unfavorableHit = unfavorableRe.test(sentence)
     if (!favorableHit || unfavorableHit) continue
     for (const state of states) favorable.set(state.code, state)
-    claims.push(sentence)
+    pushClaim(sentence)
     if (states.length === 1 && SUPERLATIVE_RE.test(sentence)) {
       winners.set(states[0]!.code, states[0]!)
     }

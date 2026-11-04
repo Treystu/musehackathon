@@ -43,6 +43,7 @@ const CENTROID_POINTS = [
 
 let tigerwebCalls = 0
 let tigerwebStatus = 200
+let tigerwebHang = false
 
 /**
  * A small square polygon at a deterministic centre per ZCTA. The
@@ -76,10 +77,25 @@ function syntheticSquare(zcta: string) {
 function installFetchStub() {
   tigerwebCalls = 0
   tigerwebStatus = 200
-  vi.stubGlobal('fetch', async (input: unknown) => {
+  tigerwebHang = false
+  vi.stubGlobal('fetch', async (input: unknown, init?: { signal?: AbortSignal }) => {
     const url = String(input)
     if (url.includes('tigerweb.geo.census.gov')) {
       tigerwebCalls += 1
+      if (tigerwebHang) {
+        // A hung upstream: the promise settles only when the
+        // caller aborts, exactly as a real fetch behaves.
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal
+          if (signal?.aborted) {
+            reject(new DOMException('The operation was aborted.', 'AbortError'))
+            return
+          }
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError')),
+          )
+        })
+      }
       if (tigerwebStatus !== 200) return new Response('upstream failure', { status: tigerwebStatus })
       const where = new URL(url).searchParams.get('where') ?? ''
       const asked = where.match(/\d{5}/g) ?? []
@@ -163,6 +179,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 function render(node: ReactNode) {
@@ -318,6 +335,39 @@ describe('ResultMap — failure', () => {
     expect(container.textContent).toContain(
       'The map for this answer could not be loaded. Every figure is in the answer above and the screening table below.',
     )
+    expect(container.querySelector('svg')).toBeNull()
+  }, 30000)
+
+  it('a hung geometry load settles to the failure line at the load deadline instead of loading forever (cure round 4)', async () => {
+    // The load chain carried no timeout anywhere (cure round 4,
+    // 2026-11-03): a TIGERweb response that never settles left the
+    // card on "Loading the map for this answer..." indefinitely —
+    // the live probe's Arizona answer was still on that line at its
+    // final check. The stub hangs the geometry request (settling
+    // only on abort, as a real fetch does); fake timers carry the
+    // load past its 90-second deadline.
+    vi.useFakeTimers()
+    tigerwebHang = true
+    render(<ResultMap answer={answer({ places: SEATTLE_PLACES })} />)
+    expectNoGateButton()
+    // Let the same-origin assets land and the geometry load begin.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('Loading the map for this answer...')
+    await act(async () => {
+      vi.advanceTimersByTime(90_000)
+    })
+    for (let i = 0; i < 20 && !(container.textContent ?? '').includes('could not be loaded'); i++) {
+      await act(async () => {
+        vi.advanceTimersByTime(1000)
+        await Promise.resolve()
+      })
+    }
+    expect(container.textContent).toContain(
+      'The map for this answer could not be loaded. Every figure is in the answer above and the screening table below.',
+    )
+    expect(container.textContent).not.toContain('Loading the map for this answer...')
     expect(container.querySelector('svg')).toBeNull()
   }, 30000)
 })

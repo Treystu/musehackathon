@@ -93,6 +93,20 @@ const MICRO_BOUNDS_AREA = 25
 const FAILURE_LINE =
   'The map for this answer could not be loaded. Every figure is in the answer above and the screening table below.'
 
+/**
+ * The load's deadline (cure round 4, 2026-11-03): no step in the
+ * load chain carried a timeout — fetchResilient retries a failed
+ * request, but a HUNG one (a TIGERweb response that never settles)
+ * stranded the card on "Loading the map for this answer..." for as
+ * long as the reader waited; the Arizona control answer in the
+ * 2026-11-03 live probe was still on that line at the probe's final
+ * check, after the answer itself had completed. Ninety seconds is
+ * far beyond a legitimate load — a state answer's geometry is at
+ * most a hundred member areas in a few batched requests — and it
+ * converts the hang into the honest failure line above.
+ */
+const RESULT_MAP_LOAD_TIMEOUT_MS = 90_000
+
 const HONESTY_LINE =
   'Boundaries: U.S. Census Bureau ZIP Code Tabulation Areas (TIGERweb). ' +
   'A ZCTA is the Census Bureau\u2019s area for a ZIP code \u2014 it is not a USPS delivery boundary. ' +
@@ -293,6 +307,19 @@ export function ResultMap({
   useEffect(() => {
     if (!started) return
     const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, RESULT_MAP_LOAD_TIMEOUT_MS)
+    // An abort from the deadline settles the load as failed (the
+    // failure line is the honest terminal for a hung load); an
+    // abort from unmount or a place-set change just ends it.
+    const aborted = () => {
+      if (!controller.signal.aborted) return false
+      if (timedOut) setLoad({ kind: 'failed' })
+      return true
+    }
     setLoad({ kind: 'loading' })
     setActiveKey(null)
     ;(async () => {
@@ -309,7 +336,7 @@ export function ResultMap({
       } catch {
         centroidList = []
       }
-      if (controller.signal.aborted) return
+      if (aborted()) return
       const centroids = new Map(centroidList.map((c) => [c.zcta, c]))
       const mode = resultMapMode(answer, centroids)
       if (mode === 'national') {
@@ -337,11 +364,11 @@ export function ResultMap({
             memberZctas.length > 0
               ? await loadCountyOutlineGeometry(memberZctas, { signal: controller.signal })
               : await loadResultGeometry(plainZctas, { signal: controller.signal })
-          if (controller.signal.aborted) return
+          if (aborted()) return
           const uncovered = plainZctas.filter((z) => !geometry.features.has(z))
           if (memberZctas.length > 0 && uncovered.length > 0) {
             const plain = await loadResultGeometry(uncovered, { signal: controller.signal })
-            if (controller.signal.aborted) return
+            if (aborted()) return
             const features = new Map(geometry.features)
             for (const [zcta, feature] of plain.features) features.set(zcta, feature)
             geometry = {
@@ -357,19 +384,26 @@ export function ResultMap({
             { signal: controller.signal },
           )
         }
-        if (controller.signal.aborted) return
+        if (aborted()) return
         if (geometry.features.size === 0) {
           setLoad({ kind: 'failed' })
           return
         }
         setLoad({ kind: 'ready', mode, geometry, centroids, centroidList, basemap })
       } catch (err) {
+        if (timedOut) {
+          setLoad({ kind: 'failed' })
+          return
+        }
         if (controller.signal.aborted) return
         if (err instanceof DOMException && err.name === 'AbortError') return
         setLoad({ kind: 'failed' })
       }
     })()
-    return () => controller.abort()
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
     // The metric is deliberately NOT a dependency: switching it
     // re-colors from figures already in hand and must never refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -180,7 +180,7 @@ import {
   type RunProgressSnapshot,
 } from './run-progress'
 import { isFrameSegmentText, type NearFrameContext } from './near-frame'
-import type { GeographyGateContext } from './geography-gate'
+import { stateCountPhrase, type GeographyGateContext } from './geography-gate'
 
 /* ------------------------------------------------------------------ */
 /* Stage types                                                         */
@@ -3840,8 +3840,8 @@ export function criterionEvidenceFor(input: {
       kind: 'research',
       status: 'met',
       detail: gate.winnerState
-        ? `Classified from the cited research before the Census screen ran: the research singles out ${gate.winnerState.name} for this criterion, among the ${gate.classifiedStates.length} states it classifies as meeting it (${classifiedNames}). The cost screen then ran inside ${gate.winnerState.name} alone, as the question's dependent bound asks.`
-        : `Classified from the cited research before the Census screen ran: the research classifies ${gate.classifiedStates.length} states as meeting this criterion (${classifiedNames}) and singles out no one state as the strongest, so the cost screen ran inside those ${gate.classifiedStates.length} states.`,
+        ? `Classified from the cited research before the Census screen ran: the research singles out ${gate.winnerState.name} for this criterion, among the ${stateCountPhrase(gate.classifiedStates.length)} it classifies as meeting it (${classifiedNames}). The cost screen then ran inside ${gate.winnerState.name} alone, as the question's dependent bound asks.`
+        : `Classified from the cited research before the Census screen ran: the research classifies ${stateCountPhrase(gate.classifiedStates.length)} as meeting this criterion (${classifiedNames}) and singles out no one state as the strongest, so the cost screen ran inside ${gate.classifiedStates.length === 1 ? 'that' : 'those'} ${stateCountPhrase(gate.classifiedStates.length)}.`,
       sourceUrls: gate.sources.map((s) => s.url),
     })
   }

@@ -126,6 +126,19 @@ export function gateClassificationQueryText(queryText: string, spec: GeographyGa
   )
 }
 
+/**
+ * The gate's count phrase, agreeing with its count: "1 state",
+ * "24 states". Round 2 (2026-11-04, measured live on 2e04268): the
+ * criterion evidence rendered "Research classifies 1 states as
+ * meeting this criterion" over the one-state class — every
+ * count-bearing gate sentence (the evidence entry, the runner's
+ * bound disclosure) interpolated the bare numeral against a fixed
+ * plural. All of them read through this helper instead.
+ */
+export function stateCountPhrase(count: number): string {
+  return count === 1 ? '1 state' : `${count} states`
+}
+
 /** State name -> code, from the shipped name table (states + DC + PR). */
 const STATE_CODE_BY_NAME: ReadonlyMap<string, string> = new Map(
   Object.entries(STATE_NAME_BY_CODE).map(([code, name]) => [name.toLowerCase(), code]),

@@ -57,6 +57,7 @@ import {
   detectGeographyGate,
   gateBoundZctas,
   gateClassificationQueryText,
+  stateCountPhrase,
   type GeographyGateContext,
 } from '../../core/ai/geography-gate'
 import type { ZctaPoint } from '../../core/map/centroids'
@@ -1093,8 +1094,8 @@ export async function composeAnswerForRequest(input: {
           zctas: gateBound,
           geographyDisclosures: [
             geographyGate.winnerState
-              ? `The cost screen ran inside ${geographyGate.winnerState.name} only: the cited research singles out ${geographyGate.winnerState.name} for the question's first criterion, among the ${geographyGate.classifiedStates.length} states it classifies as meeting it.`
-              : `The cost screen ran inside the ${geographyGate.boundStates.length} states the cited research classifies as meeting the question's first criterion: ${geographyGate.boundStates.map((s) => s.name).join(', ')}.`,
+              ? `The cost screen ran inside ${geographyGate.winnerState.name} only: the cited research singles out ${geographyGate.winnerState.name} for the question's first criterion, among the ${stateCountPhrase(geographyGate.classifiedStates.length)} it classifies as meeting it.`
+              : `The cost screen ran inside the ${stateCountPhrase(geographyGate.boundStates.length)} the cited research classifies as meeting the question's first criterion: ${geographyGate.boundStates.map((s) => s.name).join(', ')}.`,
             ...frameResolved.geographyDisclosures,
           ],
         }

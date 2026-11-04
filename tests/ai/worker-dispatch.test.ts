@@ -6,6 +6,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import { dispatchFetch, type WorkerEnv } from '../../tools/worker-entry'
+import { MeterDurableObject } from '../../functions/api/muse/meter-do'
+import { resetMeterForTests } from '../../src/server/muse-adapter'
 
 const APP_HTML =
   '<html><head><title>CivicScope</title></head><body><div id="root"></div></body></html>'
@@ -93,5 +95,76 @@ describe('advanced-mode worker dispatch', () => {
     const res = await dispatchFetch(req('/api/muse/nope'), fakeEnv(), exec)
     expect(res.status).toBe(200)
     expect(await res.text()).toContain('<div id="root">')
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* K4 settle gap (scenario-coverage seat, 2026-11-03): the production  */
+/* dispatch shape end to end. The functions-layer pins drive the       */
+/* handlers directly with a fake meter; the deployed path adds the     */
+/* worker-entry dispatch, the adapter's meter singleton, the real      */
+/* DurableMeterClient protocol, and the real MeterDurableObject class  */
+/* over storage. This pin drives exactly that shape: a METER namespace */
+/* whose stub is the real class over a Map, a plan early-refusal       */
+/* (which awaits its bookend settle), then a diagnostics read through  */
+/* the same dispatch. If any seam in the chain drops the settle, the   */
+/* last-settle read stays null here the way it did live.               */
+/* ------------------------------------------------------------------ */
+
+function fakeMeterNamespace() {
+  const store = new Map<string, unknown>()
+  const object = new MeterDurableObject(
+    {
+      storage: {
+        get: async <T>(key: string) => store.get(key) as T | undefined,
+        put: async (key: string, value: unknown) => {
+          store.set(key, value)
+        },
+      },
+    },
+    {},
+  )
+  return {
+    idFromName: (name: string) => name,
+    get: () => ({
+      fetch: (input: string, init?: { method?: string; body?: string }) =>
+        object.fetch(new Request(input, init)),
+    }),
+  }
+}
+
+describe('worker dispatch: bookend settle through the production shape (K4)', () => {
+  it('a plan early-refusal settle lands in the durable mirror and diagnostics reads it back', async () => {
+    resetMeterForTests()
+    const env = fakeEnv({
+      METER: fakeMeterNamespace() as unknown as WorkerEnv['METER'],
+      MUSE_API_KEY: 'sk-test',
+    })
+    const planRes = await dispatchFetch(
+      req('/api/muse/plan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+      env,
+      exec,
+    )
+    // The invalid body is refused — and the refusal path awaits its
+    // ('degraded', 'skipped') settle before replying.
+    expect(planRes.status).toBe(400)
+
+    const diagRes = await dispatchFetch(req('/api/muse/diagnostics'), env, exec)
+    expect(diagRes.status).toBe(200)
+    const body = (await diagRes.json()) as {
+      meterPersistence: string
+      usage: { readable: boolean }
+      hourglass: { top: Record<string, number> }
+      hourglassLastSettle: { top: { settle: string } | null }
+    }
+    expect(body.meterPersistence).toBe('durable')
+    expect(body.usage.readable).toBe(true)
+    expect(body.hourglass.top.degraded).toBe(1)
+    expect(body.hourglassLastSettle.top?.settle).toBe('skipped')
+    resetMeterForTests()
   })
 })

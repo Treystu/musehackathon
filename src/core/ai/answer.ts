@@ -6041,10 +6041,27 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   let stateRankedLead: string | null = null
   const pipelineDisclosures: string[] = []
   if (!countySupported && input.stateAggregates && input.stateAggregates.length > 0) {
+    // The measure the question ASKS this level to rank by (round 3,
+    // 2026-11-04): the deterministic decomposition's metric when the
+    // question decomposes one — the mapping every path reads ("lowest
+    // cost of living" is median_gross_rent on the screen path, the
+    // research-first path at stage 2b, and here) — ahead of the
+    // intent's first metric, which is the parse's own choice and
+    // named a different measure than the words asked in the tax
+    // specimen (household income for "lowest cost of living"). A
+    // substituted measure never ranks silently: what ranks is the
+    // stated criterion's measure, and the aggregates below are
+    // formed carrying it, so its criterion assesses on the answer
+    // instead of stamping not-measurable.
+    const askedRankKey =
+      researchCriteria.find((c) => !!c.decomposedMetricKey)?.decomposedMetricKey ?? null
     const figureKeys = [
       ...new Set([
         ...input.intent.metricKeys,
         ...screen.criteria.map((c) => c.metricKey),
+        ...researchCriteria
+          .map((c) => c.decomposedMetricKey)
+          .filter((k): k is string => !!k),
       ]),
     ]
     const zipNamed = new Set(
@@ -6062,7 +6079,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         members.map((row) => [row.zcta, { name: aggregate.label, state: aggregate.state }]),
       )
       const aggregation = aggregateRowsToCounties(members, assignments, figureKeys)
-      const rankKey = input.intent.metricKeys[0] ?? screen.criteria[0]?.metricKey
+      const rankKey = askedRankKey ?? input.intent.metricKeys[0] ?? screen.criteria[0]?.metricKey
       const aggRows = aggregation.rows
         .filter((row) => {
           if (!rankKey) return true
@@ -6129,7 +6146,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       input.intent.metricKeys.length > 0 &&
       requestsStateLevel(input.queryText ?? input.researchQuery, input.intent)
     ) {
-      const rankKey = input.intent.metricKeys[0]!
+      const rankKey = askedRankKey ?? input.intent.metricKeys[0]!
       const direction = rankDirectionFromQuery(input.queryText ?? input.researchQuery)
       rows = [...rows].sort((a, b) => {
         const av = a.metrics[rankKey] as number

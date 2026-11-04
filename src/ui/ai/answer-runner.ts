@@ -59,6 +59,7 @@ import {
   gateClassificationQueryText,
   stateCountPhrase,
   type GeographyGateContext,
+  type GeographyGateSpec,
 } from '../../core/ai/geography-gate'
 import type { ZctaPoint } from '../../core/map/centroids'
 import {
@@ -1056,8 +1057,9 @@ export async function composeAnswerForRequest(input: {
   // needs a named anchor geography; the gate needs none named).
   let geographyGate: GeographyGateContext | null = null
   let gateBound: ReadonlySet<string> | null = null
+  let gateSpec: GeographyGateSpec | null = null
   if (input.research && !nearFrame) {
-    const gateSpec = detectGeographyGate({
+    gateSpec = detectGeographyGate({
       queryText: input.queryText,
       intent: input.intent,
       researchCriteria,
@@ -1132,9 +1134,33 @@ export async function composeAnswerForRequest(input: {
   // (FM-13): the observer seam is fire-and-forget, so the runner
   // keeps the last one it forwarded.
   const lastProgress: { current: RunProgressSnapshot | null } = { current: null }
+  // Gate precedence (round 3, 2026-11-04): when the gate formed,
+  // it owns this question's shape. The every-state aggregate supply
+  // the state-subject reading added upstream is NOT handed to the
+  // pipeline — the tax specimen's failure was exactly that supply
+  // swallowing a gated question whole (state averages ranked by an
+  // unasked measure, the classification nowhere). And the run's
+  // intent leads with the gate's extremum metric (the decomposed
+  // asked measure), so a parse that named a different measure
+  // first cannot re-rank the bounded screen by it. When the gate
+  // did not form (no spec, failed classification, empty bound),
+  // both stand exactly as shipped — the state path keeps its
+  // aggregates and the intent its own order.
+  const gateIntent: ValidatedIntent | null =
+    geographyGate &&
+    gateSpec?.extremumMetricKey &&
+    input.intent.metricKeys[0] !== gateSpec.extremumMetricKey
+      ? {
+          ...input.intent,
+          metricKeys: [
+            gateSpec.extremumMetricKey,
+            ...input.intent.metricKeys.filter((k) => k !== gateSpec!.extremumMetricKey),
+          ],
+        }
+      : null
   const runPipeline = (query: string, forwardProgress: boolean, screenOnly = false) =>
     runAnswerPipeline({
-      intent: input.intent,
+      intent: gateIntent ?? input.intent,
       rows,
       geographyZctas: boundResolved.zctas.size > 0 ? boundResolved.zctas : undefined,
       // The pipeline reads the SAME resolution result this runner
@@ -1143,7 +1169,7 @@ export async function composeAnswerForRequest(input: {
       // contradict the resolution the card was composed from.
       unresolvedGeographies: frameResolved.unresolvedGeographies,
       geographyDisclosures: boundResolved.geographyDisclosures,
-      stateAggregates: frameResolved.stateAggregates,
+      stateAggregates: geographyGate ? undefined : frameResolved.stateAggregates,
       nearFrame,
       // The geography gate, when the classification resolved above:
       // the pipeline retires the classifying criterion, takes the

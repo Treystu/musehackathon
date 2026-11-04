@@ -789,16 +789,44 @@ export function stateCodeOfPlaceName(name: string): string | null {
   return match ? match[1]! : null
 }
 
+/**
+ * The bound's attribution: each admitted ZCTA paired with the ONE
+ * bound state that admitted it (round 5, 2026-11-04). The bound is
+ * built once, here, from the rows' own state attribution (the place
+ * index's single-state assignment, carried on the joined row name:
+ * the index assigns a ZIP area that crosses a state line to the
+ * state of the place it belongs to, and the display name reads the
+ * same assignment — admission and display are one attribution, not
+ * two). Every downstream surface reads THIS map rather than
+ * re-deriving state membership from row names on its own: the
+ * screen's bound set is its keys, and the gate record's per-state
+ * standings group the screened rows by it, so the map's state set
+ * equals the classification's bound set by construction. The
+ * shipped seams each re-derived membership from the display suffix
+ * independently (the bound here, the standings at compose), so
+ * their agreement was emergent, not guaranteed — the live specimen
+ * (production b6701b9) showed a state colored on the gate map that
+ * the classification never bound, and a bound state uncolored,
+ * with no single derivation to check the surfaces against.
+ */
+export function gateBoundAttribution(
+  rows: readonly { zcta: string; name: string }[],
+  boundStates: readonly GateStateRef[],
+): Map<string, GateStateRef> {
+  const byCode = new Map(boundStates.map((s) => [s.code, s]))
+  const attribution = new Map<string, GateStateRef>()
+  for (const row of rows) {
+    const code = stateCodeOfPlaceName(row.name)
+    const state = code ? byCode.get(code) : undefined
+    if (state) attribution.set(row.zcta, state)
+  }
+  return attribution
+}
+
 /** The ZCTAs of the given rows that sit in the bound states — the screen's bound set. */
 export function gateBoundZctas(
   rows: readonly { zcta: string; name: string }[],
   boundStates: readonly GateStateRef[],
 ): Set<string> {
-  const codes = new Set(boundStates.map((s) => s.code))
-  const zctas = new Set<string>()
-  for (const row of rows) {
-    const code = stateCodeOfPlaceName(row.name)
-    if (code && codes.has(code)) zctas.add(row.zcta)
-  }
-  return zctas
+  return new Set(gateBoundAttribution(rows, boundStates).keys())
 }

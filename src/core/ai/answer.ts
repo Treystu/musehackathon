@@ -182,6 +182,7 @@ import {
 import { isFrameSegmentText, type NearFrameContext } from './near-frame'
 import {
   stateCountPhrase,
+  type GateStateRef,
   type GeographyGateContext,
   type GeographyGateFailureContext,
 } from './geography-gate'
@@ -654,7 +655,13 @@ export interface ComposedAnswer {
  * every bound state, with nulls where the state has no screened row
  * carrying the headline measure — a state the research classified
  * but the screen could not measure is shown as such on the map,
- * never silently dropped from the frame.
+ * never silently dropped from the frame. Standings group the
+ * screened rows by the bound's own attribution (which bound state
+ * admitted each ZCTA — geography-gate.ts's gateBoundAttribution,
+ * threaded by the caller), so the standings' state set equals the
+ * bound set by construction and the map that frames this record
+ * can color exactly the bound states: every bound state rendered,
+ * no non-bound state colored (round 5, 2026-11-04).
  */
 export interface GeographyGateRecord {
   criterionLabel: string
@@ -4353,6 +4360,15 @@ export function composeAnswer(input: {
    * Absent = no gate.
    */
   geographyGate?: GeographyGateContext | null
+  /**
+   * The gate bound's attribution (round 5): which bound state
+   * admitted each screened ZCTA, from the caller's single
+   * derivation (gateBoundAttribution). The gate record's
+   * standings group the screened rows by it when supplied, so a
+   * row counts toward the state whose bound admitted it — never
+   * toward a state re-derived from its display name here.
+   */
+  geographyGateAttribution?: ReadonlyMap<string, GateStateRef>
   /** The detected-but-unapplied gate (round 4), accounted in the evidence and recorded on the answer. */
   geographyGateFailure?: GeographyGateFailureContext | null
 }): ComposedAnswer {
@@ -4680,7 +4696,18 @@ export function composeAnswer(input: {
   const summary = gateLead ? `${gateLead} ${baseSummary}` : baseSummary
   // The gate record for the answer: per-state standings from the
   // bounded rows (the cheapest screened row per bound state on the
-  // headline measure), the frame the gate map draws.
+  // headline measure), the frame the gate map draws. The grouping
+  // reads the bound's own attribution when the caller supplied it
+  // (round 5): a row counts toward the state that ADMITTED its
+  // ZCTA, so the standings' state set is the bound set by
+  // construction. The shipped grouping re-derived each row's state
+  // from its display name's suffix at this seam — a second,
+  // independent attribution of the same rows the bound had already
+  // attributed, whose agreement with the bound (and with the map
+  // that reads this record) was emergent rather than guaranteed;
+  // the suffix derivation remains only as the fallback for a
+  // direct compose call that supplies a gate without its
+  // attribution, a shape the runner never produces.
   const gateRecord: GeographyGateRecord | undefined = input.geographyGate
     ? {
         criterionLabel: input.geographyGate.criterionLabel,
@@ -4691,7 +4718,10 @@ export function composeAnswer(input: {
         standings: input.geographyGate.boundStates.map((state) => {
           let cheapest: AreaRow | null = null
           for (const row of screen.rows) {
-            if (stateSuffixOf(row.name) !== state.code) continue
+            const admittedBy = input.geographyGateAttribution
+              ? input.geographyGateAttribution.get(row.zcta)?.code
+              : stateSuffixOf(row.name)
+            if (admittedBy !== state.code) continue
             const value = row.metrics[gateHeadlineKey]
             if (typeof value !== 'number' || !Number.isFinite(value)) continue
             if (
@@ -5078,6 +5108,18 @@ export interface AnswerPipelineInput {
    * shipped shape is untouched.
    */
   geographyGate?: GeographyGateContext | null
+  /**
+   * The gate bound's attribution (round 5): which bound state
+   * admitted each ZCTA in geographyZctas, derived once by the
+   * caller at the moment it built the bound (geography-gate.ts's
+   * gateBoundAttribution). Compose groups the gate record's
+   * per-state standings by this map, so the standings — and with
+   * them the gate map's state set — equal the bound by
+   * construction. Absent = no attribution was supplied; compose
+   * then groups by the rows' display-state suffix, the shipped
+   * derivation, which the runner path no longer relies on.
+   */
+  geographyGateAttribution?: ReadonlyMap<string, GateStateRef>
   /**
    * The detected-but-unapplied gate (round 4): detected by the
    * caller, unappliable there (classification lookup failed,
@@ -6467,6 +6509,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       ? { ...input.nearFrame, frameCriterionLabel }
       : undefined,
     geographyGate: input.geographyGate ?? undefined,
+    geographyGateAttribution: input.geographyGateAttribution,
     geographyGateFailure: input.geographyGateFailure ?? undefined,
   })
   const composedWithFailures =

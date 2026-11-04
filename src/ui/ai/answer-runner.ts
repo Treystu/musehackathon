@@ -55,9 +55,10 @@ import {
   buildGeographyGateContext,
   classifyStatesFromResearch,
   detectGeographyGate,
-  gateBoundZctas,
+  gateBoundAttribution,
   gateClassificationQueryText,
   stateCountPhrase,
+  type GateStateRef,
   type GeographyGateContext,
   type GeographyGateFailureContext,
   type GeographyGateSpec,
@@ -1058,6 +1059,12 @@ export async function composeAnswerForRequest(input: {
   // needs a named anchor geography; the gate needs none named).
   let geographyGate: GeographyGateContext | null = null
   let gateBound: ReadonlySet<string> | null = null
+  // The bound's attribution (round 5): which bound state admitted
+  // each ZCTA, derived once here and threaded to compose, whose
+  // per-state standings group by it — the map's state set then
+  // equals the bound set by construction rather than by three
+  // parallel re-derivations of the same suffix rule agreeing.
+  let gateAttribution: ReadonlyMap<string, GateStateRef> | null = null
   let gateSpec: GeographyGateSpec | null = null
   // Detected-but-unapplied gate (round 4, 2026-11-04): when
   // detection forms a spec but the gate cannot be applied, the
@@ -1104,10 +1111,12 @@ export async function composeAnswerForRequest(input: {
             reason: 'the cited research named no state meeting this criterion',
           }
         } else {
-          const bound = gateBoundZctas(rows, context.boundStates)
+          const attribution = gateBoundAttribution(rows, context.boundStates)
+          const bound = new Set(attribution.keys())
           if (bound.size > 0) {
             geographyGate = context
             gateBound = bound
+            gateAttribution = attribution
           } else {
             geographyGateFailure = {
               criterionId: gateSpec.criterion.id,
@@ -1128,6 +1137,17 @@ export async function composeAnswerForRequest(input: {
             geographyGate.winnerState
               ? `The cost screen ran inside ${geographyGate.winnerState.name} only: the cited research singles out ${geographyGate.winnerState.name} for the question's first criterion, among the ${stateCountPhrase(geographyGate.classifiedStates.length)} it classifies as meeting it.`
               : `The cost screen ran inside the ${stateCountPhrase(geographyGate.boundStates.length)} the cited research classifies as meeting the question's first criterion: ${geographyGate.boundStates.map((s) => s.name).join(', ')}.`,
+            // The bound's assignment rule, stated on the answer
+            // (round 5): the screen admits ZIP areas by the state
+            // of the place they belong to — the place index's
+            // single-state assignment, the same one the place
+            // names on this card read — so a ZIP area crossing a
+            // state line (a border ZIP area, e.g. one spanning a
+            // reservation that straddles the line) is screened and
+            // shown under that one state, and its presence inside
+            // or outside the bound is explicable from this line
+            // alone, never from the line on a map.
+            'ZIP areas are counted in the state of the place they belong to, so a ZIP area that crosses a state line is screened — and shown — under that one state.',
             ...frameResolved.geographyDisclosures,
           ],
         }
@@ -1206,6 +1226,11 @@ export async function composeAnswerForRequest(input: {
       // screen path under the bound (geographyZctas), and composes
       // the gate's evidence, lead, and record.
       geographyGate,
+      // The bound's attribution (round 5): compose's per-state
+      // standings group the screened rows by the state that
+      // admitted each ZCTA, from this map — never by a state
+      // re-derived from the row's display name at compose time.
+      geographyGateAttribution: gateAttribution ?? undefined,
       // The detected-but-unapplied gate, when detection formed a
       // spec the classification could not carry: the pipeline
       // accounts the classifying criterion as unapplied with the

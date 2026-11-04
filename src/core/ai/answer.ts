@@ -1203,6 +1203,84 @@ function superlativePhraseClaimed(
 }
 
 /**
+ * Whether the question's words state Census content of their own: a
+ * stated figure, or any measure-head word a registry metric can
+ * serve ("commute" excepted — the registry carries no
+ * commute-duration metric, so the word states no servable content).
+ * This is the decomposition's own total-miss reading, extracted so
+ * the route discipline below reads the words exactly as the
+ * decomposition does — one reading, never two.
+ */
+export function questionStatesCensusContent(queryText: string): boolean {
+  return (
+    /\$\s?\d/.test(queryText) ||
+    queryText
+      .toLowerCase()
+      .split(/[^a-z'-]+/)
+      .some((w) => w !== 'commute' && MEASURE_HEAD_WORDS.has(w))
+  )
+}
+
+/**
+ * Whether the question carries a superlative over one of its
+ * matched researched criteria: a superlative phrase a matched
+ * catalog entry's own pattern reads ("best schools", "fewest fast
+ * food"), whose words carry no measure head and whose head is not
+ * the ranking frame. The route discipline's shape fence (Q6 round
+ * 2): the class it guards is a superlative/conjunctive ask over
+ * researched criteria — a set-with-qualities question ("places with
+ * low crime and good transit") states no such superlative, and its
+ * parse's screen, bound included, is a legitimate reading that
+ * stands untouched.
+ */
+export function hasClaimedResearchedSuperlative(
+  queryText: string,
+  matched: readonly ResearchCriterion[],
+): boolean {
+  const matchedEntries = RESEARCH_CRITERION_CATALOG.filter((entry) =>
+    matched.some((criterion) => criterion.id === entry.id),
+  )
+  for (const match of queryText.matchAll(CRITERION_SUPERLATIVE_RE)) {
+    const phrase = (match[1] ?? '').toLowerCase()
+    const words = phrase.split(/\s+/).filter((w) => w.length > 0)
+    if (words.length === 0) continue
+    if (PLACE_FRAME_WORDS.has(words[0]!)) continue
+    if (words.some((w) => MEASURE_HEAD_WORDS.has(w))) continue
+    if (matchedEntries.some((entry) => entry.pattern.test(phrase))) return true
+  }
+  return false
+}
+
+/**
+ * The all-researched route class (Q6 round 2, 2026-11-04), composed
+ * from the readings above: the question decomposes to researched
+ * criteria only (allResearchedCriteria), states no Census content
+ * of its own (no figure, no measure-head word), and asks its
+ * superlative over at least one of those researched criteria. A
+ * question in this class asks the Census for nothing — research
+ * names the places, the Census grounds their figures — so it is
+ * research-first on every parse realization, and a parse-supplied
+ * bound the reader never stated cannot refuse it (the filter
+ * provenance test, everyFilterUnstated, is the call sites' second
+ * half). Outside the class, every shipped route stands: a stated
+ * bound, a decomposed criterion, a measure reading in the words, or
+ * a set-with-qualities shape each keep the screen and its refusal
+ * legitimate. Shared by the pipeline and AskPanel's handoff, so the
+ * two layers can never drift into seeing different classes.
+ */
+export function allResearchedRouteClass(
+  criteria: readonly ResearchCriterion[],
+  queryText: string | undefined,
+): boolean {
+  if (!queryText || queryText.trim() === '') return false
+  return (
+    allResearchedCriteria(criteria) &&
+    !questionStatesCensusContent(queryText) &&
+    hasClaimedResearchedSuperlative(queryText, criteria)
+  )
+}
+
+/**
  * Audience / life-frame words for the segment scan: they state who
  * is asking or the life the question imagines ("raise a family",
  * "for families", "good for kids"), never a criterion a source
@@ -1684,12 +1762,7 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
   // is a worker count), so a shortest-commute question states no
   // servable Census content and keeps the combined carry — the
   // research-first handoff battery's pinned reading.
-  const statesCensusContent =
-    /\$\s?\d/.test(queryText) ||
-    queryText
-      .toLowerCase()
-      .split(/[^a-z'-]+/)
-      .some((w) => w !== 'commute' && MEASURE_HEAD_WORDS.has(w))
+  const statesCensusContent = questionStatesCensusContent(queryText)
   if (!statesCensusContent) {
     return [
       {
@@ -1707,19 +1780,17 @@ export function decomposeResearchCriteria(queryText: string | undefined): Resear
 /**
  * Whether every criterion a question decomposes to is a researched
  * (non-Census) criterion: at least one criterion, and none of them
- * decomposed onto a Census metric. The route-discipline class (Q6
- * round 2, 2026-11-04): a superlative/conjunctive question in this
- * class asks the Census for nothing — research names the places and
- * the Census only grounds their figures — so it is research-first
- * on EVERY parse realization, and no Census-screen refusal ("a
- * joint ranking needs both criteria measurable per place") may
- * fire for it. The refusal keeps its rights exactly when the class
- * does not hold: at least one criterion genuinely requires a Census
- * measure (a decomposed criterion, or a reader-stated bound below).
- * Shared by the pipeline's research-first condition and AskPanel's
- * research-first handoff, so the two layers can never drift into
- * seeing different classes — the drift between layers is the seam
- * family this battery keeps finding.
+ * decomposed onto a Census metric. One part of the route-discipline
+ * class (allResearchedRouteClass, Q6 round 2, 2026-11-04): a
+ * question in that class asks the Census for nothing — research
+ * names the places and the Census only grounds their figures — so
+ * it is research-first on EVERY parse realization, and no
+ * Census-screen refusal ("a joint ranking needs both criteria
+ * measurable per place") may fire for it. The refusal keeps its
+ * rights exactly when the class does not hold: at least one
+ * criterion genuinely requires a Census measure (a decomposed
+ * criterion, a measure reading in the words, or a reader-stated
+ * bound — the call sites' filter-provenance test).
  */
 export function allResearchedCriteria(
   criteria: readonly ResearchCriterion[],
@@ -5692,16 +5763,22 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // criteria stamped not measurable, on the premise that a joint
   // ranking needs both criteria measurable per place from Census.
   // That premise is valid only when a criterion genuinely requires
-  // a Census measure. When EVERY decomposed criterion is researched
-  // and no filter value appears in the reader's words, the filters
-  // are the parse's invention, not a stated bound: the veto lifts
-  // and the question is research-first on this realization too. A
-  // reader-stated bound (its value in their words) keeps the veto —
-  // the screen, and its refusal when the bound cannot be met, are
-  // the honest Census answer to a bound the reader actually set.
+  // a Census measure. When the question is in the all-researched
+  // route class (allResearchedRouteClass: researched criteria only,
+  // no Census content in the words, a superlative over a researched
+  // criterion) and no filter value appears in the reader's words,
+  // the filters are the parse's invention, not a stated bound: the
+  // veto lifts and the question is research-first on this
+  // realization too. Every fence is load-bearing — a reader-stated
+  // bound, a measure reading in the words, or a set-with-qualities
+  // shape (no researched superlative: "places with low crime and
+  // good transit" under a settled screen intent) each keep the
+  // veto, and the screen with its refusal stays the honest Census
+  // answer to what was actually asked there.
+  const routeWords = input.queryText ?? input.researchQuery
   const allResearchedRoute =
-    allResearchedCriteria(researchCriteria) &&
-    everyFilterUnstated(input.intent, input.queryText ?? input.researchQuery)
+    allResearchedRouteClass(researchCriteria, routeWords) &&
+    everyFilterUnstated(input.intent, routeWords)
   const researchFirst =
     // A supplied geography gate owns this run's ordering: the
     // classification already resolved into the caller's bound, and

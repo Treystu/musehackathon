@@ -16,7 +16,7 @@ import type {
 import { diagnostics } from '../../core/ai/diagnostics'
 import {
   SALARY_FIGURE_RE,
-  allResearchedCriteria,
+  allResearchedRouteClass,
   decomposeResearchCriteria,
   everyFilterUnstated,
   filterWorkingNarration,
@@ -436,7 +436,7 @@ export function researchFirstHandoff(
   const criteriaForRoute = researchFirstCriteria(queryText)
   const filtersAreInventions =
     intent.filters.length > 0 &&
-    allResearchedCriteria(criteriaForRoute) &&
+    allResearchedRouteClass(criteriaForRoute, queryText) &&
     everyFilterUnstated(intent, queryText)
   if (intent.filters.length > 0 && !filtersAreInventions) return null
   if (hasAmbiguousPlaceCandidates(intent.geographies)) return null

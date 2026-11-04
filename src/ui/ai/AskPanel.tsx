@@ -45,6 +45,7 @@ import {
   stateCodeForGeography,
 } from '../../core/ai/national-screen'
 import { rerouteSimilarityToNearFrame } from '../../core/ai/near-frame'
+import { rerouteGateShape } from '../../core/ai/geography-gate'
 import { STATE_NAME_BY_CODE } from '../../core/sweep/states'
 import { removeGeography } from '../../core/ai/intent-edit'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
@@ -1008,6 +1009,22 @@ export function AskPanel({
         parsed = withRunnability(rerouted)
         frameRerouted = parsed
       }
+    }
+    // Geography-gate re-route (round 4, 2026-11-04): the
+    // near-frame re-route's sibling — a placeless gate-shaped
+    // question (a state classification bounding a Census
+    // extremum) whose parse took the similarity label has no
+    // anchor and no likeness target; the label alone would decide
+    // the lane and the gate would never engage. Detection keys on
+    // the verbatim question and the decomposed criteria at this
+    // seam; the runner re-detects on the rewritten shape.
+    if (!rescued && !frameRerouted && parsed.mode === 'similarity') {
+      const gateRerouted = rerouteGateShape(
+        parsed,
+        queryText,
+        decomposeResearchCriteria(queryText),
+      )
+      if (gateRerouted) parsed = withRunnability(gateRerouted)
     }
     if (!rescued && parsed.clarificationNeeded && !degradedDemographic) {
       const completed = completeParsedBoundedScreen(parsed)

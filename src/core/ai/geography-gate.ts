@@ -55,6 +55,7 @@
  */
 
 import { STATE_NAME_BY_CODE } from '../sweep/states'
+import { RESEARCH_QUERY_MAX_CHARS } from './meta-client'
 import type { ValidatedIntent } from './provider'
 
 /** A criterion reference in the decomposition's own shape. */
@@ -126,13 +127,50 @@ export function detectGeographyGate(input: {
   researchCriteria: readonly GateCriterionRef[]
 }): GeographyGateSpec | null {
   if (!input.queryText || input.intent.geographies.length > 0) return null
-  if (input.intent.mode === 'similarity') return null
+  // No mode exclusion (round 4, 2026-11-04): the intent's mode is
+  // a model-generated label and varies run to run — the drug
+  // specimen's live parse has taken the 'similarity' realization
+  // (measured on 6151d0c) — while the gate's shape lives in the
+  // reader's words and the decomposed criteria, which this
+  // function keys on jointly. A genuine similarity question names
+  // its reference place, so the geographies guard above already
+  // excludes it; a placeless gate question under a similarity
+  // label has no anchor and no likeness target, and the panel
+  // re-route (rerouteGateShape) rewrites its mode at the accept
+  // seam so execution reaches this detection on a runnable shape.
   const hasExtremum =
     input.intent.metricKeys.length > 0 ||
     input.researchCriteria.some((c) => !!c.decomposedMetricKey)
   if (!hasExtremum) return null
-  const criterion = input.researchCriteria.find((c) => c.id === 'combined' && !c.decomposedMetricKey)
-  if (!criterion) return null
+  // Criterion selection (round 4): prefer the residue criterion
+  // whose own text carries the classifying clause — live-shaped
+  // decompositions can carry several residue criteria (the tax
+  // probe's card showed per-criterion outside-Census lines for
+  // each alternative), and the first combined criterion is not
+  // necessarily the classifying one. Scoring is structural: a
+  // predicate-alternatives parse or a state-clause match in the
+  // criterion's own text outranks a bare residue; ties keep
+  // decomposition order.
+  const candidates = input.researchCriteria.filter(
+    (c) => c.id === 'combined' && !c.decomposedMetricKey,
+  )
+  if (candidates.length === 0) return null
+  const clauseScore = (c: GateCriterionRef): number => {
+    let score = 0
+    if (parsePredicateAlternatives(c.text)) score += 2
+    if (
+      STATE_SUPERLATIVE_RE.test(c.text) ||
+      STATE_ABSENCE_CLAUSE_RE.test(c.text) ||
+      STATES_THAT_ABSENCE_RE.test(c.text)
+    ) {
+      score += 2
+    }
+    if (FAVORABLE_RE.test(c.text)) score += 1
+    return score
+  }
+  const criterion = candidates.reduce((best, c) =>
+    clauseScore(c) > clauseScore(best) ? c : best,
+  )
   // The classifying clause, three shapes (round 3): a state-domain
   // SUPERLATIVE ("what state has the most relaxed drug laws"), an
   // ABSENCE predicate ("which state has no income tax"), or a
@@ -166,6 +204,55 @@ export function detectGeographyGate(input: {
 }
 
 /**
+ * The panel accept-seam re-route for a gate-shaped question the
+ * model parse labelled 'similarity' (round 4, 2026-11-04): the
+ * near-frame re-route's sibling. A placeless gate question under
+ * a similarity label has no anchor for the frame and no likeness
+ * target for the similar-ZIP experience, so without a re-route
+ * the label decides the lane and the gate never engages. When
+ * detection (keyed on the verbatim question and the decomposed
+ * criteria, the inputs this seam has) forms a spec, the intent
+ * is rewritten to the bounded-screen shape the gate bounds,
+ * leading with the gate's extremum metric; the runner's own
+ * detection then forms the gate on the run. Null when the shape
+ * does not hold — every other similarity parse stands untouched.
+ */
+export function rerouteGateShape(
+  intent: ValidatedIntent,
+  queryText: string | undefined,
+  researchCriteria: readonly GateCriterionRef[],
+): ValidatedIntent | null {
+  if (intent.mode !== 'similarity') return null
+  if (!queryText || queryText.trim() === '') return null
+  const spec = detectGeographyGate({ queryText, intent, researchCriteria })
+  if (!spec) return null
+  const metricKeys = spec.extremumMetricKey
+    ? [spec.extremumMetricKey, ...intent.metricKeys.filter((k) => k !== spec.extremumMetricKey)]
+    : intent.metricKeys
+  if (metricKeys.length === 0) return null
+  return { ...intent, mode: 'sweep_filter', metricKeys }
+}
+
+/**
+ * A gate that was DETECTED but could not be applied (round 4):
+ * the classification lookup did not return, the research named
+ * no qualifying state, or no screened place falls inside the
+ * qualifying set. The runner records it and the pipeline accounts
+ * the classifying criterion from it — the answer states the
+ * criterion could not be applied and why, and is never left to
+ * imply the restriction happened (the 5c32847 specimen's silent
+ * stand-down: the gate died at an over-ceiling research call and
+ * the ungated card deflected the reader to filter a map
+ * themselves). Absent = no gate was detected.
+ */
+export interface GeographyGateFailureContext {
+  criterionId: string
+  criterionLabel: string
+  /** Why the detected gate could not be applied, in reader terms. */
+  reason: string
+}
+
+/**
  * The classification research ask: the reader's question, plus the
  * instruction the classification extraction below reads — enumerate
  * the criterion's standing across the whole domain, and name any
@@ -181,38 +268,65 @@ export function detectGeographyGate(input: {
  * full set the sources support — so the prose the classifier reads
  * enumerates the class instead of exemplifying it.
  */
+/**
+ * Fit a classification ask within the research route's ceiling
+ * (round 4, 2026-11-04 — the round's primary root cause): the
+ * route refuses any queryText over RESEARCH_QUERY_MAX_CHARS as
+ * shape_invalid, and the runner's classification call converts a
+ * refusal to null, so an over-ceiling ask silently un-forms the
+ * gate on every live run while every stub-backed pin passes.
+ * Measured at 5c32847: the round-3 predicate ask was 760 chars
+ * and the round-2 superlative ask 611, against the route's 500;
+ * the round-1 ask that gated live on 2e04268 measured exactly
+ * 500. The question rides verbatim and is never trimmed (the
+ * intent stage caps questions at the same 500, so a question
+ * alone over the ceiling is unreachable); the instruction is
+ * trimmed at a word boundary only in the defensive case where
+ * question + instruction would exceed the ceiling.
+ */
+function fitClassificationAsk(queryText: string, instruction: string): string {
+  const full = `${queryText} ${instruction}`
+  if (full.length <= RESEARCH_QUERY_MAX_CHARS) return full
+  const budget = RESEARCH_QUERY_MAX_CHARS - queryText.length - 1
+  if (budget <= 0) return queryText.slice(0, RESEARCH_QUERY_MAX_CHARS)
+  const cut = instruction.slice(0, budget)
+  const lastSpace = cut.lastIndexOf(' ')
+  return `${queryText} ${(lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd()}`
+}
+
 export function gateClassificationQueryText(queryText: string, spec: GeographyGateSpec): string {
   // Predicate criteria (round 3): the disjunction is part of the
   // ask — each alternative is enumerated separately, so the prose
   // the classifier reads carries per-alternative membership, and
   // the evidence can say which states qualified under which part.
+  // Round 4: the ask no longer repeats the criterion text (the
+  // question itself carries it) and is fitted to the research
+  // route's ceiling by construction (fitClassificationAsk).
   const alternatives = parsePredicateAlternatives(spec.criterion.text)
   if (alternatives) {
     const parts = alternatives
       .map((alternative) =>
         alternative.negated
-          ? `For the part "no ${alternative.phrase}": enumerate every U.S. state that currently ` +
-            `has no ${alternative.phrase}, as an explicit list, naming each state in its own ` +
-            `sentence stating that it has no ${alternative.phrase}, covering the full set the ` +
-            'sources support rather than focusing on any single state.'
-          : `For the part "${alternative.label}": enumerate every U.S. state that currently ` +
-            `meets it, as an explicit list, naming each state in its own sentence with the ` +
-            'basis the sources give, covering the full set the sources support rather than ' +
-            'focusing on any single state.',
+          ? `For the part "no ${alternative.phrase}": list every U.S. state with no ` +
+            `${alternative.phrase}, each in its own sentence.`
+          : `For the part "${alternative.label}": list every U.S. state meeting it, ` +
+            'each in its own sentence with the basis the sources give.',
       )
       .join(' ')
-    return (
-      `${queryText} For the state part of the question, answer from current sources, taking ` +
-      `each part of the criterion separately. ${parts}`
+    return fitClassificationAsk(
+      queryText,
+      'For the state part of the question, from current sources, taking ' +
+        `each part of the criterion separately. ${parts} Cover the full set the ` +
+        'sources support rather than focusing on any single state.',
     )
   }
-  return (
-    `${queryText} For the state part of the question, answer from current sources with the ` +
-    `criterion's standing across the whole country, state by state: enumerate every U.S. state ` +
-    `that currently meets this criterion — ${spec.criterion.text} — as an explicit list, ` +
-    'naming each state in its own sentence with the basis the sources give, covering the ' +
-    'full set the sources support rather than focusing on any single state; then name any ' +
-    'single state the sources identify as the strongest example.'
+  return fitClassificationAsk(
+    queryText,
+    'For the state part of the question, answer from current sources, state by state: ' +
+      'enumerate every U.S. state meeting the first criterion, each in its own sentence ' +
+      'with the basis the sources give, covering the full set the sources support rather ' +
+      'than focusing on any single state; then name any single state the sources identify ' +
+      'as the strongest example.',
   )
 }
 

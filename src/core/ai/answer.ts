@@ -2290,7 +2290,16 @@ export type CandidateResolver = (
   names: readonly string[],
 ) => Promise<ResolvedCandidate[]> | ResolvedCandidate[]
 
-const CANDIDATE_NAME_RE = /\b([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}), ([A-Z]{2})\b/g
+/**
+ * The "Name, ST" mention pattern. Name tokens are Unicode letters,
+ * not ASCII: the shipped index carries names whose letters sit
+ * outside A-Z ("Cañon City city" is the Census place name, and the
+ * research writes it the same way), and the ASCII class read such a
+ * mention as "City, CO" — the place vanished from the candidate
+ * stream while a fragment of its name recorded as unmatched
+ * (regression battery 2026-11-04, the Colorado specimen).
+ */
+const CANDIDATE_NAME_RE = /\b(\p{Lu}[\p{L}.'-]+(?: [\p{Lu}][\p{L}.'-]+){0,3}), ([A-Z]{2})\b/gu
 
 /** Full state names to their abbreviations, for the list-genre
  * extraction below (multi-word names first: alternation order is
@@ -2319,8 +2328,8 @@ const STATE_NAME_TO_ABBR: Readonly<Record<string, string>> = {
 }
 
 const CANDIDATE_NAME_FULL_STATE_RE = new RegExp(
-  `\\b([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}), (${Object.keys(STATE_NAME_TO_ABBR).join('|')})\\b`,
-  'g',
+  `\\b(\\p{Lu}[\\p{L}.'-]+(?: [\\p{Lu}][\\p{L}.'-]+){0,3}), (${Object.keys(STATE_NAME_TO_ABBR).join('|')})\\b`,
+  'gu',
 )
 
 /** Single-word state names by abbreviation (for the FM-20 bound-state test). */
@@ -2376,6 +2385,61 @@ export function collapseModifierPrefix(name: string): string {
   return commaAt >= 0 ? collapsed + name.slice(commaAt) : collapsed
 }
 
+/** State codes, for the list-genre guards below. */
+const LIST_STATE_CODES: ReadonlySet<string> = new Set(Object.values(STATE_NAME_TO_ABBR))
+
+/** One list item: a capitalized name of one to three words. */
+const LIST_ITEM_PATTERN = `\\p{Lu}[\\p{L}.'-]+(?: [\\p{Lu}][\\p{L}.'-]+){0,2}`
+const LIST_ITEM_END_RE = new RegExp(`(${LIST_ITEM_PATTERN})$`, 'u')
+const LIST_SEPARATOR_END_RE = /(, (?:and )?| and |, and )$/
+
+/**
+ * The companions of a shared-suffix list mention, peeled backward
+ * from the mention that carries the suffix ("Carmel, Fishers and
+ * Zionsville, IN": the standard pattern reads Zionsville alone —
+ * the list's other items carry no suffix of their own, so without
+ * this peel they are not candidates at all, and a findings text
+ * that names its places only in this genre yields an empty
+ * candidate stream over real material: the Q6 dead end, regression
+ * battery 2026-11-04). Peeling stops at a sentence boundary (no
+ * separator precedes the item), at a state code or state name in
+ * item position (the tail of a preceding suffixed mention —
+ * "Hilo, HI and Kona, HI" peels nothing), and after eight items.
+ * Each peeled item takes the same sentence-glue normalization the
+ * standard pass applies.
+ */
+function listCompanionsBefore(prose: string, matchStart: number, state: string): string[] {
+  const items: string[] = []
+  let cursor = matchStart
+  for (let guard = 0; guard < 8; guard++) {
+    const before = prose.slice(0, cursor)
+    const separator = LIST_SEPARATOR_END_RE.exec(before)
+    if (!separator) break
+    const head = before.slice(0, before.length - separator[0].length)
+    const itemMatch = LIST_ITEM_END_RE.exec(head)
+    if (!itemMatch) break
+    let item = itemMatch[1]!
+    if (LIST_STATE_CODES.has(item) || STATE_NAME_TO_ABBR[item]) break
+    const breakAt = item.lastIndexOf('. ')
+    if (breakAt >= 3) item = item.slice(breakAt + 2)
+    items.unshift(`${item}, ${state}`)
+    cursor = head.length - itemMatch[1]!.length
+  }
+  return items
+}
+
+/**
+ * The parenthetical list genre: "Carmel, Fishers and Zionsville
+ * (all in Indiana)" — the state rides in a parenthesis after the
+ * list and no item carries a suffix. Items split on the same
+ * separators the shared-suffix peel reads.
+ */
+const LIST_PAREN_STATE_RE = new RegExp(
+  `((?:${LIST_ITEM_PATTERN})(?:(?:, (?:and )?|, and | and )(?:${LIST_ITEM_PATTERN}))+)[ ]*\\((?:all )?(?:in|of) (${Object.keys(STATE_NAME_TO_ABBR).join('|')}|[A-Z]{2})\\)`,
+  'gu',
+)
+const LIST_SPLIT_RE = /, (?:and )?|, and | and /
+
 /**
  * Default extraction: "Name, ST" mentions in the findings prose, in
  * mention order, de-duplicated. Prose names without a state are not
@@ -2386,6 +2450,12 @@ export function collapseModifierPrefix(name: string): string {
 export function extractCandidateNamesFromProse(prose: string): string[] {
   const names: string[] = []
   for (const match of prose.matchAll(CANDIDATE_NAME_RE)) {
+    // Shared-suffix list companions first, so the candidate order
+    // stays the prose's order ("Carmel, Fishers and Zionsville,
+    // IN" yields Carmel and Fishers ahead of Zionsville).
+    for (const companion of listCompanionsBefore(prose, match.index, match[2]!)) {
+      if (!names.includes(companion)) names.push(companion)
+    }
     let name = `${match[1]}, ${match[2]}`
     // A sentence-final capitalized word glues to the next
     // sentence's opening name through the token's period
@@ -2416,6 +2486,26 @@ export function extractCandidateNamesFromProse(prose: string): string[] {
     const breakAt = name.lastIndexOf('. ')
     if (breakAt >= 3) name = name.slice(breakAt + 2)
     if (!names.includes(name)) names.push(name)
+  }
+  // The parenthetical list genre ("Carmel, Fishers and Zionsville
+  // (all in Indiana)"): no item carries a suffix, so neither pass
+  // above reads any of it — the same empty-yield class as FM-6, one
+  // genre over (regression battery 2026-11-04, the Q6 specimen's
+  // list-shaped findings). Each item takes the parenthetical's
+  // state; a state word in item position is skipped, not read as
+  // a place.
+  for (const match of prose.matchAll(LIST_PAREN_STATE_RE)) {
+    const stateText = match[2]!
+    const abbr = STATE_NAME_TO_ABBR[stateText] ?? (LIST_STATE_CODES.has(stateText) ? stateText : undefined)
+    if (!abbr) continue
+    for (const rawItem of match[1]!.split(LIST_SPLIT_RE)) {
+      let item = rawItem.trim()
+      if (!item || LIST_STATE_CODES.has(item) || STATE_NAME_TO_ABBR[item]) continue
+      const breakAt = item.lastIndexOf('. ')
+      if (breakAt >= 3) item = item.slice(breakAt + 2)
+      const name = `${item}, ${abbr}`
+      if (!names.includes(name)) names.push(name)
+    }
   }
   // Modifier-prefixed mentions collapse to the place's own name
   // (FM-20, above): the collapsed form is what resolution tests
@@ -2525,10 +2615,20 @@ export function isFragmentShapedMention(
   boundStateNames?: ReadonlySet<string>,
 ): boolean {
   const rawWords = mention.split(/[\s-]+/).filter((w) => w.length > 0)
-  const words = rawWords
-    .map((w) => w.toLowerCase().replace(/\.+$/, ''))
+  const words = mention
+    .toLowerCase()
+    .split(/[\s.-]+/)
     .filter((w) => w.length > 0)
   if (words.length === 0) return false
+  // A single-letter opening word is the remnant of an initialism
+  // the sentence split broke apart ("U.S. News" read as the
+  // sentence "News & World Report ... ranks" once its "U." and
+  // "S." fragments split off — regression battery 2026-11-04, the
+  // Q6 specimen, which recorded the publication label "News" as an
+  // unmatched place): no Census place name opens with a one-letter
+  // word, and a mention reassembled from such fragments ("U. S.
+  // News") is a source label, never a place.
+  if (words[0]!.length === 1) return true
   if (words.length === 1 && boundStateNames?.has(words[0]!)) return true
   if (words.length === 1 && GENERIC_PLACE_NOUNS.has(words[0]!)) return true
   if (NON_NAME_LEAD_WORDS.has(words[0]!)) return true
@@ -2634,6 +2734,7 @@ export function extractBareCandidateNames(
   alreadyExtracted: readonly string[],
   rows: readonly AreaRow[],
   boundRows?: readonly AreaRow[],
+  sourceTitles?: readonly string[],
 ): { names: string[]; ambiguous: string[]; unresolved: string[]; fragments: number } {
   const byBare = new Map<string, string[]>()
   for (const row of rows) {
@@ -2670,9 +2771,55 @@ export function extractBareCandidateNames(
     }
   }
   const seen = new Set<string>()
-  for (const sentence of prose.split(/(?<=[.!?])\s+/)) {
+  // Sentence fragments that are really one sentence: the split
+  // breaks after every period, so an initialism or a name
+  // abbreviation at a phrase's head ("U.S. News & World Report
+  // ranks ...", "St. Louis is ...") shatters into one-letter and
+  // abbreviation fragments, and the tail fragment's opening word
+  // reads as a sentence lead that was never a sentence's subject
+  // (regression battery 2026-11-04: the tail "News & World Report
+  // ranks ..." recorded the publication label "News" as an
+  // unmatched place). A fragment whose last token is a one- or
+  // two-letter abbreviation form is a head, not a sentence: it
+  // merges forward into the fragment after it.
+  const sentences: string[] = []
+  for (const fragment of prose.split(/(?<=[.!?])\s+/)) {
+    const prev = sentences[sentences.length - 1]
+    if (
+      prev !== undefined &&
+      (/^(\p{Lu}\.)+$/u.test(prev.trim()) ||
+        /(?:^|\s)(?:\p{Lu}\p{Ll}?|St|Mt|Ft|Dr)\.$/u.test(prev.trim()))
+    ) {
+      sentences[sentences.length - 1] = `${prev} ${fragment}`
+    } else {
+      sentences.push(fragment)
+    }
+  }
+  // The cited sources' own title tokens (the source-label rule,
+  // regression battery 2026-11-04): a mention the rows do not carry
+  // whose every word is a word of a cited source's title is the
+  // publication's label, not a place the research named — it is
+  // counted with the fragments, never recorded as an unmatched
+  // name. The rule arms only the recording branch below (a mention
+  // no row carries at all): a name the rows DO carry resolves or
+  // records as ambiguous exactly as before, title or no title.
+  const sourceTitleTokens = new Set<string>()
+  for (const title of sourceTitles ?? []) {
+    for (const token of title.toLowerCase().split(/[^\p{L}]+/u)) {
+      if (token) sourceTitleTokens.add(token)
+    }
+  }
+  const isSourceLabelMention = (mention: string): boolean => {
+    if (sourceTitleTokens.size === 0) return false
+    const words = mention
+      .toLowerCase()
+      .split(/[^\p{L}]+/u)
+      .filter((w) => w.length > 0)
+    return words.length > 0 && words.every((w) => sourceTitleTokens.has(w))
+  }
+  for (const sentence of sentences) {
     if (/^Answer:/.test(sentence)) continue
-    const lead = sentence.match(/^([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2})/)
+    const lead = sentence.match(/^(\p{Lu}[\p{L}.'-]+(?: [\p{Lu}][\p{L}.'-]+){0,2})/u)
     if (!lead) continue
     const words = lead[1]!.split(' ')
     if (words[0]!.includes("'")) continue
@@ -2846,7 +2993,8 @@ export function extractBareCandidateNames(
     }
     if (
       isPlaceShapedMention(mention, componentWords) &&
-      !isFragmentShapedMention(mention, boundStateNames)
+      !isFragmentShapedMention(mention, boundStateNames) &&
+      !isSourceLabelMention(mention)
     ) {
       unresolved.push(mention)
     } else {
@@ -5641,7 +5789,13 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       // candidate list when the bound rows carry exactly one match
       // (FM-5, extractBareCandidateNames); ambiguous bare names are
       // recorded with the unresolved names below, never resolved.
-      const bare = extractBareCandidateNames(extractionProse, extractedStd, input.rows, candidateBoundRows)
+      const bare = extractBareCandidateNames(
+        extractionProse,
+        extractedStd,
+        input.rows,
+        candidateBoundRows,
+        stage.sources.map((s) => s.title),
+      )
       const extracted = [
         ...extractedStd,
         ...bare.names.filter((n) => !extractedStd.includes(n)),

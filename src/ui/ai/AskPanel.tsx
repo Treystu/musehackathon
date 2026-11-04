@@ -44,6 +44,7 @@ import {
   rescueNationalScreen,
   stateCodeForGeography,
 } from '../../core/ai/national-screen'
+import { rerouteSimilarityToNearFrame } from '../../core/ai/near-frame'
 import { STATE_NAME_BY_CODE } from '../../core/sweep/states'
 import { removeGeography } from '../../core/ai/intent-edit'
 import { DISCLOSURE_TEXT, hermeticStubValidator, type Validator } from '../../core/ai/validator'
@@ -972,6 +973,42 @@ export function AskPanel({
     // onto the default rent measure would answer a different question
     // than the one asked. It skips completion and goes to the
     // research-first handoff below.
+    // Near-frame re-route (round 2, 2026-11-03): a parse labelled
+    // similarity whose reader's words carry the near frame's
+    // signal set (one anchor place, a stated radius or near
+    // phrase, no likeness predicate) is a screen around the
+    // anchor, not a likeness search — similarity is the one mode
+    // answerEligible excludes, so under the model's label the
+    // frame never engaged and execution opened the similar-ZIP
+    // search on the anchor itself (measured live on production
+    // 6151d0c: the specimen took that path while the lookup-shaped
+    // suburbs phrasing engaged the frame). The re-route is a
+    // deterministic reading of the reader's words at this seam,
+    // beside the national-screen rescue (which keeps precedence);
+    // see core/ai/near-frame.ts for the discrimination. The
+    // measure completion mirrors the bounded-screen completion's
+    // posture: the decomposed Census keys when the question
+    // decomposes any, else the headline cost measure the frame's
+    // baseline reads.
+    let frameRerouted: ValidatedIntent | null = null
+    if (!rescued) {
+      const decomposedKeys = [
+        ...new Set(
+          decomposeResearchCriteria(queryText)
+            .map((criterion) => criterion.decomposedMetricKey)
+            .filter((key): key is string => !!key),
+        ),
+      ]
+      const rerouted = rerouteSimilarityToNearFrame(
+        parsed,
+        queryText,
+        decomposedKeys.length > 0 ? decomposedKeys : ['median_gross_rent'],
+      )
+      if (rerouted) {
+        parsed = withRunnability(rerouted)
+        frameRerouted = parsed
+      }
+    }
     if (!rescued && parsed.clarificationNeeded && !degradedDemographic) {
       const completed = completeParsedBoundedScreen(parsed)
       if (completed) {
@@ -1037,6 +1074,9 @@ export function AskPanel({
         rescued.geographies.length === 0
           ? `No place was named, so this screens the whole country by ${label}, lowest first. The understood request is below.`
           : `This screens ${rescued.geographies.join(', ')} by ${label}, lowest first. The understood request is below.`
+    } else if (frameRerouted) {
+      flowNote =
+        `This screens the places near ${frameRerouted.geographies[0]!.trim()} — that place itself is the comparison reference, not one of the places shown. The understood request is below.`
     } else if (handedOff) {
       flowNote =
         'That question is answered from research first: the places the cited findings name are shown with their Census figures in the answer below.'

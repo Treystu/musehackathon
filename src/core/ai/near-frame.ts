@@ -135,6 +135,88 @@ export function detectNearFrame(
   }
 }
 
+const LIKENESS_WORD_RE = /\bsimilar\b|\bresembl\w*\b/i
+const PLACE_NOUN_LIKE_RE =
+  /\b(?:places|towns|cities|areas|suburbs|neighbourhoods|neighborhoods)\s+like\b/i
+
+/**
+ * Whether the reader's words carry an explicit likeness predicate
+ * for the anchor ("places similar to Philadelphia", "towns like
+ * Philadelphia") — the similarity lane's own signal, as opposed to
+ * the frame's proximity + radius + anchored relative bound. The
+ * test is anchored: "similar" or "resembling" anywhere, "like"
+ * only as the comparison predicate (immediately after a place
+ * noun, or immediately before the anchor's name), so an incidental
+ * "like" ("what is life like near…") never reads as likeness.
+ */
+function hasLikenessPredicate(queryText: string, anchorName: string): boolean {
+  if (LIKENESS_WORD_RE.test(queryText)) return true
+  if (PLACE_NOUN_LIKE_RE.test(queryText)) return true
+  const anchorToken = anchorName.toLowerCase()
+  return new RegExp(
+    `\\blike\\s+(?:the\\s+)?${escapeRegExp(anchorToken)}\\b`,
+    'i',
+  ).test(queryText)
+}
+
+/**
+ * The routing discrimination for a parse the model labelled
+ * similarity (near-frame round 2, measured live on production
+ * 6151d0c, 2026-11-03): the specimen's phrasing — "where near
+ * philadelphia has good schools and lower cost of living, within
+ * 20 miles (as compared to philadelphia itself)" — parsed as
+ * similarity, and every downstream gate keys off that label:
+ * answerEligible excludes similarity (it has no pipeline shape),
+ * so no answer request was registered, the frame never engaged,
+ * and execution opened the similar-ZIP search on the anchor's own
+ * first ZIP, leaving a standalone web summary as the answer. The
+ * same mechanism with a lookup-shaped phrasing ("What suburbs
+ * of Philadelphia have good schools?") engaged the frame live.
+ * The label is the model's; the frame's signals are the reader's
+ * words, so the routing re-reads the label against the words —
+ * the accept seam's established posture for deterministic
+ * readings (the national-screen rescue, the bounded-screen
+ * completion).
+ *
+ * The discrimination is the signal set, not surface forms: the
+ * intent carries the frame envelope (detectNearFrame: one place
+ * geography, the anchor named in the reader's words, a stated
+ * radius or a near/suburb phrase anchored at the place) AND the
+ * words carry no likeness predicate for the anchor. Genuine
+ * similarity questions fail at least one arm — "places similar
+ * to Philadelphia" and "towns like Philadelphia for retirees"
+ * carry no radius or near phrase, and their likeness predicate
+ * would refuse the re-route even with one — so the similarity
+ * lane keeps its questions. Casing, the parenthetical, and word
+ * order are all inside the envelope because the tests read the
+ * lowercased words and the intent together, never a fixed form.
+ *
+ * The re-routed intent is the frame's proven shape (round 1's
+ * traversal pins): a lookup of the anchor carrying the measures
+ * to show — the parse's own metricKeys when it carries any, else
+ * the caller's completion (the question's decomposed Census keys,
+ * else the headline cost measure). Everything else rides
+ * verbatim. Null when the discrimination does not fire; the
+ * caller stamps runnability, as for every accept-seam transform.
+ */
+export function rerouteSimilarityToNearFrame(
+  intent: ValidatedIntent,
+  queryText: string | undefined,
+  metricKeysWhenAbsent: readonly string[],
+): ValidatedIntent | null {
+  if (intent.mode !== 'similarity') return null
+  if (!queryText || queryText.trim() === '') return null
+  const spec = detectNearFrame(queryText, intent)
+  if (!spec) return null
+  if (hasLikenessPredicate(queryText, geographyNamePart(spec.anchorGeography))) {
+    return null
+  }
+  const metricKeys =
+    intent.metricKeys.length > 0 ? intent.metricKeys : [...metricKeysWhenAbsent]
+  if (metricKeys.length === 0) return null
+  return { ...intent, mode: 'lookup', metricKeys }
+}
+
 /**
  * Whether a decomposed criterion's text is the frame phrase itself
  * (the radius/near segment the decomposition carries as a combined

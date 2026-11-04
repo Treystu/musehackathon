@@ -10,6 +10,7 @@ import {
   isFrameSegmentText,
   nearCandidatePrefixes,
   nearCandidates,
+  rerouteSimilarityToNearFrame,
 } from '../../src/core/ai/near-frame'
 
 /**
@@ -257,5 +258,119 @@ describe('nearCandidates + buildNearFrameContext', () => {
 
   it('candidate prefixes cover the candidate ZIPs for the App scoped load', () => {
     expect(nearCandidatePrefixes({ spec, placeIndex: INDEX, centroids: CENTROIDS })).toEqual(['19'])
+  })
+})
+
+describe('rerouteSimilarityToNearFrame (round 2: the routing discrimination)', () => {
+  const similarity = (partial: Partial<ValidatedIntent> = {}): ValidatedIntent => ({
+    mode: 'similarity',
+    geographies: ['Philadelphia, PA'],
+    metricKeys: ['median_gross_rent', 'median_home_value'],
+    filters: [],
+    clarificationNeeded: false,
+    ...partial,
+  })
+
+  it('re-routes the specimen verbatim: the label loses to the signal set', () => {
+    const rerouted = rerouteSimilarityToNearFrame(similarity(), SPECIMEN, [])
+    expect(rerouted).not.toBeNull()
+    expect(rerouted?.mode).toBe('lookup')
+    // The parse's own measures ride verbatim; geography untouched.
+    expect(rerouted?.metricKeys).toEqual(['median_gross_rent', 'median_home_value'])
+    expect(rerouted?.geographies).toEqual(['Philadelphia, PA'])
+  })
+
+  it('re-routes the capitalized form', () => {
+    const rerouted = rerouteSimilarityToNearFrame(
+      similarity(),
+      'Where near Philadelphia has good schools and lower cost of living, within 20 miles (as compared to Philadelphia itself)?',
+      [],
+    )
+    expect(rerouted?.mode).toBe('lookup')
+  })
+
+  it('re-routes without the parenthetical', () => {
+    const rerouted = rerouteSimilarityToNearFrame(
+      similarity(),
+      'where near philadelphia has good schools and lower cost of living, within 20 miles',
+      [],
+    )
+    expect(rerouted?.mode).toBe('lookup')
+  })
+
+  it('re-routes the "within 20 miles of Philadelphia" ordering', () => {
+    const rerouted = rerouteSimilarityToNearFrame(
+      similarity(),
+      'What places within 20 miles of Philadelphia have good schools and lower rent?',
+      [],
+    )
+    expect(rerouted?.mode).toBe('lookup')
+  })
+
+  it('completes the measures from the caller when the parse carries none', () => {
+    const rerouted = rerouteSimilarityToNearFrame(
+      similarity({ metricKeys: [] }),
+      'What suburbs of Philadelphia have good schools?',
+      ['median_gross_rent'],
+    )
+    expect(rerouted?.mode).toBe('lookup')
+    expect(rerouted?.metricKeys).toEqual(['median_gross_rent'])
+    // No measures anywhere: the lookup cannot run, so nothing is re-routed.
+    expect(
+      rerouteSimilarityToNearFrame(
+        similarity({ metricKeys: [] }),
+        'What suburbs of Philadelphia have good schools?',
+        [],
+      ),
+    ).toBeNull()
+  })
+
+  it('genuine similarity questions keep their lane', () => {
+    expect(
+      rerouteSimilarityToNearFrame(similarity(), 'places similar to Philadelphia', []),
+    ).toBeNull()
+    expect(
+      rerouteSimilarityToNearFrame(similarity(), 'towns like Philadelphia for retirees', []),
+    ).toBeNull()
+  })
+
+  it('a likeness predicate refuses the re-route even with the frame envelope present', () => {
+    expect(
+      rerouteSimilarityToNearFrame(
+        similarity(),
+        'places similar to Philadelphia within 20 miles',
+        [],
+      ),
+    ).toBeNull()
+    expect(
+      rerouteSimilarityToNearFrame(
+        similarity(),
+        'towns like Philadelphia within 20 miles of the city center',
+        [],
+      ),
+    ).toBeNull()
+  })
+
+  it('only the similarity label is re-read: other modes pass through untouched', () => {
+    expect(
+      rerouteSimilarityToNearFrame(intent({ geographies: ['Philadelphia, PA'] }), SPECIMEN, []),
+    ).toBeNull()
+    expect(
+      rerouteSimilarityToNearFrame(
+        similarity({ mode: 'sweep_filter' }),
+        SPECIMEN,
+        [],
+      ),
+    ).toBeNull()
+  })
+
+  it('a two-place similarity parse is not a frame', () => {
+    expect(
+      rerouteSimilarityToNearFrame(
+        similarity({ geographies: ['Philadelphia, PA', 'Camden, NJ'] }),
+        'towns near Philadelphia and Camden, within 20 miles',
+        [],
+      ),
+    ).toBeNull()
   })
 })

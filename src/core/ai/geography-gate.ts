@@ -182,6 +182,30 @@ export function detectGeographyGate(input: {
  * enumerates the class instead of exemplifying it.
  */
 export function gateClassificationQueryText(queryText: string, spec: GeographyGateSpec): string {
+  // Predicate criteria (round 3): the disjunction is part of the
+  // ask — each alternative is enumerated separately, so the prose
+  // the classifier reads carries per-alternative membership, and
+  // the evidence can say which states qualified under which part.
+  const alternatives = parsePredicateAlternatives(spec.criterion.text)
+  if (alternatives) {
+    const parts = alternatives
+      .map((alternative) =>
+        alternative.negated
+          ? `For the part "no ${alternative.phrase}": enumerate every U.S. state that currently ` +
+            `has no ${alternative.phrase}, as an explicit list, naming each state in its own ` +
+            `sentence stating that it has no ${alternative.phrase}, covering the full set the ` +
+            'sources support rather than focusing on any single state.'
+          : `For the part "${alternative.label}": enumerate every U.S. state that currently ` +
+            `meets it, as an explicit list, naming each state in its own sentence with the ` +
+            'basis the sources give, covering the full set the sources support rather than ' +
+            'focusing on any single state.',
+      )
+      .join(' ')
+    return (
+      `${queryText} For the state part of the question, answer from current sources, taking ` +
+      `each part of the criterion separately. ${parts}`
+    )
+  }
   return (
     `${queryText} For the state part of the question, answer from current sources with the ` +
     `criterion's standing across the whole country, state by state: enumerate every U.S. state ` +
@@ -319,6 +343,110 @@ export interface StateClassification {
   winnerState: GateStateRef | null
   /** The classification sentences themselves, kept as cited claims. */
   claims: string[]
+  /**
+   * Per-alternative accounting, present exactly when the criterion
+   * parsed as predicate alternatives (round 3): each alternative
+   * the criterion states, with the states the research classified
+   * under it (possibly none — the accounting names the part either
+   * way). favorableStates is the alternatives' union.
+   */
+  alternatives?: readonly {
+    label: string
+    phrase: string
+    negated: boolean
+    states: GateStateRef[]
+  }[]
+}
+
+/**
+ * One predicate alternative as the criterion states it: the noun
+ * phrase the classification predicates ("income tax") and whether
+ * the criterion predicates its ABSENCE ("no income tax") or its
+ * presence. The label is the reader's own wording for the part.
+ */
+export interface PredicateAlternative {
+  label: string
+  phrase: string
+  negated: boolean
+}
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${'()|[\]\\'}]/g, '\\$&')
+
+/**
+ * Parse a residue criterion's text into predicate alternatives, or
+ * null when the criterion is not an absence-predicate
+ * classification. The parse reads the classifying clause's own
+ * grammar: the predicate after has/have ("has no income tax? or
+ * sales tax") splits on "or" into alternatives, and a leading
+ * negation distributes over the split ("has no A or B" predicates
+ * the absence of both). The dependent extremum's clause, when the
+ * criterion text carries the whole question, is cut away first.
+ * At least one alternative must be negated for the parse to hold:
+ * a presence-only or superlative criterion ("the most relaxed
+ * drug laws") keeps the marker classification below, unchanged.
+ */
+export function parsePredicateAlternatives(criterionText: string): PredicateAlternative[] | null {
+  const head = /\b(?:has|have|having)\s+(.+)$/i.exec(criterionText)
+  if (!head) return null
+  let region = head[1]!
+  const cuts = [
+    /\s+(?:and|but)\s+(?:what|which|where)\b/i,
+    /,\s*(?:and\s+)?(?:what|which|where)\b/i,
+    /\b(?:in|for|within|among|across)\s+(?:that|those|the same)\s+states?\b/i,
+  ]
+  let cutAt = region.length
+  for (const cut of cuts) {
+    const m = cut.exec(region)
+    if (m && m.index < cutAt) cutAt = m.index
+  }
+  region = region.slice(0, cutAt).replace(/[?.,;]+/g, ' ').trim()
+  if (!region) return null
+  const alternatives: PredicateAlternative[] = []
+  let sharedNegation = false
+  for (const rawChunk of region.split(/\s+or\s+/i)) {
+    let chunk = rawChunk.trim().replace(/\s+/g, ' ')
+    if (!chunk) continue
+    let negated = sharedNegation
+    const negation = /^(?:no|without)\s+(.+)$/i.exec(chunk)
+    if (negation) {
+      negated = true
+      sharedNegation = true
+      chunk = negation[1]!
+    }
+    const phrase = chunk
+      .replace(/^(?:a|an|the)\s+/i, '')
+      .replace(/^(?:state|statewide)\s+/i, '')
+      .trim()
+    if (!phrase || phrase.split(/\s+/).length > 5) return null
+    if (SUPERLATIVE_RE.test(phrase) || /\b(?:most|least|best|worst)\b/i.test(phrase)) return null
+    alternatives.push({
+      label: `${negated ? 'no ' : ''}${phrase}`,
+      phrase,
+      negated,
+    })
+  }
+  if (alternatives.length === 0) return null
+  if (!alternatives.some((a) => a.negated)) return null
+  return alternatives
+}
+
+/** The sentence patterns asserting an alternative's ABSENCE of its phrase. */
+function absencePatternsFor(phrase: string): RegExp[] {
+  const p = escapeRegExp(phrase)
+  return [
+    new RegExp(`\\bno\\s+(?:[a-z]+\\s+){0,2}${p}\\b`, 'i'),
+    new RegExp(`\\bwithout\\s+(?:a\\s+|an\\s+)?(?:[a-z]+\\s+){0,1}${p}\\b`, 'i'),
+    new RegExp(`\\bdo(?:es)?\\s+not\\s+(?:[a-z]+\\s+){0,3}${p}\\b`, 'i'),
+  ]
+}
+
+/** The sentence pattern asserting an alternative's phrase is PRESENT (levied/held). */
+function presencePatternFor(phrase: string): RegExp {
+  const p = escapeRegExp(phrase)
+  return new RegExp(
+    `\\b(?:levies|levy|imposes|impose|charges|charge|collects|collect|has|have)\\s+(?:a\\s+|an\\s+)?(?:[a-z]+\\s+){0,2}${p}\\b`,
+    'i',
+  )
 }
 
 /**
@@ -344,6 +472,87 @@ export interface StateClassification {
  * announced enumeration is untouched by the pass, so a genuinely
  * narrow classification stays narrow.
  */
+/**
+ * Predicate classification (round 3): each alternative classifies
+ * separately, on its own assertions. A sentence classifies every
+ * state it names under an alternative when it asserts that
+ * alternative — for a negated alternative, an absence assertion
+ * ("Alaska has no state income tax", "Oregon does not levy a
+ * sales tax"); a sentence asserting the phrase's PRESENCE under a
+ * negated alternative classifies nothing under it (absence is
+ * checked first: "has no income tax" also matches a naive "has
+ * ... income tax" presence read). An absence assertion carrying a
+ * colon or a class count announces an enumeration, and list-shaped
+ * continuation units extend that alternative's set, on the round-2
+ * principle: an announced list is the domain-wide assertion.
+ * Nothing is invented: prose supporting only a narrow set under
+ * an alternative classifies exactly that set.
+ */
+function classifyPredicateAlternatives(
+  sentences: readonly string[],
+  alternatives: readonly PredicateAlternative[],
+): StateClassification {
+  const favorable = new Map<string, GateStateRef>()
+  const claims: string[] = []
+  const claimed = new Set<string>()
+  const pushClaim = (sentence: string) => {
+    if (!claimed.has(sentence)) {
+      claimed.add(sentence)
+      claims.push(sentence)
+    }
+  }
+  const perAlternative: { label: string; phrase: string; negated: boolean; states: GateStateRef[] }[] =
+    alternatives.map((alternative) => ({ ...alternative, states: [] as GateStateRef[] }))
+  alternatives.forEach((alternative, altIndex) => {
+    const record = perAlternative[altIndex]!
+    const byCode = new Map<string, GateStateRef>()
+    const absenceRes = alternative.negated ? absencePatternsFor(alternative.phrase) : []
+    const presenceRe = presencePatternFor(alternative.phrase)
+    const asserts = (sentence: string): boolean =>
+      alternative.negated
+        ? absenceRes.some((re) => re.test(sentence))
+        : presenceRe.test(sentence) && !/\bnot\b|\bno\s/i.test(sentence)
+    const classifiesAgainst = (sentence: string): boolean =>
+      alternative.negated ? presenceRe.test(sentence) && !asserts(sentence) : false
+    for (let i = 0; i < sentences.length; i++) {
+      const sentence = sentences[i]!
+      if (!asserts(sentence)) continue
+      pushClaim(sentence)
+      const named = statesMentionedIn(sentence)
+      for (const state of named) byCode.set(state.code, state)
+      // An announced enumeration for THIS alternative: list-shaped
+      // continuations extend its set until a unit that asserts
+      // against it or plainly leaves the list.
+      const announces =
+        sentence.trimEnd().endsWith(':') || ENUM_COUNT_RE.test(sentence) || named.length >= 2
+      if (!announces) continue
+      for (let j = i + 1; j < sentences.length; j++) {
+        const unit = sentences[j]!
+        if (asserts(unit)) break
+        if (classifiesAgainst(unit)) break
+        // A unit carrying ANY alternative's phrase has left this
+        // alternative's list — the next part's own sentences carry
+        // its phrase and must not be absorbed into this set.
+        if (alternatives.some((a) => unit.toLowerCase().includes(a.phrase))) break
+        const unitStates = statesMentionedIn(unit)
+        if (unitStates.length === 0) break
+        const words = unit.replace(/[,;]/g, ' ').split(/\s+/).filter(Boolean)
+        if (unitStates.length < 3 && words.length > 8) break
+        pushClaim(unit)
+        for (const state of unitStates) byCode.set(state.code, state)
+      }
+    }
+    record.states = [...byCode.values()].sort((a, b) => a.name.localeCompare(b.name, 'en'))
+    for (const state of record.states) favorable.set(state.code, state)
+  })
+  return {
+    favorableStates: [...favorable.values()].sort((a, b) => a.name.localeCompare(b.name, 'en')),
+    winnerState: null,
+    claims,
+    alternatives: perAlternative,
+  }
+}
+
 export function classifyStatesFromResearch(
   prose: string,
   spec: GeographyGateSpec,
@@ -355,6 +564,13 @@ export function classifyStatesFromResearch(
     .split(/(?<=[.!?])\s+|\n+/)
     .map((s) => s.replace(/^[#*\-\s]+/, '').trim())
     .filter((s) => s.length > 0)
+  // Predicate criteria (round 3) classify per alternative on the
+  // alternatives' own assertions, not on the marker vocabulary —
+  // the marker sets speak the language of law roundups and say
+  // nothing about a tax regime. The parse is absence-gated, so
+  // superlative and presence criteria never route here.
+  const predicateAlternatives = parsePredicateAlternatives(spec.criterion.text)
+  if (predicateAlternatives) return classifyPredicateAlternatives(sentences, predicateAlternatives)
   const favorable = new Map<string, GateStateRef>()
   const claims: string[] = []
   const claimed = new Set<string>()
@@ -411,6 +627,19 @@ export interface GeographyGateContext {
   boundStates: GateStateRef[]
   classifiedStates: GateStateRef[]
   winnerState: GateStateRef | null
+  /**
+   * Per-alternative accounting (round 3), present exactly when the
+   * criterion classified by predicate alternatives: which states
+   * qualified under which alternative (a state under two parts
+   * appears in both lists and once in the union bound). The
+   * criterion evidence entry renders one line per part from this.
+   */
+  alternatives?: readonly {
+    label: string
+    phrase: string
+    negated: boolean
+    states: GateStateRef[]
+  }[]
   /** Classification sentences as claims, with the research's source URLs. */
   claims: { text: string; sourceUrls: string[] }[]
   sources: { title: string; url: string }[]
@@ -434,6 +663,7 @@ export function buildGeographyGateContext(input: {
     boundStates,
     classifiedStates: classification.favorableStates,
     winnerState: classification.winnerState,
+    ...(classification.alternatives ? { alternatives: classification.alternatives } : {}),
     claims: classification.claims.map((text) => ({ text, sourceUrls: [...urls] })),
     sources: input.sources.map((s) => ({ title: s.title, url: s.url })),
   }

@@ -3849,13 +3849,48 @@ export function criterionEvidenceFor(input: {
   if (input.geographyGate) {
     const gate = input.geographyGate
     const classifiedNames = gate.classifiedStates.map((s) => s.name).join(', ')
+    // Per-alternative accounting (round 3): a disjunctive criterion
+    // ("no income tax? or sales tax?") is accounted part by part —
+    // which states qualified under which alternative, or both —
+    // ahead of the union line the screen ran under. An alternative
+    // the research named no state for is accounted as such, never
+    // silently dropped from the criterion's own evidence.
+    const alternativesDetail = gate.alternatives
+      ? (() => {
+          const parts = gate.alternatives!.map((alternative) => {
+            const label =
+              alternative.label.charAt(0).toUpperCase() + alternative.label.slice(1)
+            const names = alternative.states.map((s) => s.name).join(', ')
+            return `${label}: ${alternative.states.length > 0 ? `${names} (${stateCountPhrase(alternative.states.length)})` : 'no state named by the research'}`
+          })
+          const counts = new Map<string, number>()
+          for (const alternative of gate.alternatives!) {
+            for (const state of alternative.states) {
+              counts.set(state.code, (counts.get(state.code) ?? 0) + 1)
+            }
+          }
+          const overlap = gate.classifiedStates.filter((s) => (counts.get(s.code) ?? 0) > 1)
+          const overlapPart =
+            overlap.length > 0
+              ? `; ${overlap.map((s) => s.name).join(', ')} ${overlap.length === 1 ? 'meets' : 'meet'} more than one part`
+              : ''
+          return (
+            `Classified from the cited research before the Census screen ran, part by part: ` +
+            `${parts.join('; ')}${overlapPart}. The cost screen then ran inside the union of ` +
+            `${stateCountPhrase(gate.classifiedStates.length)} (${classifiedNames}), as the ` +
+            `question's dependent bound asks.`
+          )
+        })()
+      : null
     evidence.push({
       criterion: gate.criterionLabel,
       kind: 'research',
       status: 'met',
-      detail: gate.winnerState
-        ? `Classified from the cited research before the Census screen ran: the research singles out ${gate.winnerState.name} for this criterion, among the ${stateCountPhrase(gate.classifiedStates.length)} it classifies as meeting it (${classifiedNames}). The cost screen then ran inside ${gate.winnerState.name} alone, as the question's dependent bound asks.`
-        : `Classified from the cited research before the Census screen ran: the research classifies ${stateCountPhrase(gate.classifiedStates.length)} as meeting this criterion (${classifiedNames}) and singles out no one state as the strongest, so the cost screen ran inside ${gate.classifiedStates.length === 1 ? 'that' : 'those'} ${stateCountPhrase(gate.classifiedStates.length)}.`,
+      detail:
+        alternativesDetail ??
+        (gate.winnerState
+          ? `Classified from the cited research before the Census screen ran: the research singles out ${gate.winnerState.name} for this criterion, among the ${stateCountPhrase(gate.classifiedStates.length)} it classifies as meeting it (${classifiedNames}). The cost screen then ran inside ${gate.winnerState.name} alone, as the question's dependent bound asks.`
+          : `Classified from the cited research before the Census screen ran: the research classifies ${stateCountPhrase(gate.classifiedStates.length)} as meeting this criterion (${classifiedNames}) and singles out no one state as the strongest, so the cost screen ran inside ${gate.classifiedStates.length === 1 ? 'that' : 'those'} ${stateCountPhrase(gate.classifiedStates.length)}.`),
       sourceUrls: gate.sources.map((s) => s.url),
     })
   }

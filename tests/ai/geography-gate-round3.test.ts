@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { decomposeResearchCriteria } from '../../src/core/ai/answer'
-import { detectGeographyGate } from '../../src/core/ai/geography-gate'
+import { criterionEvidenceFor, decomposeResearchCriteria } from '../../src/core/ai/answer'
+import {
+  buildGeographyGateContext,
+  classifyStatesFromResearch,
+  detectGeographyGate,
+  gateClassificationQueryText,
+  parsePredicateAlternatives,
+} from '../../src/core/ai/geography-gate'
 
 const intent = (metricKeys: string[]) =>
   ({ geographies: [] as string[], metricKeys, mode: 'sweep_filter' as const })
@@ -129,5 +135,126 @@ describe('geography gate round 3 — detection: predicate classifications engage
       researchCriteria: decomposeResearchCriteria(q),
     })
     expect(spec).toBeNull()
+  })
+})
+
+const taxSpec = () =>
+  detectGeographyGate({
+    queryText: TAX_QUESTION,
+    intent: intent(['median_gross_rent']),
+    researchCriteria: decomposeResearchCriteria(TAX_QUESTION),
+  })!
+
+describe('geography gate round 3 — predicate alternatives parse', () => {
+  it('the disjunction splits into two negated alternatives (negation distributes)', () => {
+    const alternatives = parsePredicateAlternatives('which state has no income tax? or sales tax')
+    expect(alternatives).toEqual([
+      { label: 'no income tax', phrase: 'income tax', negated: true },
+      { label: 'no sales tax', phrase: 'sales tax', negated: true },
+    ])
+  })
+
+  it('the variant\u2019s whole-question criterion text parses to its one alternative', () => {
+    expect(parsePredicateAlternatives(PREDICATE_VARIANT)).toEqual([
+      { label: 'no sales tax', phrase: 'sales tax', negated: true },
+    ])
+  })
+
+  it('superlative criteria never parse as predicate alternatives', () => {
+    expect(parsePredicateAlternatives('what state has the most relaxed drug laws -')).toBeNull()
+    expect(parsePredicateAlternatives('states with the strictest drug laws')).toBeNull()
+  })
+
+  it('the classification ask enumerates each alternative separately', () => {
+    const ask = gateClassificationQueryText(TAX_QUESTION, taxSpec())
+    expect(ask).toContain('For the state part of the question')
+    expect(ask).toContain('For the part "no income tax"')
+    expect(ask).toContain('For the part "no sales tax"')
+    expect(ask).toContain('each part of the criterion separately')
+  })
+})
+
+const TAX_PROSE = [
+  'Nine states have no income tax: Alaska, Florida, Nevada, New Hampshire, South Dakota, Tennessee, Texas, Washington, and Wyoming.',
+  'Alaska has no statewide sales tax.',
+  'Delaware has no sales tax.',
+  'Montana has no general sales tax.',
+  'New Hampshire has no sales tax on goods.',
+  'Oregon does not levy a sales tax.',
+  'California has a state income tax, with top rates above 13 percent.',
+  'California also has a state sales tax.',
+].join(' ')
+
+describe('geography gate round 3 — per-alternative classification', () => {
+  it('classifies each alternative\u2019s set separately; the bound is the union', () => {
+    const classification = classifyStatesFromResearch(TAX_PROSE, taxSpec())
+    const byLabel = new Map(classification.alternatives!.map((a) => [a.label, a.states.map((s) => s.code)]))
+    expect(byLabel.get('no income tax')).toEqual([
+      'AK', 'FL', 'NV', 'NH', 'SD', 'TN', 'TX', 'WA', 'WY',
+    ])
+    expect(byLabel.get('no sales tax')).toEqual(['AK', 'DE', 'MT', 'NH', 'OR'])
+    // The union: 9 + 5 - the two overlaps (AK, NH) = 12, each once.
+    expect(classification.favorableStates.map((s) => s.code)).toEqual([
+      'AK', 'DE', 'FL', 'MT', 'NV', 'NH', 'OR', 'SD', 'TN', 'TX', 'WA', 'WY',
+    ])
+    expect(classification.winnerState).toBeNull()
+    // Presence assertions classify nothing: California is nowhere.
+    expect(classification.favorableStates.some((s) => s.code === 'CA')).toBe(false)
+  })
+
+  it('the context carries the alternatives and bounds the union', () => {
+    const classification = classifyStatesFromResearch(TAX_PROSE, taxSpec())
+    const context = buildGeographyGateContext({
+      spec: taxSpec(),
+      classification,
+      sources: [{ title: 'Tax roundup', url: 'https://example.test/taxes' }],
+    })
+    expect(context).not.toBeNull()
+    expect(context!.alternatives).toHaveLength(2)
+    expect(context!.boundStates).toHaveLength(12)
+    expect(context!.winnerState).toBeNull()
+  })
+
+  it('prose supporting only a narrow set classifies narrowly, per alternative', () => {
+    const classification = classifyStatesFromResearch(
+      'Only Alaska has no income tax. Every other state levies an income tax of some form.',
+      taxSpec(),
+    )
+    const byLabel = new Map(classification.alternatives!.map((a) => [a.label, a.states.map((s) => s.code)]))
+    expect(byLabel.get('no income tax')).toEqual(['AK'])
+    expect(byLabel.get('no sales tax')).toEqual([])
+    expect(classification.favorableStates.map((s) => s.code)).toEqual(['AK'])
+  })
+
+  it('the criterion evidence accounts part by part, naming the overlap and the union', () => {
+    const classification = classifyStatesFromResearch(TAX_PROSE, taxSpec())
+    const context = buildGeographyGateContext({
+      spec: taxSpec(),
+      classification,
+      sources: [{ title: 'Tax roundup', url: 'https://example.test/taxes' }],
+    })!
+    const evidence = criterionEvidenceFor({
+      criteria: [],
+      droppedCriteria: [],
+      places: [],
+      claims: [],
+      unsupportedGeography: null,
+      // The pipeline retires the classifying criterion from the
+      // research list (its service is the classification), so the
+      // evidence input carries the decomposition without it.
+      researchCriteria: decomposeResearchCriteria(TAX_QUESTION).filter(
+        (c) => c.id !== 'combined',
+      ),
+      geographyGate: context,
+    })
+    const gateEntry = evidence.find((e) => e.criterion === context.criterionLabel)
+    expect(gateEntry).toBeDefined()
+    expect(gateEntry!.detail).toContain('part by part')
+    expect(gateEntry!.detail).toContain('No income tax:')
+    expect(gateEntry!.detail).toContain('(9 states)')
+    expect(gateEntry!.detail).toContain('No sales tax:')
+    expect(gateEntry!.detail).toContain('(5 states)')
+    expect(gateEntry!.detail).toContain('Alaska, New Hampshire meet more than one part')
+    expect(gateEntry!.detail).toContain('the union of 12 states')
   })
 })

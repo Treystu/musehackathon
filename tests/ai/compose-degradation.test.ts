@@ -222,6 +222,49 @@ describe('pipeline: research-first, total research failure', () => {
     expectEveryCriterionAccounted(answer)
   })
 
+  // S4 (multi-place comparison): the named-places classes above are
+  // stated for a LIST of places, not a pair — the three-place shapes
+  // pin that nothing in the compose or the degrade is pair-shaped.
+  it('S4 — three named places with retained measures compose directly', async () => {
+    const answer = await runAnswerPipeline({
+      intent: intent({
+        mode: 'compare',
+        geographies: ['Hilo, HI', 'Pahoa, HI', 'East Honolulu, HI'],
+        metricKeys: ['median_gross_rent', 'median_home_value'],
+      }),
+      rows: HI_COMPARE_ROWS,
+      geographyZctas: new Set(['96720', '96778', '96821']),
+      queryText: 'How do Hilo, Pahoa, and East Honolulu compare for rent and home value?',
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name).sort()).toEqual(['East Honolulu, HI', 'Hilo, HI', 'Pahoa, HI'])
+    const pahoa = answer.places.find((p) => p.name === 'Pahoa, HI')!
+    expect(pahoa.figures).toContainEqual(expect.objectContaining({ key: 'median_gross_rent', value: 1259 }))
+    expect(pahoa.figures).toContainEqual(expect.objectContaining({ key: 'median_home_value', value: 331300 }))
+  })
+
+  it('S4 — three named places, no retained measures, total research failure degrades onto the three-place card', async () => {
+    const answer = await runAnswerPipeline({
+      intent: intent({
+        mode: 'compare',
+        geographies: ['Hilo, HI', 'Pahoa, HI', 'East Honolulu, HI'],
+        metricKeys: [],
+      }),
+      rows: HI_COMPARE_ROWS,
+      geographyZctas: new Set(['96720', '96778', '96821']),
+      researchQuery: 'Which is cheapest, Hilo, Pahoa, or East Honolulu?',
+      queryText: 'Which is cheapest, Hilo, Pahoa, or East Honolulu?',
+      provider: downProvider(),
+    })
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name).sort()).toEqual(['East Honolulu, HI', 'Hilo, HI', 'Pahoa, HI'])
+    for (const place of answer.places) {
+      expect(place.figures.some((f) => f.key === 'median_gross_rent')).toBe(true)
+    }
+    expect(answer.researchFailures).toContain('Outside-Census criteria')
+    expectEveryCriterionAccounted(answer)
+  })
+
   it('placeless: total failure lands the honest note answer, never a throw', async () => {
     const answer = await runAnswerPipeline({
       intent: intent({ geographies: [], metricKeys: [] }),

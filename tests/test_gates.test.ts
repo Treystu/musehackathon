@@ -65,12 +65,20 @@ describe('gate: ACS request construction', () => {
       // of at most 800 ZCTAs. Re-measured on the real path, an 800-row chunk
       // with five estimates took 0.45s and the same chunk with five estimates
       // and five margins took 0.47s, because the cost is the rows rather than
-      // the columns. The cap is kept, at 12, so a future change cannot quietly
+      // the columns. The cap is kept so a future change cannot quietly
       // turn a screening request into one the Census API would refuse on URL
       // length, which is the constraint that actually applies here.
+      // Raised 20 -> 21 on 2026-11-03 (cure round 3) for exactly one
+      // named addition: B01002_001M, the median-age margin. Median age
+      // is a rank-legal Ask measure (FM-9 ruling), and a ranked screen
+      // without the figure's margin renders a bare point estimate —
+      // the defect the round-3 live probe recorded. The URL cost is
+      // one variable name (~13 characters) against the 6,770-character
+      // 20-variable URL acs.ts measured, so the constraint this cap
+      // guards is untouched.
       const block = /const SCREEN_VARS = \[([\s\S]*?)\]/.exec(acs)
       expect(block, 'SCREEN_VARS must exist as a separate small set').not.toBeNull()
-      expect((block![1].match(/VARS\./g) ?? []).length).toBeLessThanOrEqual(20)
+      expect((block![1].match(/VARS\./g) ?? []).length).toBeLessThanOrEqual(21)
   })
 
   it('fetches every drilldown source without asking, and offers no depth control', () => {

@@ -314,10 +314,13 @@ export function Methodology({
         The figure dictionary. Generated from METRIC_DEFS_BY_KEY at render, not
         written by hand, so a metric cannot appear in the app without appearing
         here and cannot be described here except by its own registry entry. The
-        sortable column is derived from the same allowlist the sort controls are
-        typed against, which is the mechanism that keeps a demographic figure
-        from ever becoming an ordering control — the one thing this table must
-        be able to state truthfully.
+        table-sort column is derived from the same allowlist the sort controls
+        are typed against, which is the mechanism that keeps a demographic
+        figure from ever becoming a table ordering control — the one thing
+        this table must be able to state truthfully. The column speaks for
+        the table surface only: the Ask layer's rank-legal surface is wider
+        by the owner's 2026-11-03 ruling (median age), and the cell for that
+        row says so rather than letting "No" read as a product-wide claim.
       */}
       <section aria-labelledby="figures-heading">
         <h2 id="figures-heading" className="section-title">
@@ -326,9 +329,12 @@ export function Methodology({
         <p className="mt-1 text-base text-slate-600">
           Every figure this tool shows, from the American Community Survey {VINTAGE} 5-year estimates. Generated from
           the same registry the application renders from, so this list cannot drift from what is on screen. You can
-          sort the screening table by five of these figures; the rest are shown for reading only, because ordering
-          places by the age or education of the people in them would be this tool ranking neighbourhoods by who
-          lives there.
+          sort the screening table by five of these figures. Median age is not a table sort control, but Ask may
+          order an answer by it. Superlative questions over the other demographic figures — poverty, educational
+          attainment, broadband access, and household crowding — are answered research-first and never ranked by
+          those figures; broadband is the one exception in form, because where a question&rsquo;s internet
+          criterion maps to the screened no-internet-access figure, that figure assesses the criterion on the
+          answer card.
         </p>
         <table className="mt-3 w-full text-left text-sm">
           <caption className="px-3 py-2 text-left text-sm text-slate-600">
@@ -340,7 +346,7 @@ export function Methodology({
               <th scope="col" className="px-3 py-2 font-semibold text-slate-700">Figure</th>
               <th scope="col" className="px-3 py-2 font-semibold text-slate-700">What it measures</th>
               <th scope="col" className="px-3 py-2 font-semibold text-slate-700">Table</th>
-              <th scope="col" className="px-3 py-2 font-semibold text-slate-700">Sortable</th>
+              <th scope="col" className="px-3 py-2 font-semibold text-slate-700">Table sort</th>
             </tr>
           </thead>
           <tbody>
@@ -356,7 +362,11 @@ export function Methodology({
                   <td className="px-3 py-2 text-slate-700">{def.note}</td>
                   <td className="px-3 py-2 font-mono text-sm text-slate-600">{tableOfMetric(key) ?? 'ACS'}</td>
                   <td className="px-3 py-2 text-slate-700">
-                    {sortable ? 'Yes, you choose the order' : 'No, reading only'}
+                    {sortable
+                      ? 'Yes, you choose the order'
+                      : key === 'median_age'
+                        ? 'No — Ask may order an answer by it'
+                        : 'No, reading only'}
                   </td>
                 </tr>
               )

@@ -1026,10 +1026,18 @@ export function AskPanel({
     return parsed
   }
 
-  /** Editor and clarification changes are committed picks; a runnable result runs. */
+  /**
+   * Editor and clarification changes are committed picks; a runnable
+   * result runs. A clarification pick can also complete as the
+   * research-first handoff (the panel's demographic resolution —
+   * resolveClarification produces that same marker state), and it
+   * executes on the same terms as accept()'s handoff: without this
+   * arm the resolved handoff stood on screen and nothing ran
+   * (FM-9 live cure, 2026-11-03).
+   */
   function handleIntentChange(next: ValidatedIntent) {
     setIntent(next)
-    if (canRun(next)) executeNow(next)
+    if (canRun(next) || isResearchFirstHandoff(next)) executeNow(next)
   }
 
   /**

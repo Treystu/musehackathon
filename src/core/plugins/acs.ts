@@ -339,7 +339,7 @@ const METRIC_DEFS: {
     unit: 'count',
     category: 'demographics',
     betterWhen: 'lower',
-    note: 'Households the Census Bureau classifies as having no internet access at all — no subscription and no access. Until 2026-10-09 this figure was the count of households whose only internet was dial-up, a much smaller category, under a label that promised the larger one.',
+    note: 'Households the Census Bureau classifies as having no internet access at all — no subscription and no access. Until 2026-10-09 this figure was the count of households whose only internet was dial-up, a much smaller category, under a label that promised the larger one. Display-only as a measure: a superlative question over it is answered research-first and never ranked by the figure — with one shipped exception in form: where the question\u2019s internet criterion maps to this screened figure, the figure assesses the criterion on the answer card.',
   },
   {
     key: 'average_household_size',
@@ -347,7 +347,7 @@ const METRIC_DEFS: {
     unit: 'ratio',
     category: 'demographics',
     betterWhen: 'higher',
-    note: 'The average number of people per household, published directly by the Census Bureau.',
+    note: 'The average number of people per household, published directly by the Census Bureau. Display-only: a crowding superlative over it is answered research-first, and the figure displays on the named places without ever ranking them.',
   },
   {
     key: 'median_age',
@@ -355,7 +355,7 @@ const METRIC_DEFS: {
     unit: 'count',
     category: 'demographics',
     betterWhen: 'higher',
-    note: 'Age in years, as published. Shown for reading; never offered as a sort or filter control, because ordering places by the age of the people in them is not a question this tool will answer for you.',
+    note: 'Age in years, as published. Since the owner\u2019s 2026-11-03 ruling it may order an Ask answer (oldest or youngest first); it is never a filter, and it is not offered as a sort control in the tables.',
   },
   {
     key: 'below_poverty_count',
@@ -363,7 +363,7 @@ const METRIC_DEFS: {
     unit: 'count',
     category: 'demographics',
     betterWhen: 'lower',
-    note: 'People whose income in the past 12 months was below the federal poverty level. A count of people, not a share — compare it against population to read it.',
+    note: 'People whose income in the past 12 months was below the federal poverty level. A count of people, not a share — compare it against population to read it. Display-only: a superlative question over it is answered research-first, and the figure displays on the named places without ever ranking them.',
   },
   {
     key: 'bachelors_count',
@@ -371,7 +371,7 @@ const METRIC_DEFS: {
     unit: 'count',
     category: 'education',
     betterWhen: 'higher',
-    note: 'People aged 25 and over whose highest attainment is a bachelor\u2019s degree. Degrees above bachelor\u2019s are not included; the publisher has no single column for them.',
+    note: 'People aged 25 and over whose highest attainment is a bachelor\u2019s degree. Degrees above bachelor\u2019s are not included; the publisher has no single column for them. Display-only: a superlative question over it is answered research-first, and the figure displays on the named places without ever ranking them.',
   },
   {
     key: 'commuting_workers',

@@ -49,9 +49,18 @@ describe('intentGate (step 0)', () => {
   })
   it('rejects school/health keys in sort, similarity and composite intents', () => {
     expect(failure(intentGate({ mode: 'lookup', sortBy: 'school_score' }))).toBe('intent_gate')
-    expect(failure(intentGate({ mode: 'similarity', metricKeys: ['median_age'] }))).toBe('intent_gate')
+    // Changed 2026-11-03 (R23 cure window): this line expected
+    // similarity+median_age to be rejected, but the owner's FM-9
+    // ruling made median_age rank-legal — line 42 of this file
+    // already expects lookup+median_age to pass. The similarity
+    // rejection now rides a display-only demographic key, and
+    // median_age similarity is asserted to pass in the next test.
+    expect(failure(intentGate({ mode: 'similarity', metricKeys: ['below_poverty_count'] }))).toBe('intent_gate')
     expect(failure(intentGate({ mode: 'composite', metricKeys: ['asthma_rate'] }))).toBe('intent_gate')
     expect(failure(intentGate({ mode: 'composite', composite: { metricKeys: ['median_rent_burden_pct', 'school_score'] } }))).toBe('intent_gate')
+  })
+  it('passes median_age as a similarity measure under the FM-9 ruling', () => {
+    expect(intentGate({ mode: 'similarity', metricKeys: ['median_age'] }).pass).toBe(true)
   })
   it('rejects non-object intents fail-closed', () => {
     expect(failure(intentGate(null))).toBe('intent_gate')

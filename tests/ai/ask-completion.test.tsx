@@ -191,14 +191,38 @@ describe('canRun (one predicate for executable intent)', () => {
         metricKeys: ['median_age'],
       }),
     ).toBe(true)
-    // A place plus a display-only figure still does not resolve.
+    // FLIPPED (FM-9 live cure, 2026-11-03): a place plus a
+    // display-only figure in a sweep now resolves — but as the
+    // research-first HANDOFF, never as a screen: the figure leaves
+    // the measure list and no figure ranking runs. (Before the
+    // cure this read false and the live panel dead-ended on the
+    // same shape.) The non-resolution this pin exists for — no
+    // figure-ranked completion on a display-only key — still holds,
+    // asserted on the resolved shape below.
     expect(
       canResolveClarification({
         mode: 'sweep_filter',
         geographies: ['HI'],
         metricKeys: ['below_poverty_count'],
       }),
-    ).toBe(false)
+    ).toBe(true)
+    const demographicResolved = resolveClarification(
+      {
+        mode: 'sweep_filter',
+        geographies: ['HI'],
+        metricKeys: [],
+        filters: [],
+        clarificationNeeded: true,
+      },
+      { geographies: [], metricKeys: ['below_poverty_count'] },
+    )
+    expect(demographicResolved.ok).toBe(true)
+    if (demographicResolved.ok) {
+      expect(demographicResolved.intent.mode).toBe('sweep_filter')
+      expect(demographicResolved.intent.geographies).toEqual(['HI'])
+      expect(demographicResolved.intent.metricKeys).toEqual([])
+      expect(demographicResolved.intent.clarificationNeeded).toBe(false)
+    }
     const unclear = { ...base, geographies: [], metricKeys: [], clarificationNeeded: true }
     expect(
       resolveClarification(unclear, { geographies: ['Hilo'], metricKeys: [] }).ok,

@@ -380,6 +380,8 @@ describe('cure 2 correspondence pin: every catalog criterion reaches the pipelin
     climate: 'somewhere with a warm climate',
     nature: 'places with nature nearby',
     crowding: 'the most crowded housing',
+    poverty: 'the state with the most poverty',
+    attainment: 'towns with the most college graduates',
     current_events: 'the latest housing news',
     internet: 'places with good internet access',
     cost_of_living: 'places with a lower cost of living',

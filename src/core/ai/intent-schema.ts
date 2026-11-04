@@ -259,6 +259,11 @@ export function validateIntent(raw: unknown):
 
 const DEMOGRAPHIC_DISPLAY_ONLY_SET: ReadonlySet<string> = new Set(DEMOGRAPHIC_DISPLAY_ONLY_KEYS)
 
+/** Whether a key is one of the display-only demographic figures. */
+export function isDisplayOnlyDemographicKey(key: string): boolean {
+  return DEMOGRAPHIC_DISPLAY_ONLY_SET.has(key)
+}
+
 /**
  * The research-first degrade for the demographic figures that stay
  * display-only (owner ruling 2026-11-03; the A9 program's FM-9

@@ -5,7 +5,9 @@
 import {
   DISPLAYABLE_KEYS,
   canRun,
+  isDisplayOnlyDemographicKey,
   isFilterLegal,
+  isRankLegal,
   validateIntent,
   withRunnability,
 } from './intent-schema'
@@ -90,14 +92,76 @@ export function removeFilter(intent: ValidatedIntent, filter: IntentFilter): Int
 }
 
 /**
+ * The clarification seam's reading of a merged measure set that
+ * carries a display-only demographic figure (FM-9 live cure,
+ * 2026-11-03: the ef1f266 gates read rank-legal, but this seam still
+ * read the pre-ruling filter-legal surface, so a median-age pick
+ * dead-ended here and a poverty pick never reached the degrade).
+ * Two completions, mirroring the accept seam's degrade contract:
+ *  - 'handoff': the demographic figure is the only measure and no
+ *    Census bound is in play — the picks complete as the
+ *    research-first handoff state (the key leaves the measure list;
+ *    the question is served research-first, never figure-ranked).
+ *    Ranking modes only: a placed lookup/compare completes on the
+ *    figure itself, which is a display, not a ranking, and keeps
+ *    its ordinary path.
+ *  - 'screen': beside a rank-legal measure in a sweep/similarity,
+ *    the demographic key is stripped and the screen proceeds on
+ *    its remaining measures — the same degrade the accept seam
+ *    applies to a blocked parse.
+ * Anything else (a bound in play, a non-rank measure beside the
+ * demographic key in a ranking mode) keeps the refusal.
+ */
+type DemographicResolution =
+  | { kind: 'handoff' }
+  | { kind: 'screen'; metricKeys: string[] }
+  | null
+
+function demographicResolution(picks: {
+  mode: IntentMode
+  geographies: string[]
+  metricKeys: string[]
+  filters: ValidatedIntent['filters']
+}): DemographicResolution {
+  const { mode, geographies, metricKeys, filters } = picks
+  if (!metricKeys.some((key) => isDisplayOnlyDemographicKey(key))) return null
+  const remaining = metricKeys.filter((key) => !isDisplayOnlyDemographicKey(key))
+  if (remaining.length === 0) {
+    if (filters.length > 0) return null
+    if (mode === 'sweep_filter') return { kind: 'handoff' }
+    if (mode === 'lookup' && geographies.length === 0) return { kind: 'handoff' }
+    return null
+  }
+  if (
+    (mode === 'sweep_filter' || mode === 'similarity') &&
+    remaining.every((key) => isRankLegal(key))
+  ) {
+    return { kind: 'screen', metricKeys: remaining }
+  }
+  if (
+    geographies.length === 0 &&
+    filters.length === 0 &&
+    remaining.some((key) => isRankLegal(key))
+  ) {
+    return { kind: 'screen', metricKeys: remaining }
+  }
+  return null
+}
+
+/**
  * Whether clarification picks complete the intent. Delegates to the one
  * predicate, so the resolve button and the Run gate can never disagree.
  * Callers pass the clarification picks merged with the existing intent.
  * One completion is not canRun's: with no place named or picked and no
- * bound in play, a filter-legal measure completes as the national
+ * bound in play, a rank-legal measure completes as the national
  * screen (national-screen.ts) — the placeless question's forward path.
- * An intent that names a place, even an unresolvable one, never
- * completes this way: its place must be resolved, not bypassed.
+ * (FM-9, owner ruling 2026-11-03: the screen's measures are the
+ * RANK-legal surface, not only the filter-legal one — median_age
+ * completes here exactly as median_gross_rent does; it still can
+ * never appear in a filter.) An intent that names a place, even an
+ * unresolvable one, never completes this way: its place must be
+ * resolved, not bypassed. A display-only demographic pick completes
+ * per demographicResolution above.
  */
 export function canResolveClarification(picks: {
   mode: IntentMode
@@ -105,18 +169,28 @@ export function canResolveClarification(picks: {
   metricKeys?: string[]
   filters?: ValidatedIntent['filters']
 }): boolean {
+  const metricKeys = picks.metricKeys ?? []
+  const filters = picks.filters ?? []
+  const demographic = demographicResolution({
+    mode: picks.mode,
+    geographies: picks.geographies,
+    metricKeys,
+    filters,
+  })
+  if (demographic?.kind === 'handoff') return true
+  const effectiveMetricKeys = demographic?.kind === 'screen' ? demographic.metricKeys : metricKeys
   if (
     picks.geographies.length === 0 &&
-    (picks.filters ?? []).length === 0 &&
-    (picks.metricKeys ?? []).some((key) => isFilterLegal(key))
+    filters.length === 0 &&
+    effectiveMetricKeys.some((key) => isRankLegal(key))
   ) {
     return true
   }
   return canRun({
     mode: picks.mode,
     geographies: picks.geographies,
-    metricKeys: picks.metricKeys ?? [],
-    filters: picks.filters ?? [],
+    metricKeys: effectiveMetricKeys,
+    filters,
     clarificationNeeded: false,
   })
 }
@@ -124,19 +198,38 @@ export function canResolveClarification(picks: {
 /**
  * Merge clarification picks into the intent and clear the clarification
  * flag. Unresolvable picks stay unresolved; the rest are revalidated.
- * Placeless picks with a filter-legal measure and no bound resolve to
+ * Placeless picks with a rank-legal measure and no bound resolve to
  * the national screen instead of merging into the original mode: the
  * screen is the completion the question asked for, and the mode change
- * is visible in the understood request before anything runs.
+ * is visible in the understood request before anything runs. A
+ * display-only demographic pick resolves per demographicResolution:
+ * stripped beside a rank-legal screen measure, or — as the only
+ * measure — the research-first handoff state, which is returned
+ * unstamped by validateIntent for the same reason AskPanel's
+ * researchFirstHandoff produces it directly: it is a marker state
+ * for the answer layer, not an executable intent.
  */
 export function resolveClarification(
   intent: ValidatedIntent,
   picks: { geographies: string[]; metricKeys: string[] },
 ): IntentEditResult {
   const geographies = [...new Set([...intent.geographies, ...picks.geographies])].slice(0, 8)
-  const metricKeys = [...new Set([...intent.metricKeys, ...picks.metricKeys])]
+  const mergedMetricKeys = [...new Set([...intent.metricKeys, ...picks.metricKeys])]
+  const demographic = demographicResolution({
+    mode: intent.mode,
+    geographies,
+    metricKeys: mergedMetricKeys,
+    filters: intent.filters,
+  })
+  if (demographic?.kind === 'handoff') {
+    return {
+      ok: true,
+      intent: { ...intent, geographies, metricKeys: [], clarificationNeeded: false },
+    }
+  }
+  const metricKeys = demographic?.kind === 'screen' ? demographic.metricKeys : mergedMetricKeys
   if (geographies.length === 0 && intent.filters.length === 0) {
-    const screenKey = metricKeys.find((key) => isFilterLegal(key))
+    const screenKey = metricKeys.find((key) => isRankLegal(key))
     if (screenKey !== undefined) return checked(nationalScreenIntent(screenKey))
     return { ok: false, error: 'clarification_required' }
   }

@@ -937,6 +937,22 @@ export const RESEARCH_CRITERION_CATALOG: readonly {
   // (research names the places; average_household_size only ever
   // displays), never figure-assessed or figure-ranked.
   { id: 'crowding', label: 'Crowded housing', pattern: /\bcrowd(?:ed|ing)?\b|\bovercrowd\w*\b/i, keywords: ['crowded', 'overcrowded', 'cramped'] },
+  // Demographic superlatives (FM-9 live cure, 2026-11-03): poverty
+  // and attainment are two of the four figures the owner's ruling
+  // keeps display-only with research-first superlatives, but no
+  // catalog entry claimed them — "most poverty" read as a Census
+  // measure head, decomposition returned nothing, and the question
+  // stranded in clarification on the live build while its bounded
+  // FM-9 siblings handed off. The patterns are superlative-bound on
+  // purpose: an ordinary figure lookup ("how many people are below
+  // the poverty line in 78701?") states no superlative and keeps
+  // its Census path; a superlative over the figure is the
+  // research-first shape, so these entries carry NO
+  // decomposedMetricKey — research names the places and the figure
+  // only ever displays. (Broadband's entry above keeps its
+  // decomposedMetricKey: that exception is shipped and stated.)
+  { id: 'poverty', label: 'Poverty', pattern: /\b(?:most|highest|greatest|largest|worst|lowest|least|deepest)\b[^.!?]{0,48}\b(?:poverty|poor)\b|\bpoorest\b/i, keywords: ['poverty', 'poor'] },
+  { id: 'attainment', label: 'Educational attainment', pattern: /\b(?:most|highest|greatest|largest)\b[^.!?]{0,48}\b(?:college graduates|bachelor'?s degrees?|degree holders|educational attainment)\b|\bmost educated\b/i, keywords: ['college graduates', 'bachelor', 'educational attainment', 'educated'] },
   // Current-events arm (P3 step 7, battery E4): news phrasing is a
   // research criterion, so the pipeline researches it with citations
   // instead of the question stranding in clarification.

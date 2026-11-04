@@ -66,7 +66,47 @@ import {
   type GeographyGateFailureContext,
   type GeographyGateSpec,
 } from '../../core/ai/geography-gate'
-import { regionInterpretationFor } from '../../core/ai/area-mention'
+import {
+  regionInterpretationFor,
+  type RegionInterpretation,
+} from '../../core/ai/area-mention'
+
+/**
+ * The disclosure a resolved named region carries, one wording for
+ * both resolution points (resolveAnswerGeographies step 3b and the
+ * county-crosswalk completion below): the reading, its membership,
+ * and that the results cover that region.
+ */
+function regionMembershipDisclosure(geography: string, interpretation: RegionInterpretation): string {
+  const membership = interpretation.counties
+    ? `its ${interpretation.counties.length} counties: ${interpretation.counties
+        .map((c) => c.name.replace(/ County$/, ''))
+        .join(', ')}`
+    : `the states of ${interpretation.states
+        .map((code) => STATE_NAME_BY_CODE[code] ?? code)
+        .join(' and ')}`
+  return (
+    `${geography} was read as ${interpretation.name} — ${membership} — ` +
+    'and the results cover that region.'
+  )
+}
+
+/** A region's county-set ZCTAs from the county index, or null when any member county is absent. */
+function regionCountyZctas(
+  interpretation: RegionInterpretation,
+  countyIndex: CountyIndex,
+): string[] | null {
+  if (!interpretation.counties) return null
+  const zips: string[] = []
+  for (const county of interpretation.counties) {
+    const group = countyIndex.counties.find(
+      (c) => c.censusName === county.name && c.state === county.state,
+    )
+    if (!group) return null
+    zips.push(...group.zips)
+  }
+  return zips
+}
 import type { ZctaPoint } from '../../core/map/centroids'
 import {
   createHttpFlexibleTransport,
@@ -409,16 +449,14 @@ export function resolveAnswerGeographies(
     if (interpretation) {
       let added = 0
       if (interpretation.counties) {
-        if (countyIndex) {
-          for (const county of interpretation.counties) {
-            const group = countyIndex.counties.find(
-              (c) => c.censusName === county.name && c.state === county.state,
-            )
-            if (!group) continue
-            for (const zip of group.zips) {
-              zctas.add(zip)
-              added++
-            }
+        // All-or-nothing on the membership: a county the index does
+        // not carry leaves the region unresolved rather than
+        // silently screening a subset of it under the full reading.
+        const zips = countyIndex ? regionCountyZctas(interpretation, countyIndex) : null
+        if (zips) {
+          for (const zip of zips) {
+            zctas.add(zip)
+            added++
           }
         }
       } else if (placeIndex) {
@@ -427,17 +465,7 @@ export function resolveAnswerGeographies(
       if (added === 0) {
         unresolvedGeographies.push(trimmed)
       } else {
-        const membership = interpretation.counties
-          ? `its ${interpretation.counties.length} counties: ${interpretation.counties
-              .map((c) => c.name.replace(/ County$/, ''))
-              .join(', ')}`
-          : `the states of ${interpretation.states
-              .map((code) => STATE_NAME_BY_CODE[code] ?? code)
-              .join(' and ')}`
-        geographyDisclosures.push(
-          `${trimmed} was read as ${interpretation.name} — ${membership} — ` +
-            'and the results cover that region.',
-        )
+        geographyDisclosures.push(regionMembershipDisclosure(trimmed, interpretation))
       }
       continue
     }
@@ -518,27 +546,47 @@ export function expandCountyGeographies(
   const siblings = siblingStateCodes(intent)
   const zctas = new Set(resolved.zctas)
   const countyGeographies = [...resolved.countyGeographies]
+  const geographyDisclosures = [...resolved.geographyDisclosures]
   const stillUnresolved: string[] = []
+  let changed = false
   for (const geography of resolved.unresolvedGeographies) {
     const { name: namePart } = splitStateDesignator(geography)
     const group = COUNTY_LIKE_RE.test(namePart)
       ? matchCountyGeography(geography, countyIndex, siblings)
       : null
-    if (!group) {
-      stillUnresolved.push(geography)
+    if (group) {
+      for (const zip of group.zips) zctas.add(zip)
+      if (!countyGeographies.some((c) => c.geography === geography)) {
+        countyGeographies.push({
+          geography,
+          censusName: group.censusName,
+          state: group.state,
+          zctas: [...group.zips],
+        })
+      }
+      changed = true
       continue
     }
-    for (const zip of group.zips) zctas.add(zip)
-    if (!countyGeographies.some((c) => c.geography === geography)) {
-      countyGeographies.push({
-        geography,
-        censusName: group.censusName,
-        state: group.state,
-        zctas: [...group.zips],
-      })
+    // Named-region completion (named-area cure, 2026-11-04): the
+    // App path resolves with the place index alone, so a confirmed
+    // county-precise region arrives here unresolved — its
+    // membership needs the county crosswalk this function exists
+    // to apply. The region's counties union into the bound and the
+    // reading is disclosed, exactly as step 3b resolves it when
+    // the index is in hand at resolution time.
+    const interpretation = regionInterpretationFor(geography)
+    const regionZips =
+      interpretation?.counties ? regionCountyZctas(interpretation, countyIndex) : null
+    if (interpretation && regionZips) {
+      for (const zip of regionZips) zctas.add(zip)
+      const line = regionMembershipDisclosure(geography, interpretation)
+      if (!geographyDisclosures.includes(line)) geographyDisclosures.push(line)
+      changed = true
+      continue
     }
+    stillUnresolved.push(geography)
   }
-  if (countyGeographies.length === resolved.countyGeographies.length) return resolved
+  if (!changed) return resolved
   const scopePrefixes = [...new Set([...zctas].map((z) => z.slice(0, 2)))].sort()
   return {
     ...resolved,
@@ -547,6 +595,7 @@ export function expandCountyGeographies(
     unresolvable: intent.geographies.length > 0 && zctas.size === 0,
     unresolvedGeographies: stillUnresolved,
     countyGeographies,
+    geographyDisclosures,
   }
 }
 

@@ -1122,7 +1122,7 @@ export async function composeAnswerForRequest(input: {
           const reaskStarted = performance.now()
           const reaskResult = await input.provider
             .research(
-              { queryText: gateClassificationReaskQueryText(input.queryText, gateSpec, gaps) },
+              { queryText: gateClassificationReaskQueryText(input.queryText, gaps) },
               input.signal ?? new AbortController().signal,
             )
             .catch(() => null)

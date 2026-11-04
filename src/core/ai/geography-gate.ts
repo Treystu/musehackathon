@@ -490,7 +490,6 @@ export function classificationGaps(
  */
 export function gateClassificationReaskQueryText(
   queryText: string,
-  spec: GeographyGateSpec,
   gaps: readonly ClassificationGap[],
 ): string {
   if (gaps.some((gap) => gap.phrase !== null)) {

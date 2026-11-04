@@ -232,8 +232,7 @@ describe('round 6: the completeness check reads gaps from the prose itself', () 
 
 describe('round 6: the re-ask fits the route ceiling', () => {
   it('both-parts, one-part, and single-criterion re-asks are within the ceiling, question first', () => {
-    const spec = taxSpec()
-    const both = gateClassificationReaskQueryText(TAX_QUESTION, spec, [
+    const both = gateClassificationReaskQueryText(TAX_QUESTION, [
       { label: 'no income tax', phrase: 'income tax', negated: true, claimedCount: 9, classifiedCount: 0 },
       { label: 'no sales tax', phrase: 'sales tax', negated: true, claimedCount: 5, classifiedCount: 0 },
     ])
@@ -241,12 +240,7 @@ describe('round 6: the re-ask fits the route ceiling', () => {
     expect(both.startsWith(TAX_QUESTION)).toBe(true)
     expect(both).toContain('For the part "no income tax"')
     expect(both).toContain('For the part "no sales tax"')
-    const drugSpec = detectGeographyGate({
-      queryText: DRUG_QUESTION,
-      intent: intent(),
-      researchCriteria: decomposeResearchCriteria(DRUG_QUESTION),
-    })!
-    const single = gateClassificationReaskQueryText(DRUG_QUESTION, drugSpec, [
+    const single = gateClassificationReaskQueryText(DRUG_QUESTION, [
       { label: null, phrase: null, negated: false, claimedCount: 24, classifiedCount: 3 },
     ])
     expect(single.length).toBeLessThanOrEqual(RESEARCH_QUERY_MAX_CHARS)

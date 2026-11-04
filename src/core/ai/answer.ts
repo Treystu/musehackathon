@@ -3171,7 +3171,22 @@ function isWorkingNarration(segment: string, sources: readonly AnswerSource[]): 
     const covered = titleTokens.filter((t) => segmentTokens.has(t)).length
     if (covered / titleTokens.length >= 0.8) titleCores++
   }
-  return titleCores >= 2
+  if (titleCores >= 2) return true
+  // Title-run signature, source-independent (the drug-law specimen,
+  // 2026-11-04): both tests above match only titles REGISTERED in
+  // the result's source list, and the specimen's Corbin annotation
+  // carried a run of listing/directory titles (Apartment Finder,
+  // superpages.com, Yellow Pages Directory Inc., Homes.com) the
+  // research model browsed without ever registering them as sources
+  // — reproduced in-tree: the claim passed this filter unchanged
+  // with the cited pages as the source list. The run's own measured
+  // signature needs no source list: each leaked segment carries TWO
+  // OR MORE pipe separators, the listing genre's title delimiter
+  // ("... Corbin KY 40701 | Apartment Finder", "905 W 7th St |
+  // Corbin, KY Rental Homes ..."). Findings prose in this genre
+  // does not produce two pipes in one segment; a single pipe (a
+  // quoted title fragment, a table remnant) stays under the bar.
+  return (segment.match(/\|/g) ?? []).length >= 2
 }
 
 /**

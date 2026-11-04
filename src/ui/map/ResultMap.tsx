@@ -4,7 +4,7 @@
  *
  * Hand-rolled SVG + the d3-geo projections the shipped map stack
  * already uses (a scoped geoAlbers fit for one area — see scopedFit
- * for why the composite geoAlbersUsa cannot build SVG fills — with
+ * for why the composite geoAlbersUsa cannot fit a scoped area — with
  * the Puerto Rico conic inset routing copied from
  * src/core/map/projection.ts, and fitBase/geoAlbersUsa for the
  * national centroid mode). No tiles, no map library,
@@ -152,14 +152,18 @@ export function scopedFit(features: readonly ResultGeometryFeature[]): ScopedFit
     else mainFeatures.push(feature)
   }
   // A plain geoAlbers rotated to the set's own centroid — NOT
-  // geoAlbersUsa. The composite projection prepends its 960x500 clip
-  // outline to every path it builds (measured in the result-map e2e:
-  // each polygon's path began with the full-frame rectangle), which
-  // an SVG fill paints over the whole frame and which then intercepts
-  // every hover meant for the polygons under it. A scoped answer is
-  // one area, so the national insets buy nothing here; the national
-  // mode below still uses fitBase/geoAlbersUsa, where the outlines
-  // are strokes on a canvas, not fills.
+  // geoAlbersUsa: the composite is fitted to the whole country and
+  // clips to its own 960x500 sphere, so it cannot be re-fitted to one
+  // scoped area, and its national insets buy nothing here. (An
+  // earlier reading of this comment blamed the composite for the
+  // frame-filling fills in the R23 captures; the measured root cause
+  // was upstream — TIGERweb rings wound against d3's spherical
+  // convention made every feature its own complement under EVERY
+  // projection, the composite merely clipping the disc to a
+  // rectangle. The loader normalizes the winding at parse time;
+  // see normalizeGeometryWinding in core/map/result-geometry.ts.)
+  // The national mode below still uses fitBase/geoAlbersUsa, where
+  // the outlines are strokes on a canvas, not fills.
   const centreOf = (set: readonly ResultGeometryFeature[]): [number, number] => {
     if (set.length === 0) return [-96, 38]
     let lon = 0

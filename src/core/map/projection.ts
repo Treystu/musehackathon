@@ -21,6 +21,7 @@
 import { geoAlbersUsa, geoConicEqualArea, geoPath, type GeoProjection } from 'd3-geo'
 
 import { decodeCentroids, type ZctaPoint } from './centroids'
+import { normalizeGeometryWinding } from './result-geometry'
 
 /** Baked asset paths. Same-origin, so no new CSP entry is needed. */
 export const CENTROIDS_URL = '/map/zcta-centroids.bin'
@@ -318,6 +319,20 @@ export async function loadMapAssets(
   let basemap: Basemap | null = null
   if (basemapResponse?.ok) {
     basemap = (await basemapResponse.json()) as Basemap
+    // The baked state outlines carry the same against-d3 winding as
+    // TIGERweb's live geometry (measured: geoArea 4*pi for the first
+    // feature), which prepends the projection's sphere outline to
+    // every state path — a spurious frame outline around the map.
+    // Normalized at this load seam, like the result geometry.
+    if (basemap) {
+      basemap = {
+        ...basemap,
+        features: basemap.features.map((f) => ({
+          ...f,
+          geometry: normalizeGeometryWinding(f.geometry),
+        })),
+      }
+    }
   }
   return { centroids, basemap }
 }

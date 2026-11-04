@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { geoArea, geoCentroid } from 'd3-geo'
 
 import {
   buildResultGeometryUrl,
@@ -123,6 +124,79 @@ describe('parseResultGeometry', () => {
     const parsed = parseResultGeometry(multi, ['95060'])
     expect(parsed.features.get('95060')?.geometry.type).toBe('MultiPolygon')
     expect(parsed.missing).toEqual([])
+  })
+})
+
+describe('parseResultGeometry — ring winding normalization (R23 cure, 2026-11-03)', () => {
+  // The same orientation sum the loader reads: sum((x2-x1)*(y2+y1)).
+  const orientationSum = (ring: [number, number][]): number => {
+    let sum = 0
+    for (let i = 0; i + 1 < ring.length; i++) {
+      sum += (ring[i + 1]![0] - ring[i]![0]) * (ring[i + 1]![1] + ring[i]![1])
+    }
+    return sum
+  }
+  // A square near Denver wound the way TIGERweb's GeoJSON arrives
+  // (negative orientation sum). Unnormalized, d3-geo reads this
+  // polygon as the whole sphere minus the square: geoArea 4*pi,
+  // the centroid at the antipode, and a fill that paints the
+  // projection's sphere outline over the map frame — the frame-
+  // filling disc in the R23 captures, on every result feature.
+  const ESRI_SQUARE: [number, number][] = [
+    [-105.4, 39.9],
+    [-105.2, 39.9],
+    [-105.2, 40.1],
+    [-105.4, 40.1],
+    [-105.4, 39.9],
+  ]
+  const bodyFor = (rings: [number, number][][]) =>
+    JSON.stringify({
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { ZCTA5: '80202' },
+          geometry: { type: 'Polygon', coordinates: rings },
+        },
+      ],
+    })
+
+  it('reverses an Esri-wound exterior so d3 reads the polygon, not its complement', () => {
+    expect(orientationSum(ESRI_SQUARE)).toBeLessThan(0)
+    const parsed = parseResultGeometry(bodyFor([ESRI_SQUARE]), ['80202'])
+    const feature = parsed.features.get('80202')!
+    expect(geoArea(feature as never)).toBeLessThan(0.01)
+    const [lon, lat] = geoCentroid(feature as never)
+    expect(Math.abs(lon - -105.3)).toBeLessThan(0.05)
+    expect(Math.abs(lat - 40.0)).toBeLessThan(0.05)
+  })
+
+  it('leaves an already d3-wound exterior vertex-for-vertex unchanged', () => {
+    const wanted = [...ESRI_SQUARE].reverse()
+    expect(orientationSum(wanted)).toBeGreaterThan(0)
+    const parsed = parseResultGeometry(bodyFor([wanted]), ['80202'])
+    const geometry = parsed.features.get('80202')!.geometry as {
+      coordinates: [number, number][][]
+    }
+    expect(geometry.coordinates[0]).toEqual(wanted)
+  })
+
+  it('winds a hole opposite its exterior', () => {
+    const hole: [number, number][] = [
+      [-105.35, 39.95],
+      [-105.35, 40.05],
+      [-105.25, 40.05],
+      [-105.25, 39.95],
+      [-105.35, 39.95],
+    ]
+    expect(orientationSum(hole)).toBeGreaterThan(0)
+    const parsed = parseResultGeometry(bodyFor([ESRI_SQUARE, hole]), ['80202'])
+    const geometry = parsed.features.get('80202')!.geometry as {
+      coordinates: [number, number][][]
+    }
+    expect(orientationSum(geometry.coordinates[0]!)).toBeGreaterThan(0)
+    expect(orientationSum(geometry.coordinates[1]!)).toBeLessThan(0)
+    expect(geoArea(parsed.features.get('80202') as never)).toBeLessThan(0.01)
   })
 })
 

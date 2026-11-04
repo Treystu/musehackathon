@@ -75,6 +75,63 @@ export interface ResultGeometryFeature {
   geometry: { type: string; coordinates: unknown }
 }
 
+/**
+ * Ring-orientation sum for one GeoJSON ring (the shoelace variant
+ * sum((x2-x1)*(y2+y1)) over lon/lat pairs). The SIGN is all that is
+ * read: measured against d3-geo (2026-11-03, R23 cure), a ring whose
+ * sum is negative is wound so that d3's spherical path treats the
+ * polygon's interior as the REST of the sphere — geoArea returns
+ * 4*pi steradians (the whole sphere) for every TIGERweb feature,
+ * geoCentroid returns the antipode (Seattle 98101 read as
+ * 57.66, -47.61 instead of -122.34, 47.61), and an SVG fill paints
+ * the projection's sphere outline as a frame-sized disc with the
+ * true polygon as a white hole (the R23 captures: all 25 Colorado
+ * result paths sharing one rendered bbox). Esri's GeoJSON output
+ * winds exterior rings that way; d3 wants the opposite.
+ */
+function ringOrientationSum(ring: unknown): number {
+  if (!Array.isArray(ring)) return 0
+  let sum = 0
+  for (let i = 0; i + 1 < ring.length; i++) {
+    const a = ring[i] as [number, number]
+    const b = ring[i + 1] as [number, number]
+    if (!Array.isArray(a) || !Array.isArray(b)) return 0
+    sum += (b[0] - a[0]) * (b[1] + a[1])
+  }
+  return sum
+}
+
+/**
+ * Normalizes Polygon/MultiPolygon ring winding for d3-geo: exterior
+ * rings to a positive orientation sum, holes to negative, reversing
+ * only a ring whose sign is wrong — so geometry from a source that
+ * already winds d3's way passes through untouched, vertex for
+ * vertex. Applied at parse time (below), which puts every consumer
+ * of this loader — ResultMap, the progressive map, the qualifying
+ * map, county outlines — on the corrected geometry at one seam.
+ */
+export function normalizeGeometryWinding<T extends { type: string; coordinates: unknown }>(
+  geometry: T,
+): T {
+  const fixPolygon = (rings: unknown): unknown => {
+    if (!Array.isArray(rings)) return rings
+    return rings.map((ring, i) => {
+      const sum = ringOrientationSum(ring)
+      if (sum === 0 || !Array.isArray(ring)) return ring
+      const wantPositive = i === 0
+      return sum > 0 === wantPositive ? ring : [...ring].reverse()
+    })
+  }
+  if (geometry.type === 'Polygon') {
+    return { ...geometry, coordinates: fixPolygon(geometry.coordinates) }
+  }
+  if (geometry.type === 'MultiPolygon') {
+    if (!Array.isArray(geometry.coordinates)) return geometry
+    return { ...geometry, coordinates: geometry.coordinates.map(fixPolygon) }
+  }
+  return geometry
+}
+
 export interface ResultGeometry {
   /** Geometry by ZCTA, for exactly the requested ZCTAs that returned a polygon. */
   features: Map<string, ResultGeometryFeature>
@@ -167,7 +224,11 @@ export function parseResultGeometry(text: string, requested: readonly string[]):
     const zcta = feature?.properties?.ZCTA5
     if (typeof zcta !== 'string' || !feature.geometry) continue
     if (!requested.includes(zcta) || features.has(zcta)) continue
-    features.set(zcta, feature)
+    // Ring winding is normalized here, at the parse seam: TIGERweb's
+    // exterior rings wind against d3-geo's spherical convention, and
+    // unnormalized every feature renders as its own complement (see
+    // normalizeGeometryWinding).
+    features.set(zcta, { ...feature, geometry: normalizeGeometryWinding(feature.geometry) })
   }
   const missing = requested.filter((z) => !features.has(z))
   return { features, missing, bytes }

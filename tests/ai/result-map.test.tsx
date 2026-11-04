@@ -228,6 +228,53 @@ describe('ResultMap — choropleth mode', () => {
     expect(tigerwebCalls, 'switching the metric must not refetch geometry').toBe(1)
   }, 30000)
 
+  it('drawn result paths track the feature geometry, never the frame (R23 winding cure)', async () => {
+    // The R23 captures' defect: every result path carried the
+    // projection's sphere outline (its TIGERweb ring wound against
+    // d3's spherical convention, so each polygon rendered as its own
+    // complement) and all 25 paths shared one frame-sized rendered
+    // bbox. jsdom has no getBBox, so the pin reads the path data
+    // itself: a true ZCTA path sits inside the 960x500 frame and
+    // nowhere near fills it; a complement path's coordinates span
+    // thousands of units and every feature's bbox is identical.
+    render(<ResultMap answer={answer({ places: SEATTLE_PLACES })} />)
+    expectNoGateButton()
+    await flushUntil(() => container.querySelectorAll('svg [data-result-place]').length === 3)
+    const paths = [...container.querySelectorAll('svg path[data-result-place]')]
+    expect(paths.length).toBeGreaterThanOrEqual(2)
+    const bboxes = paths.map((p) => {
+      const nums = (p.getAttribute('d') ?? '').match(/-?\d+\.?\d*(?:e-?\d+)?/gi)?.map(Number) ?? []
+      const xs = nums.filter((_, i) => i % 2 === 0)
+      const ys = nums.filter((_, i) => i % 2 === 1)
+      return {
+        minX: Math.min(...xs),
+        maxX: Math.max(...xs),
+        minY: Math.min(...ys),
+        maxY: Math.max(...ys),
+      }
+    })
+    for (const b of bboxes) {
+      expect(b.minX).toBeGreaterThanOrEqual(0)
+      expect(b.maxX).toBeLessThanOrEqual(960)
+      expect(b.minY).toBeGreaterThanOrEqual(0)
+      expect(b.maxY).toBeLessThanOrEqual(500)
+      // Fixture-measured: the largest Seattle path covers ~30% of
+      // the frame's area; a complement path covers ~71% of it (the
+      // captures' 701x484 of 960x500).
+      expect((b.maxX - b.minX) * (b.maxY - b.minY)).toBeLessThan(0.5 * 960 * 500)
+    }
+    // Real neighboring ZCTAs differ in size — at least one drawn
+    // path is small. A complement set has no small path: every
+    // feature carries the same sphere-sized bbox.
+    expect(Math.min(...bboxes.map((b) => b.maxX - b.minX))).toBeLessThan(240)
+    const distinct = new Set(
+      bboxes.map((b) => [b.minX, b.minY, b.maxX, b.maxY].map((v) => Math.round(v)).join(',')),
+    )
+    expect(distinct.size, 'each feature draws its own shape, not one shared outline').toBe(
+      bboxes.length,
+    )
+  }, 30000)
+
   it('shows the hovered place its card figures in the place panel', async () => {
     render(<ResultMap answer={answer({ places: SEATTLE_PLACES })} />)
     expectNoGateButton()

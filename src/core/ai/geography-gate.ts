@@ -331,6 +331,253 @@ export function gateClassificationQueryText(queryText: string, spec: GeographyGa
 }
 
 /**
+ * A part of a classification that is INCOMPLETE against its own
+ * prose (round 6, 2026-11-04): the alternative's classified set
+ * is empty, or the prose carries a count claim ("nine states",
+ * "24 states") larger than the set the classifier enumerated.
+ * Measured live on 67da19c: the sales alternative classified its
+ * 5 while the income alternative named NO state and the pipeline
+ * accepted the empty part as the classification, bounding the
+ * union at 5 states (1,356 places) instead of 12 (6,337). The
+ * classifier-side loss shapes, reproduced in-tree against the
+ * shipped classifier (DRUG-LAW-GATE-R6.md): a spelled-out count
+ * with the list in the NEXT sentence (the enumeration
+ * announcement reads digit counts only, and the list sentence
+ * asserts nothing); per-state sentences in the word orders "does
+ * not tax income" / "has no tax on income" (the absence patterns
+ * require the exact phrase, in that order, after the negator);
+ * a heading plus a bare list (no assertion anywhere); and a
+ * counted claim naming only examples ("including Alaska,
+ * Florida, and Texas" for a claimed nine) silently enumerating
+ * the examples alone. A completeness check, not more pattern
+ * surface, is the cure for the class: any shape the first pass
+ * under-reads is either empty or contradicted by the prose's own
+ * count, and both are detectable without reading the prose's
+ * mind.
+ */
+export interface ClassificationGap {
+  /** The alternative's label ("no income tax"); null for a single-criterion classification. */
+  label: string | null
+  /** The alternative's predicated phrase ("income tax"); null when label is null. */
+  phrase: string | null
+  /** Whether the alternative predicates its phrase's absence. */
+  negated: boolean
+  /** The largest count claim the prose makes for this part, when it makes one. */
+  claimedCount: number | null
+  /** How many states the first pass actually classified for this part. */
+  classifiedCount: number
+}
+
+const NUMBER_WORD_VALUES: Readonly<Record<string, number>> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+  sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50,
+}
+
+/** A count claim's value: digits, a number word, or a compound ("twenty-four", "twenty four"). */
+function countClaimValue(token: string): number | null {
+  const normalized = token.toLowerCase().replace(/\s+/g, ' ').trim()
+  if (/^\d+$/.test(normalized)) return Number.parseInt(normalized, 10)
+  const parts = normalized.split(/[-\s]/)
+  let total = 0
+  for (const part of parts) {
+    const value = NUMBER_WORD_VALUES[part]
+    if (value === undefined) return null
+    total += value
+  }
+  return total > 0 ? total : null
+}
+
+const COUNT_CLAIM_RE =
+  /\b(\d+|(?:twenty|thirty|forty|fifty)(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|nineteen|eighteen|seventeen|sixteen|fifteen|fourteen|thirteen|twelve|eleven|ten|nine|eight|seven|six|five|four|three|two|one)\s+(?:U\.S\.\s+)?(?:states|jurisdictions)\b/gi
+
+/** The largest "N states / jurisdictions" count a sentence claims, digits or spelled out. */
+function largestCountClaim(sentence: string): number | null {
+  let largest: number | null = null
+  for (const match of sentence.matchAll(COUNT_CLAIM_RE)) {
+    const value = countClaimValue(match[1]!)
+    if (value !== null && (largest === null || value > largest)) largest = value
+  }
+  return largest
+}
+
+function splitProseSentences(prose: string): string[] {
+  return prose
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.replace(/^[#*\-\s]+/, '').trim())
+    .filter((s) => s.length > 0)
+}
+
+/**
+ * The completeness check (round 6): compare the classification
+ * against the prose it was read from, part by part. A part is a
+ * gap when its set is EMPTY or when a sentence carrying the
+ * part's own phrase claims more states than the part enumerated.
+ * For a single-criterion classification the part is the whole
+ * class, and the count is read from sentences carrying the
+ * criterion pole's marker or announcing an enumeration (the
+ * sentences that speak for the class). A complete first pass
+ * returns no gaps and no re-ask is issued.
+ */
+export function classificationGaps(
+  prose: string,
+  classification: StateClassification,
+  spec: GeographyGateSpec,
+): ClassificationGap[] {
+  const sentences = splitProseSentences(prose)
+  if (classification.alternatives) {
+    const gaps: ClassificationGap[] = []
+    for (const alternative of classification.alternatives) {
+      let claimed: number | null = null
+      for (const sentence of sentences) {
+        if (!sentence.toLowerCase().includes(alternative.phrase)) continue
+        const value = largestCountClaim(sentence)
+        if (value !== null && (claimed === null || value > claimed)) claimed = value
+      }
+      if (
+        alternative.states.length === 0 ||
+        (claimed !== null && claimed > alternative.states.length)
+      ) {
+        gaps.push({
+          label: alternative.label,
+          phrase: alternative.phrase,
+          negated: alternative.negated,
+          claimedCount: claimed,
+          classifiedCount: alternative.states.length,
+        })
+      }
+    }
+    return gaps
+  }
+  const restrictive = RESTRICTIVE_POLE_RE.test(spec.criterion.text)
+  const favorableRe = restrictive ? UNFAVORABLE_RE : FAVORABLE_RE
+  const unfavorableRe = restrictive ? FAVORABLE_RE : UNFAVORABLE_RE
+  let claimed: number | null = null
+  for (const sentence of sentences) {
+    const value = largestCountClaim(sentence)
+    if (value === null) continue
+    if (!favorableRe.test(sentence) && !isEnumerationLead(sentence, favorableRe, unfavorableRe)) {
+      continue
+    }
+    if (claimed === null || value > claimed) claimed = value
+  }
+  if (
+    classification.favorableStates.length === 0 ||
+    (claimed !== null && claimed > classification.favorableStates.length)
+  ) {
+    return [
+      {
+        label: null,
+        phrase: null,
+        negated: false,
+        claimedCount: claimed,
+        classifiedCount: classification.favorableStates.length,
+      },
+    ]
+  }
+  return []
+}
+
+/**
+ * The enumeration-demanding re-ask (round 6): ONE further
+ * research call, for the incomplete parts alone, demanding the
+ * enumeration in the shape the classifier reads deterministically
+ * — one sentence per state, in the part's own assertion form for
+ * a predicate alternative. Fitted to the research route's
+ * ceiling by the same construction as the first ask (round 4's
+ * lesson), and pinned against the route-shaped stub.
+ */
+export function gateClassificationReaskQueryText(
+  queryText: string,
+  spec: GeographyGateSpec,
+  gaps: readonly ClassificationGap[],
+): string {
+  if (gaps.some((gap) => gap.phrase !== null)) {
+    const parts = gaps
+      .filter((gap) => gap.phrase !== null)
+      .map((gap) =>
+        gap.negated
+          ? `For the part "no ${gap.phrase}": list every U.S. state with no ${gap.phrase}, ` +
+            `one sentence per state: "<state> has no ${gap.phrase}."`
+          : `For the part "${gap.phrase}": list every U.S. state with ${gap.phrase}, ` +
+            `one sentence per state: "<state> has ${gap.phrase}."`,
+      )
+      .join(' ')
+    return fitClassificationAsk(
+      queryText,
+      'For the state part of the question, again, from current sources, taking ' +
+        `each part separately. ${parts}`,
+    )
+  }
+  return fitClassificationAsk(
+    queryText,
+    'For the state part of the question, again, from current sources, state by state: ' +
+      'the first listing did not enumerate every state meeting the first criterion. ' +
+      'List every U.S. state meeting it, one sentence per state, each sentence naming ' +
+      'the state and the basis the sources give.',
+  )
+}
+
+/**
+ * Completing a classification with its re-ask's yield (round 6):
+ * for each gapped predicate alternative, the re-ask's set for
+ * that alternative UNIONs the first pass's (both are cited prose;
+ * the union is the completion, and a narrower re-ask can never
+ * un-classify a state the first pass evidenced). Ungapped
+ * alternatives carry over untouched. For a single-criterion
+ * classification the classes union, and the winner is the
+ * singled-out state only when the two passes agree on exactly
+ * one between them.
+ */
+export function completeClassification(
+  base: StateClassification,
+  extra: StateClassification,
+  gaps: readonly ClassificationGap[],
+): StateClassification {
+  const claims = [...new Set([...base.claims, ...extra.claims])]
+  if (base.alternatives && extra.alternatives) {
+    const targets = new Set(gaps.map((gap) => gap.label))
+    const alternatives = base.alternatives.map((alternative) => {
+      if (!targets.has(alternative.label)) return alternative
+      const extraAlternative = extra.alternatives!.find((a) => a.label === alternative.label)
+      if (!extraAlternative) return alternative
+      const byCode = new Map<string, GateStateRef>()
+      for (const state of [...alternative.states, ...extraAlternative.states]) {
+        byCode.set(state.code, state)
+      }
+      return {
+        ...alternative,
+        states: [...byCode.values()].sort((a, b) => a.name.localeCompare(b.name, 'en')),
+      }
+    })
+    const favorable = new Map<string, GateStateRef>()
+    for (const alternative of alternatives) {
+      for (const state of alternative.states) favorable.set(state.code, state)
+    }
+    return {
+      favorableStates: [...favorable.values()].sort((a, b) => a.name.localeCompare(b.name, 'en')),
+      winnerState: null,
+      claims,
+      alternatives,
+    }
+  }
+  const favorable = new Map<string, GateStateRef>()
+  for (const state of [...base.favorableStates, ...extra.favorableStates]) {
+    favorable.set(state.code, state)
+  }
+  const winners = new Map<string, GateStateRef>()
+  for (const winner of [base.winnerState, extra.winnerState]) {
+    if (winner) winners.set(winner.code, winner)
+  }
+  return {
+    favorableStates: [...favorable.values()].sort((a, b) => a.name.localeCompare(b.name, 'en')),
+    winnerState: winners.size === 1 ? [...winners.values()][0]! : null,
+    claims,
+  }
+}
+
+/**
  * The gate's count phrase, agreeing with its count: "1 state",
  * "24 states". Round 2 (2026-11-04, measured live on 2e04268): the
  * criterion evidence rendered "Research classifies 1 states as
@@ -674,10 +921,7 @@ export function classifyStatesFromResearch(
   const restrictive = RESTRICTIVE_POLE_RE.test(spec.criterion.text)
   const favorableRe = restrictive ? UNFAVORABLE_RE : FAVORABLE_RE
   const unfavorableRe = restrictive ? FAVORABLE_RE : UNFAVORABLE_RE
-  const sentences = prose
-    .split(/(?<=[.!?])\s+|\n+/)
-    .map((s) => s.replace(/^[#*\-\s]+/, '').trim())
-    .filter((s) => s.length > 0)
+  const sentences = splitProseSentences(prose)
   // Predicate criteria (round 3) classify per alternative on the
   // alternatives' own assertions, not on the marker vocabulary —
   // the marker sets speak the language of law roundups and say

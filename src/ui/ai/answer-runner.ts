@@ -53,10 +53,13 @@ import {
 } from '../../core/ai/near-frame'
 import {
   buildGeographyGateContext,
+  classificationGaps,
   classifyStatesFromResearch,
+  completeClassification,
   detectGeographyGate,
   gateBoundAttribution,
   gateClassificationQueryText,
+  gateClassificationReaskQueryText,
   stateCountPhrase,
   type GateStateRef,
   type GeographyGateContext,
@@ -1099,10 +1102,49 @@ export async function composeAnswerForRequest(input: {
           reason: 'the classification lookup did not return',
         }
       } else {
+        // Classification completeness (round 6, 2026-11-04): the
+        // first pass's coverage is checked against its own prose
+        // before anything is accepted — a part whose set came
+        // back empty, or smaller than the count its prose claims,
+        // earns ONE enumeration-demanding re-ask for that part
+        // alone, and the re-ask's yield completes that part's
+        // set. Measured live on 67da19c: one alternative
+        // classified fully while its sibling named no state, and
+        // the empty part was accepted as the classification. A
+        // part still empty after the re-ask is reported as
+        // naming no state — the shipped accounting, now earned
+        // rather than assumed. A complete first pass issues no
+        // re-ask.
+        let classification = classifyStatesFromResearch(classificationResult.prose, gateSpec)
+        let classificationSources = classificationResult.sources
+        const gaps = classificationGaps(classificationResult.prose, classification, gateSpec)
+        if (gaps.length > 0) {
+          const reaskStarted = performance.now()
+          const reaskResult = await input.provider
+            .research(
+              { queryText: gateClassificationReaskQueryText(input.queryText, gateSpec, gaps) },
+              input.signal ?? new AbortController().signal,
+            )
+            .catch(() => null)
+          timings.classification =
+            (timings.classification ?? 0) + (performance.now() - reaskStarted)
+          if (reaskResult) {
+            classification = completeClassification(
+              classification,
+              classifyStatesFromResearch(reaskResult.prose, gateSpec),
+              gaps,
+            )
+            const seenUrls = new Set(classificationSources.map((s) => s.url))
+            classificationSources = [
+              ...classificationSources,
+              ...reaskResult.sources.filter((s) => !seenUrls.has(s.url)),
+            ]
+          }
+        }
         const context = buildGeographyGateContext({
           spec: gateSpec,
-          classification: classifyStatesFromResearch(classificationResult.prose, gateSpec),
-          sources: classificationResult.sources,
+          classification,
+          sources: classificationSources,
         })
         if (!context) {
           geographyGateFailure = {

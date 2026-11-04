@@ -167,17 +167,22 @@ describe('FM-9 pipeline behavior', () => {
     })
     expect(answer.status).toBe('verified')
     expect(answer.failures).toEqual([])
-    // The screen's ranking contract is the one every measure gets:
-    // ascending by the retained measure, unknown figures last. The
-    // age order (34, 38, 47, 55, 56, 58) differs from both the load
-    // order and the rent order, so the basis is observable.
+    // The screen's ranking contract, as cure round 3 (2026-11-03)
+    // changed it: the order follows the question's direction, read
+    // from the reader's words. This question asks for the HIGHEST
+    // median age, so the ranking runs descending (58, 56, 55, 47,
+    // 38, 34) — the FM-9 pin originally asserted ascending here,
+    // which encoded the live defect round 3 cured (a superlative
+    // answered in its exact inverse). The age order differs from
+    // both the load order and the rent order, so the basis is
+    // observable.
     expect(answer.places.map((p) => p.name)).toEqual([
-      'Phoenix, AZ',
-      'Tucson, AZ',
-      'Scottsdale, AZ',
-      'Bullhead City, AZ',
-      'Prescott, AZ',
       'Sedona, AZ',
+      'Prescott, AZ',
+      'Bullhead City, AZ',
+      'Scottsdale, AZ',
+      'Tucson, AZ',
+      'Phoenix, AZ',
     ])
     for (const place of answer.places) {
       const figure = place.figures.find((f) => f.key === 'median_age')

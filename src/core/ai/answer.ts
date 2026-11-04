@@ -766,6 +766,7 @@ export function screenRows(
   intent: ValidatedIntent,
   rows: readonly AreaRow[],
   geographyZctas?: ReadonlySet<string>,
+  rankDirection: RankDirection = 'ascending',
 ): ScreenResult {
   const { criteria, dropped } = screenCriteriaFromIntent(intent)
 
@@ -815,12 +816,24 @@ export function screenRows(
     intent.metricKeys.length > 0
   ) {
     const sortKey = intent.metricKeys[0]!
+    // The direction is the caller's reading of the reader's words
+    // (rankDirectionFromQuery): ascending is the shipped default,
+    // and a descending superlative ("oldest", "highest", "largest")
+    // runs the same sort the other way. Cure round 3, 2026-11-03:
+    // the ascending-only sort answered the oldest-population
+    // question youngest-first on the live path, because a
+    // clarification completion rebuilds the intent without the
+    // question's direction and this sort was the only order left.
     screened.sort((a, b) => {
       const av = a.metrics[sortKey]
       const bv = b.metrics[sortKey]
       const aKnown = typeof av === 'number' && Number.isFinite(av)
       const bKnown = typeof bv === 'number' && Number.isFinite(bv)
-      if (aKnown && bKnown) return av - bv || a.zcta.localeCompare(b.zcta)
+      if (aKnown && bKnown) {
+        return (
+          (rankDirection === 'descending' ? bv - av : av - bv) || a.zcta.localeCompare(b.zcta)
+        )
+      }
       if (aKnown) return -1
       if (bKnown) return 1
       return a.zcta.localeCompare(b.zcta)
@@ -1600,6 +1613,68 @@ const WHERE_COUNTY_RE = /\bwhere\b[^?]*\bcounty\b/i
  * "What's the median household income in Boulder County?" is a
  * county lookup, and it stays one.
  */
+/**
+ * The direction a superlative question asks its ranking to run,
+ * read from the reader's own words — the same posture as the
+ * county-level reading below and the national-screen rescue: the
+ * intent schema carries no direction field, so once a parse falls
+ * into clarification and the completion rebuilds a bare screen
+ * intent, the words are the only place the direction survives.
+ * Until cure round 3 (2026-11-03) every bound-less sweep sorted
+ * ascending, so "Which state has the oldest population?" answered
+ * youngest-first on the live path — the exact inverse of the ask.
+ * The reading is deliberately narrow: a descending stem with no
+ * ascending stem opposing it. Anything else keeps the ascending
+ * default the shipped screens have always used, so a question
+ * whose superlative binds a researched criterion rather than the
+ * ranked figure is never re-ordered by a stem it did not aim at
+ * the figure.
+ */
+const DESCENDING_SUPERLATIVE_RE =
+  /\b(?:oldest|highest|largest|biggest|greatest|longest|richest|wealthiest|priciest|costliest)\b|\bmost\s+expensive\b/i
+const ASCENDING_SUPERLATIVE_RE =
+  /\b(?:youngest|lowest|cheapest|smallest|fewest|most\s+affordable|most\s+inexpensive|least\s+expensive|lowest\s+cost)\b/i
+
+export type RankDirection = 'ascending' | 'descending'
+
+export function rankDirectionFromQuery(queryText: string | undefined): RankDirection {
+  if (!queryText) return 'ascending'
+  if (DESCENDING_SUPERLATIVE_RE.test(queryText) && !ASCENDING_SUPERLATIVE_RE.test(queryText)) {
+    return 'descending'
+  }
+  return 'ascending'
+}
+
+/**
+ * A state named as the question's SUBJECT: "which state", "what
+ * state", "states with ...", "rank the states". "United States" is
+ * stripped first — it names the country, not a state subject.
+ */
+const STATE_SUBJECT_RE =
+  /\bwhich states?\b|\bwhat states?\b|\bstates?\s+(?:has|have|with|is|are)\b|\brank(?:ing|ed|s)?\s+(?:the\s+)?states?\b|\bstates?\s+ranked\b/i
+
+/**
+ * Whether the question asks for a STATE-level answer — the state
+ * AS SUBJECT (its aggregate figure, states ranked), the state-level
+ * twin of requestsCountyLevel. The word "state" alone does not
+ * decide it: a place-frame noun as the ranked subject makes the
+ * state the question's bound ("cheapest place to live in Texas" —
+ * PLACE_FRAME_RE carries "place"), and an intent that already names
+ * geographies is served by the named paths (a named state composes
+ * its own state average; it is not silently widened to all states).
+ * The placeless shape this serves is the superlative completion:
+ * the question named no geography at all, so until cure round 3
+ * the terminal silently downgraded to a national ZIP screen.
+ */
+export function requestsStateLevel(queryText: string | undefined, intent: ValidatedIntent): boolean {
+  if (intent.geographies.length > 0) return false
+  if (!queryText) return false
+  const text = queryText.replace(/\bunited states\b/gi, 'the country')
+  if (!/\bstates?\b/i.test(text)) return false
+  if (PLACE_FRAME_RE.test(text)) return false
+  return STATE_SUBJECT_RE.test(text)
+}
+
 /** A geography string that IS a county ("Boulder County, CO"),
  * as opposed to a place string that merely mentions one
  * ("Hilo, Hawaii County, HI"): the county is the geography's
@@ -5207,7 +5282,12 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   }
 
   // Stage 2: deterministic Census screen.
-  const screen = screenRows(input.intent, input.rows, input.geographyZctas)
+  const screen = screenRows(
+    input.intent,
+    input.rows,
+    input.geographyZctas,
+    rankDirectionFromQuery(input.queryText ?? input.researchQuery),
+  )
 
   // Stage 2b (county): when the question asks for counties and the
   // caller supplied the crosswalk, aggregate the screened rows to
@@ -5261,16 +5341,20 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           .map((row) => row.name)
         countyRows = countyRows.filter((row) => measurable.has(row))
         // The bounded-superlative order at county level: a boundless
-        // sweep sorts by its measure, lowest first, exactly as the
-        // ZCTA screen does — now over the county aggregates, so the
-        // county with the lowest aggregated figure leads. Bounded
-        // screens keep the deterministic name order the aggregation
-        // produced; the card orders those by their first criterion.
+        // sweep sorts by its measure, exactly as the ZCTA screen
+        // does — now over the county aggregates, so the county with
+        // the leading aggregated figure heads the answer. The
+        // direction is the reader's (rankDirectionFromQuery, cure
+        // round 3): lowest first unless the words ask highest
+        // first. Bounded screens keep the deterministic name order
+        // the aggregation produced; the card orders those by their
+        // first criterion.
         if (screen.criteria.length === 0 && input.intent.metricKeys.length > 0) {
+          const direction = rankDirectionFromQuery(input.queryText ?? input.researchQuery)
           countyRows = [...countyRows].sort((a, b) => {
             const av = a.metrics[rankKey] as number
             const bv = b.metrics[rankKey] as number
-            return av - bv || a.name.localeCompare(b.name, 'en')
+            return (direction === 'descending' ? bv - av : av - bv) || a.name.localeCompare(b.name, 'en')
           })
         }
         if (countyRows.length === 0) {
@@ -5296,6 +5380,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // path: a request is composed at one aggregate level at a time.
   let stateMeta: Map<string, { memberZctas: string[]; approximateMarginKeys: readonly string[] }> | undefined
   let stateSupported = false
+  let stateRankingApplied = false
   const pipelineDisclosures: string[] = []
   if (!countySupported && input.stateAggregates && input.stateAggregates.length > 0) {
     const figureKeys = [
@@ -5346,6 +5431,38 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         ),
       ])
       rows = [...rows.filter((row) => !memberSet.has(row.zcta) || zipNamed.has(row.zcta)), ...aggRows]
+    }
+    // The state-unit ranking (cure round 3, 2026-11-03): the
+    // question named the STATE as its subject ("which state has
+    // the oldest population?") and no geography at all, so the
+    // runner supplied every state's aggregate and the terminal
+    // rows are exactly the state figures. Their order is the
+    // question's ranking — by the named measure, in the direction
+    // the reader's words carry — the county path's ordering rule
+    // one level up. The guard is the whole shape: every terminal
+    // row is a state aggregate, the intent named no geography and
+    // no bound. Any other state-supported shape (named states,
+    // comparison sides, a ZIP named beside its state) keeps the
+    // assembly order it has today, and the answer's geography
+    // level stays what the intent reports.
+    if (
+      stateSupported &&
+      stateMeta &&
+      rows.length > 0 &&
+      rows.every((row) => stateMeta!.has(row.zcta)) &&
+      input.intent.geographies.length === 0 &&
+      screen.criteria.length === 0 &&
+      input.intent.metricKeys.length > 0 &&
+      requestsStateLevel(input.queryText ?? input.researchQuery, input.intent)
+    ) {
+      const rankKey = input.intent.metricKeys[0]!
+      const direction = rankDirectionFromQuery(input.queryText ?? input.researchQuery)
+      rows = [...rows].sort((a, b) => {
+        const av = a.metrics[rankKey] as number
+        const bv = b.metrics[rankKey] as number
+        return (direction === 'descending' ? bv - av : av - bv) || a.name.localeCompare(b.name, 'en')
+      })
+      stateRankingApplied = true
     }
     if (stateSupported) effectiveScreen = { ...effectiveScreen, rows }
   }
@@ -5461,7 +5578,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     researchCriteria,
     candidateCapApplied: research && !firstResearchDown ? candidateCapApplied : false,
     geographyZctas: input.geographyZctas,
-    geographyLevel,
+    geographyLevel: stateRankingApplied ? 'state' : geographyLevel,
     unsupportedGeography: effectiveUnsupportedGeography,
     countyMeta: mergedMeta,
     countySupported,

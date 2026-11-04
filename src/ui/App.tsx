@@ -29,6 +29,7 @@ import { MapView } from './MapView'
 import { sortSweepRows } from '../core/sweep-sorting'
 import { scopePrefixesForStates, STATE_NAME_BY_CODE } from '../core/sweep/states'
 import { AskPanel, needsResearch } from './ai/AskPanel'
+import { measureLabel } from './ai/plain-labels'
 import { diagnostics } from '../core/ai/diagnostics'
 import { PROXY_ERRORS } from '../core/ai/proxy-errors'
 import { stateCodeForGeography } from '../core/ai/national-screen'
@@ -1378,6 +1379,20 @@ export default function App() {
             setView('explore')
             setMode('data')
             return `Screening ${intent.geographies.join(', ')} by ${preset.label.toLowerCase()}, lowest first — the table below is sorted by that figure.`
+          }
+          if (intent.filters.length === 0 && intent.metricKeys.length > 0) {
+            // A bound-less sweep by a rank-legal measure the table
+            // has no sort preset for (median age — cure round 3,
+            // 2026-11-03): no bound was requested, so the
+            // bound-failure copy below would be false twice over —
+            // nothing failed, and the run did change what the
+            // reader sees, because the composed answer above
+            // carries the screening. Say exactly that, and leave
+            // the table as it stands: it cannot sort by this
+            // figure, and re-sorting it by a different one would
+            // contradict the answer.
+            const label = measureLabel(intent.metricKeys[0]!).toLowerCase()
+            return `The answer above screens by ${label} — the screening table below cannot sort by that figure (its sortable figures are rent burden, median rent, median home value, household income and households), so the table is unchanged.`
           }
           return 'This bound cannot be set on the screening table, which offers a maximum for rent, rent burden and home value and a minimum for households. Nothing was changed.'
         }

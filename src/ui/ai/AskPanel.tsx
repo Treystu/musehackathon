@@ -19,6 +19,8 @@ import {
   decomposeResearchCriteria,
   filterWorkingNarration,
   hasUnclaimedCriterionContent,
+  rankDirectionFromQuery,
+  requestsStateLevel,
   type AnswerSource,
   type ResearchCriterion,
 } from '../../core/ai/answer'
@@ -49,6 +51,7 @@ import type { ProxyError } from '../../core/ai/proxy-errors'
 import { censusLoadSentence } from '../GuidedTour'
 import { HelpTip } from './HelpTip'
 import { ClarificationPanel, type ClarificationCandidates } from './ClarificationPanel'
+import { measureLabel } from './plain-labels'
 import { IntentEditor } from './IntentEditor'
 import { ExplainOnAsk } from './ExplainOnAsk'
 import { MicInput, type MicRecognizer, type MicRecorder } from './MicInput'
@@ -67,6 +70,19 @@ export const SPOKEN_NUMBER_CORRECTION_NOTE =
 
 export const EMPTY_TRANSCRIPT_NOTE =
   'No speech was captured. The typed box above still works fully, or try speaking again.'
+
+/**
+ * The parse-time clarification banner. It is a single source
+ * because the completion seam (handleIntentChange) must recognise
+ * it exactly: until cure round 3 (2026-11-03) the banner set at
+ * parse time was never replaced when a clarification pick resolved
+ * and the run executed, so it stood over the completed answer
+ * ("More detail is needed before anything runs" above a finished
+ * ranking, measured live). The completion seam swaps it for the
+ * completion disclosure the moment the resolved intent runs.
+ */
+export const CLARIFICATION_NEEDED_NOTE =
+  'More detail is needed before anything runs. Check the understood request below.'
 
 export const RAW_TEXT_DISCLOSURE =
   'Free-text Ask sends the words you type to the wording helper. The figures still come from CivicScope.'
@@ -1013,7 +1029,14 @@ export function AskPanel({
       flowNote =
         'That question is answered from research first: the places the cited findings name are shown with their Census figures in the answer below.'
     } else if (parsed.clarificationNeeded) {
-      flowNote = 'More detail is needed before anything runs. Check the understood request below.'
+      // A clarifying parse that is already runnable executes
+      // below, at this same accept: its note is the completion
+      // disclosure, not the banner — the banner's claim ("before
+      // anything runs") would stand false over the running answer
+      // (cure round 3).
+      flowNote = canRun(parsed)
+        ? clarificationCompletionNote(parsed, queryText ?? '')
+        : CLARIFICATION_NEEDED_NOTE
     }
     if (flowNote || spokenCorrection) {
       setNote(
@@ -1035,9 +1058,52 @@ export function AskPanel({
    * arm the resolved handoff stood on screen and nothing ran
    * (FM-9 live cure, 2026-11-03).
    */
+  /**
+   * What the note says once a clarifying intent actually runs
+   * (cure round 3): the research-first copy for a handoff, the
+   * screen disclosure for a placeless sweep completion — carrying
+   * the direction and the geography level the reader's words ask
+   * for — and null for any other runnable completion, where the
+   * honest note is no banner at all. Shared by accept() (a
+   * clarifying parse that is already runnable executes at parse
+   * time) and handleIntentChange (a clarification pick resolving),
+   * so the banner retires on every path that runs.
+   */
+  function clarificationCompletionNote(next: ValidatedIntent, questionText: string): string | null {
+    if (isResearchFirstHandoff(next)) {
+      return 'That question is answered from research first: the places the cited findings name are shown with their Census figures in the answer below.'
+    }
+    if (
+      next.geographies.length === 0 &&
+      next.metricKeys.length > 0 &&
+      next.mode === 'sweep_filter'
+    ) {
+      const label = measureLabel(next.metricKeys[0]!).toLowerCase()
+      const direction = rankDirectionFromQuery(questionText) === 'descending' ? 'highest' : 'lowest'
+      const level = requestsStateLevel(questionText, next) ? ', answered at state level' : ''
+      return `This screens the whole country by ${label}, ${direction} first${level}. The understood request is below.`
+    }
+    return null
+  }
+
   function handleIntentChange(next: ValidatedIntent) {
+    const wasClarifying = intent?.clarificationNeeded === true
     setIntent(next)
-    if (canRun(next) || isResearchFirstHandoff(next)) executeNow(next)
+    if (canRun(next) || isResearchFirstHandoff(next)) {
+      // The clarification banner retires with the run it was
+      // waiting for (cure round 3): the parse set it because
+      // nothing could run yet; the pick resolved and this intent
+      // runs, so the note must say what is running now — never
+      // stand over the completed answer claiming nothing runs.
+      // Only the banner is replaced: any suffix the parse composed
+      // after it (the spoken-figure correction) rides along.
+      if (wasClarifying && note.startsWith(CLARIFICATION_NEEDED_NOTE)) {
+        const rest = note.slice(CLARIFICATION_NEEDED_NOTE.length).trim()
+        const completion = clarificationCompletionNote(next, session.counters.lastQueryText || '')
+        setNote([completion, rest || null].filter((part): part is string => part !== null).join(' '))
+      }
+      executeNow(next)
+    }
   }
 
   /**

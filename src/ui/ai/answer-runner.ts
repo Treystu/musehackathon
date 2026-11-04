@@ -1,6 +1,7 @@
 import {
   decomposeResearchCriteria,
   NO_PLACE_LOOKUP_DETAIL,
+  requestsStateLevel,
   runAnswerPipeline,
   screenCriteriaFromIntent,
   type ComposedAnswer,
@@ -55,7 +56,7 @@ import {
 } from '../../core/ai/national-screen'
 import type { StateAggregateGeography } from '../../core/ai/answer'
 import type { RunProgressSnapshot } from '../../core/ai/run-progress'
-import { STATE_NAME_BY_CODE } from '../../core/sweep/states'
+import { buildStatePartitions, STATE_NAME_BY_CODE } from '../../core/sweep/states'
 import type { CountyIndex, CountyGroup } from '../../core/zcta-county-index'
 import type { MuseProvider, ValidatedIntent } from '../../core/ai/provider'
 import type { StageId } from './session-store'
@@ -891,9 +892,48 @@ export async function composeAnswerForRequest(input: {
   // there), and this runner holds the county index — a named county
   // must expand here or the gate below would strand exactly the
   // questions the county cure serves.
-  const resolved = input.countyIndex
+  const countyCompleted = input.countyIndex
     ? expandCountyGeographies(input.resolved, input.intent, input.countyIndex)
     : input.resolved
+  // The state-unit shape (cure round 3, 2026-11-03): the question
+  // names the STATE as its subject and no geography at all ("which
+  // state has the oldest population?"), so the caller's resolution
+  // carries no state aggregates — it builds them only for named
+  // state geographies, and a sweep names none. Supply every state's
+  // aggregate from the place index's own partition of the loaded
+  // rows: buildStatePartitions covers every enumerated ZCTA (a gap
+  // falls back to its prefix's majority state within the same
+  // pass), so the pipeline's state stage forms one aggregate per
+  // state and the ranking runs over state figures — never the
+  // silent downgrade to a national ZIP screen the live probe
+  // recorded (33,791 ZIP places, youngest first, for the
+  // oldest-population question).
+  let stateAggregates = countyCompleted.stateAggregates
+  if (
+    input.placeIndex &&
+    input.intent.geographies.length === 0 &&
+    requestsStateLevel(input.queryText, input.intent)
+  ) {
+    const stateByZip = new Map<string, string>()
+    for (const [zip, record] of input.placeIndex.byZip) stateByZip.set(zip, record.state)
+    const partitions = buildStatePartitions(
+      input.rows.map((row) => row.zcta),
+      stateByZip,
+    )
+    stateAggregates = [
+      ...partitions.map((partition) => ({
+        geography: partition.label,
+        label: partition.label,
+        state: partition.code,
+        zctas: partition.zctas,
+      })),
+      ...stateAggregates,
+    ]
+  }
+  const resolved =
+    stateAggregates === countyCompleted.stateAggregates
+      ? countyCompleted
+      : { ...countyCompleted, stateAggregates }
   if (resolved.unresolvable) return null
   const timings: Record<string, number> = {}
   const stack = input.stack === false ? null : defaultStack(input.stack ?? undefined)

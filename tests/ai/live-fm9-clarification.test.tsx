@@ -214,17 +214,24 @@ describe('live FM-9: Q1 through the clarification panel to a screen card', () =>
       research: false,
     })
     expect(answer?.status).toBe('verified')
-    // The screen's ranking contract: ascending by the retained
-    // measure, so the figure order itself is the observable.
-    expect(answer?.places.map((p) => p.name)).toEqual(['Youngstown, OH', 'Midway, KS', 'Old Town, ME'])
+    // The screen's ranking contract, as cure round 3 (2026-11-03)
+    // changed it: the order follows the QUESTION's direction, read
+    // from the reader's words at the answer layer. This traversal
+    // composes with no place index, so no state aggregates can
+    // form and the terminal is the ZIP screen — ordered oldest
+    // first for "oldest", where round 2 asserted the ascending
+    // order the live probe showed was the defect. (With the index
+    // the same traversal terminates at state level; that terminal
+    // is pinned in live-fm9-round3.test.tsx.)
+    expect(answer?.places.map((p) => p.name)).toEqual(['Old Town, ME', 'Midway, KS', 'Youngstown, OH'])
     expect(answer?.places.map((p) => p.figures.find((f) => f.key === 'median_age')?.value)).toEqual([
-      34, 47, 58,
+      58, 47, 34,
     ])
 
     render(<AnswerCard answer={answer!} />)
     const text = container.textContent ?? ''
-    expect(text.indexOf('Youngstown, OH')).toBeLessThan(text.indexOf('Midway, KS'))
-    expect(text.indexOf('Midway, KS')).toBeLessThan(text.indexOf('Old Town, ME'))
+    expect(text.indexOf('Old Town, ME')).toBeLessThan(text.indexOf('Midway, KS'))
+    expect(text.indexOf('Midway, KS')).toBeLessThan(text.indexOf('Youngstown, OH'))
   })
 })
 

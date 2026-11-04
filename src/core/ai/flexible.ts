@@ -309,6 +309,23 @@ export function buildFlexiblePacketText(request: FlexibleDraftRequest): string {
     lines.push('RESEARCH FINDINGS (cited):')
     for (const claim of claims) lines.push(`- ${claim.text}`)
   }
+  // The findings-only shape's naming instruction (Q6 round 4,
+  // 2026-11-04): when no place could be recorded from the
+  // findings, the screen-outcome line above states that no place
+  // was recorded — and on the live run-1 shape the drafter read
+  // it as an instruction to name none, twice, and the completion
+  // lane returned null onto the strict dead end while the
+  // findings' text discussed places throughout. The findings ARE
+  // the material for this shape: the completion names the places
+  // they put forward, each under the model basis the rules below
+  // already assign to any place the research did not record.
+  if (request.researchPlaces.length === 0 && claims.length > 0) {
+    lines.push(
+      'The findings above discuss places in their text: name the places they put forward ' +
+        'for the stated criteria in the places list, in "City, State" form where the ' +
+        'findings give the state.',
+    )
+  }
   if (request.sources.length > 0) {
     lines.push('SOURCES:')
     for (const source of request.sources.slice(0, PACKET_CLAIM_LIMIT)) {

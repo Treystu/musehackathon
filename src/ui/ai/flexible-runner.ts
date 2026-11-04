@@ -149,8 +149,20 @@ export async function composeFlexibleCompletion(input: {
       candidate.places.length === 0 &&
       (validationContext.researchNamedPlaces.length > 0 || request.claims.length > 0)
     ) {
+      // The gap names the packet's ACTUAL shape (Q6 round 4,
+      // 2026-11-04): when the names record is empty and the
+      // material is the findings' text alone — the live run-1
+      // shape, whose mentions all fragmented at extraction — the
+      // K0 wording asserted a premise the drafter could see was
+      // false ("the research named places") and gave it nothing
+      // to act on; both drafts named no place and the lane
+      // returned null onto the strict dead end. The findings
+      // shape's gap instructs the one move that completes it:
+      // name the places the findings themselves put forward.
       failures.push(
-        'the completion named no places, though the research named places for the stated criteria',
+        validationContext.researchNamedPlaces.length > 0
+          ? 'the completion named no places, though the research named places for the stated criteria'
+          : 'the completion named no places, though the research findings discuss places for the stated criteria — name the places the findings put forward, in "City, State" form where the findings give the state',
       )
     }
     return failures

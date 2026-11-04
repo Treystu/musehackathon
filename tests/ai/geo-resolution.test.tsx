@@ -398,11 +398,18 @@ describe('B6: Midwest resolves to the Census region, disclosed — never the Wyo
   })
 
   it('an unserved region name is disclosed as not served at that granularity', () => {
+    // CHANGED (named-area cure, 2026-11-04): the specimen region
+    // was "Pacific Northwest", which gained a confirmed reading in
+    // the named-region gazetteer (WA + OR) and now resolves at step
+    // 3b — pinned in named-area.test.tsx. "Great Plains" carries no
+    // gazetteer entry and pins the protected behavior unchanged: a
+    // region with no servable definition is disclosed as not served
+    // at that granularity, never matched to a same-named place.
     const resolved = resolveAnswerGeographies(
-      intent({ geographies: ['Pacific Northwest'] }),
+      intent({ geographies: ['Great Plains'] }),
       PLACE_INDEX,
     )
-    expect(resolved.unresolvedGeographies).toEqual(['Pacific Northwest'])
+    expect(resolved.unresolvedGeographies).toEqual(['Great Plains'])
     expect(resolved.geographyDisclosures[0]).toContain('does not serve at region level')
   })
 })

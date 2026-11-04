@@ -164,7 +164,10 @@ export function detectAreaMention(queryText: string | undefined): string | null 
   // "you named" line quotes the reader's own words, not the
   // gazetteer's canonical form.
   const lower = queryText.toLowerCase().replace(/\s+/g, ' ')
-  for (const key of Object.keys(REGION_INTERPRETATIONS)) {
+  // Longest first: "San Francisco Bay Area" contains "Bay Area",
+  // and the mention the reader wrote is the longer one.
+  const keys = Object.keys(REGION_INTERPRETATIONS).sort((a, b) => b.length - a.length)
+  for (const key of keys) {
     const at = lower.indexOf(key)
     if (at < 0) continue
     const before = at === 0 ? ' ' : lower[at - 1]!

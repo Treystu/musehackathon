@@ -202,10 +202,12 @@ const REGION_STATES: Readonly<Record<string, readonly string[]>> = {
 /**
  * Region-shaped names with no Census definition this tool can serve
  * at region level. They are disclosed as not served at that
- * granularity rather than matched to a same-named place.
+ * granularity rather than matched to a same-named place. A name
+ * leaves this set when it gains a confirmed reading in the
+ * named-region gazetteer (core/ai/area-mention.ts) — "pacific
+ * northwest" did, 2026-11-04, and resolves at step 3b below.
  */
 const UNSERVED_REGIONS: ReadonlySet<string> = new Set([
-  'pacific northwest',
   'southwest',
   'southeast',
   'northwest',

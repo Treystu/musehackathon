@@ -678,6 +678,32 @@ export const SCREENED_RESEARCH_CANDIDATE_CAP = 10
  */
 export const BREADTH_BATCH_SIZE = 50
 
+/**
+ * How many breadth roster batches may be in flight at once
+ * (breadth concurrency, 2026-11-03 — the follow-up the breadth
+ * build's gate dossier named, ordered by the owner the same day:
+ * "Ship as is then optimize so it doesn't take so long!").
+ * Measured datum: the first live full-Texas breadth run (1,282
+ * places, 27 sequential batches) took about 50 minutes of wall
+ * time, ~111 s per batch — sequential order was never the
+ * constraint's purpose, only snapshot ordering and breaker
+ * discipline, and both survive concurrency when results APPLY
+ * in roster order (see the batch loop): the pool changes when
+ * calls happen, never how many (27 total, exactly one attempt
+ * per batch) or what a merged prefix means. The bound is 6:
+ * at the measured per-batch latency it projects a full-Texas
+ * run into the ~10-minute class, and six simultaneous research
+ * calls is the instantaneous load of roughly six simultaneous
+ * visitors, which the deployment already carries in aggregate
+ * by design. Larger bounds buy minutes against a thinner
+ * margin when a failure burst meets the shared breaker (5
+ * consecutive failures -> 30 s cooldown, global across
+ * visitors); 4 projected ~13 minutes and missed the class.
+ * Design gate: Jev proceed / destructive 0.10 / advances 0.96,
+ * PROCEED under Jev gate policy v1.
+ */
+export const BREADTH_BATCH_CONCURRENCY = 6
+
 /* ------------------------------------------------------------------ */
 /* Stage 2: screen                                                     */
 /* ------------------------------------------------------------------ */
@@ -3974,6 +4000,16 @@ export interface AnswerPipelineInput {
    * they travel beside the intent, like researchQuery always has.
    */
   researchCriteria?: readonly string[]
+  /**
+   * Breadth batch concurrency seam: how many roster batches may
+   * be in flight at once in a breadth run. Absent = the shipped
+   * bound (BREADTH_BATCH_CONCURRENCY). The seam exists for the
+   * equivalence proof (the concurrency pins run the same fixture
+   * at 1 — the sequential spec — and at the shipped bound and
+   * compare terminals); result application is in roster order at
+   * any value, so the value changes timing, never standings.
+   */
+  breadthConcurrency?: number
   /** Research-first extraction seam; defaults to the deterministic prose pattern. */
   candidateExtractor?: CandidateExtractor
   /** Research-first resolution seam; defaults to exact row-name matching. */
@@ -4589,6 +4625,12 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // assessment structure over material, never a new failure
     // mode. Design gate: Jev proceed / destructive 0.08 /
     // advances 0.95, PROCEED under Jev gate policy v1.
+    // Concurrency follow-up (2026-11-03, owner: "Ship as is
+    // then optimize so it doesn't take so long!"): the batches
+    // run through a bounded pool and apply in roster order —
+    // see BREADTH_BATCH_CONCURRENCY and the batch loop below.
+    // Gate: Jev proceed / destructive 0.10 / advances 0.96,
+    // PROCEED under Jev gate policy v1.
     const breadthShape = !firstResearchFailed
       ? breadthShapeFor({
           queryText: input.queryText ?? input.researchQuery,
@@ -4665,24 +4707,73 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           })
         }
         emitBreadthProgress()
-        for (const batch of batches) {
+        // Bounded concurrency with roster-order application
+        // (2026-11-03): a pool of workers keeps up to
+        // BREADTH_BATCH_CONCURRENCY batches in flight, but a
+        // batch's yield MERGES only when every roster predecessor
+        // has merged — a batch that finishes early waits in its
+        // slot. Merging is the only place batch order is
+        // observable (mergeResearchStages concatenates prose and
+        // appends deduped claims/sources in merge order), so
+        // applying in roster order makes the merged stage — and
+        // every progress snapshot, each emitted at an applied
+        // batch boundary — exactly the sequential run's at the
+        // same applied count; the pool changes timing, never
+        // content. A failed batch settles its slot empty: its
+        // places stay unassessed, successors are never blocked
+        // beyond the slot, and the counts state the coverage.
+        // Exactly one attempt per batch at any bound — the total
+        // research calls are the sequential run's, compressed in
+        // time, never multiplied.
+        const batchSlots: (ResearchStageResult | null)[] = batches.map(() => null)
+        const batchSettled = batches.map(() => false)
+        let batchesApplied = 0
+        const applySettledPrefix = () => {
+          while (batchesApplied < batches.length && batchSettled[batchesApplied]) {
+            const stage = batchSlots[batchesApplied]
+            if (stage) batchStage = mergeResearchStages(batchStage, stage)
+            batchesApplied++
+            batchesDone = batchesApplied
+            emitBreadthProgress()
+          }
+        }
+        const runBatch = async (index: number): Promise<void> => {
+          const batch = batches[index]!
           try {
             const result = await input.provider!.research(
               { queryText: breadthQuery, places: batch.map((p) => p.name) },
               signal,
             )
-            batchStage = mergeResearchStages(batchStage, {
+            batchSlots[index] = {
               prose: result.prose,
               sources: result.sources.map((s) => ({ title: s.title, url: s.url })),
               claims: claimsFromResearch(result),
-            })
+            }
           } catch {
             // The batch's places stay unassessed; the run
             // continues and the counts state the coverage.
+            batchSlots[index] = null
           }
-          batchesDone++
-          emitBreadthProgress()
+          batchSettled[index] = true
+          applySettledPrefix()
         }
+        const concurrency = Math.min(
+          batches.length,
+          Math.max(1, Math.floor(input.breadthConcurrency ?? BREADTH_BATCH_CONCURRENCY)),
+        )
+        let nextBatchToLaunch = 0
+        const workers: Promise<void>[] = []
+        for (let w = 0; w < concurrency; w++) {
+          workers.push(
+            (async () => {
+              while (nextBatchToLaunch < batches.length) {
+                const index = nextBatchToLaunch++
+                await runBatch(index)
+              }
+            })(),
+          )
+        }
+        await Promise.all(workers)
         research = mergeResearchStages(firstResearch, batchStage)
         const standings = deriveBreadthPlaces(
           { displaySet, claims: research.claims, criterion: breadthShape.criterion },

@@ -66,6 +66,7 @@ import {
   type GeographyGateFailureContext,
   type GeographyGateSpec,
 } from '../../core/ai/geography-gate'
+import { regionInterpretationFor } from '../../core/ai/area-mention'
 import type { ZctaPoint } from '../../core/map/centroids'
 import {
   createHttpFlexibleTransport,
@@ -392,6 +393,52 @@ export function resolveAnswerGeographies(
         `${trimmed} names a region this tool does not serve at region level, ` +
           'so it was not matched to a place with the same name.',
       )
+      continue
+    }
+    // 3b. Named regions with a confirmed reading (named-area cure,
+    // 2026-11-04): the gazetteer regions of core/ai/area-mention.ts —
+    // the panel's area sync confirms one of these readings before
+    // anything runs, and the membership resolves here from the
+    // shipped indexes: county-precise regions through the county
+    // index (every ZCTA assigned to its Census county), state-set
+    // regions through the place index like a Census region above.
+    // A county-precise region with no county index in hand is
+    // unresolved rather than widened to its state — the widening
+    // is exactly the failure this step exists to replace.
+    const interpretation = regionInterpretationFor(trimmed)
+    if (interpretation) {
+      let added = 0
+      if (interpretation.counties) {
+        if (countyIndex) {
+          for (const county of interpretation.counties) {
+            const group = countyIndex.counties.find(
+              (c) => c.censusName === county.name && c.state === county.state,
+            )
+            if (!group) continue
+            for (const zip of group.zips) {
+              zctas.add(zip)
+              added++
+            }
+          }
+        }
+      } else if (placeIndex) {
+        added = interpretation.states.flatMap((s) => addStateZctas(s)).length
+      }
+      if (added === 0) {
+        unresolvedGeographies.push(trimmed)
+      } else {
+        const membership = interpretation.counties
+          ? `its ${interpretation.counties.length} counties: ${interpretation.counties
+              .map((c) => c.name.replace(/ County$/, ''))
+              .join(', ')}`
+          : `the states of ${interpretation.states
+              .map((code) => STATE_NAME_BY_CODE[code] ?? code)
+              .join(' and ')}`
+        geographyDisclosures.push(
+          `${trimmed} was read as ${interpretation.name} — ${membership} — ` +
+            'and the results cover that region.',
+        )
+      }
       continue
     }
 

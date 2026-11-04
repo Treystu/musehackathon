@@ -46,6 +46,11 @@ import {
   rescueNationalScreen,
   stateCodeForGeography,
 } from '../../core/ai/national-screen'
+import {
+  areaMentionCoveredBy,
+  detectAreaMention,
+  regionInterpretationFor,
+} from '../../core/ai/area-mention'
 import { rerouteSimilarityToNearFrame } from '../../core/ai/near-frame'
 import { rerouteGateShape } from '../../core/ai/geography-gate'
 import { STATE_NAME_BY_CODE } from '../../core/sweep/states'
@@ -778,6 +783,10 @@ export function AskPanel({
   const setCoverageNote = (value: string) => session.setPanel({ coverageNote: value })
   const research = panel.research
   const setResearch = (value: PanelResearchState) => session.setPanel({ research: value })
+  const areaSync = panel.areaSync
+  const setAreaSync = (
+    value: { mention: string; interpretation: ReturnType<typeof regionInterpretationFor> } | null,
+  ) => session.setPanel({ areaSync: value })
   /**
    * Single frame ownership (indicator lifecycle cure, 2026-11-02):
    * once the answer layer has adopted THIS run — a request object
@@ -922,6 +931,10 @@ export function AskPanel({
     spokenTranscript?: string,
     queryText?: string,
   ): ValidatedIntent | null {
+    // A new parse supersedes the previous question's area sync; the
+    // settle point below sets it again only when this question
+    // raises one (named-area cure, 2026-11-04).
+    setAreaSync(null)
     let check = validateIntent(result.intent)
     let degradedDemographic = false
     // Research-first degrade (FM-9, owner ruling 2026-11-03): a parse
@@ -953,6 +966,18 @@ export function AskPanel({
     // before anything runs. See core/ai/national-screen.ts. The rescue
     // reads only the reader's words, so it also covers a reply whose
     // shape failed validation — a malformed reply cannot widen it.
+    // Named-area detection (named-area cure, 2026-11-04): a
+    // region/area mention in the reader's own words that the parse
+    // carries no geography for. Read once, on the words as written
+    // (the detector needs the capitals), and consulted by every
+    // seam below that could otherwise widen the question to the
+    // whole country or run it unconfirmed: the rescue refuses its
+    // placeless completion while a mention stands (inside
+    // rescueNationalScreen), the parsed-intent completion and the
+    // research-first handoff are skipped, and the clarification
+    // panel's area sync proposes the interpretation for
+    // confirmation before anything runs.
+    const areaMention = detectAreaMention(queryText)
     let parsed: ValidatedIntent
     let rescued: ValidatedIntent | null = null
     if (!check.ok) {
@@ -970,10 +995,27 @@ export function AskPanel({
         queryText,
       )
       if (!rescued) {
-        setNote('That request cannot be run as asked. Try the manual search below.')
-        return null
+        // A schema-invalid reply over a question that names an area
+        // is not a dead end either: the area sync needs only the
+        // reader's words, so the question settles into the same
+        // clarification the valid-parse path reaches — the panel
+        // names the area and proposes its interpretation — instead
+        // of the refusal note.
+        if (areaMention) {
+          parsed = {
+            mode: 'lookup',
+            geographies: [],
+            metricKeys: [],
+            filters: [],
+            clarificationNeeded: true,
+          }
+        } else {
+          setNote('That request cannot be run as asked. Try the manual search below.')
+          return null
+        }
+      } else {
+        parsed = rescued
       }
-      parsed = rescued
     } else {
       // One answer: the flag is stamped by its single owner, so the gate
       // below and ExplainOnAsk read the same runnability.
@@ -1058,7 +1100,17 @@ export function AskPanel({
       )
       if (gateRerouted) parsed = withRunnability(gateRerouted)
     }
-    if (!rescued && parsed.clarificationNeeded && !degradedDemographic) {
+    // The mention stands when no geography in the settled parse
+    // covers it (the parse dropped it, or never had it). While it
+    // stands, the two completions that could run the question
+    // without the reader confirming the area are both skipped:
+    // the parsed-intent completion (its placeless branch is the
+    // national screen under another door) and the research-first
+    // handoff (which would run unconfirmed). The question reaches
+    // the clarification panel, whose area sync is the confirmation.
+    const areaSyncStands =
+      areaMention !== null && !areaMentionCoveredBy(areaMention, parsed.geographies)
+    if (!rescued && parsed.clarificationNeeded && !degradedDemographic && !areaSyncStands) {
       const completed = completeParsedBoundedScreen(parsed)
       if (completed) {
         parsed = completed
@@ -1066,7 +1118,7 @@ export function AskPanel({
       }
     }
     let handedOff: ValidatedIntent | null = null
-    if (!rescued && parsed.clarificationNeeded && onAnswerRequest) {
+    if (!rescued && parsed.clarificationNeeded && onAnswerRequest && !areaSyncStands) {
       handedOff = researchFirstHandoff(parsed, queryText)
       if (handedOff) parsed = handedOff
     }
@@ -1115,6 +1167,15 @@ export function AskPanel({
       if (spokenCorrection) setNote(SPOKEN_NUMBER_CORRECTION_NOTE)
       return parsed
     }
+    // The area sync state for the panel below: set exactly when
+    // this question settles into a clarification with an uncovered
+    // area mention standing; null for every other outcome, so a
+    // sync can never outlive the question that raised it.
+    setAreaSync(
+      areaSyncStands && parsed.clarificationNeeded && !canRun(parsed) && !handedOff
+        ? { mention: areaMention!, interpretation: regionInterpretationFor(areaMention!) }
+        : null,
+    )
     setIntent(parsed)
     let flowNote: string | null = null
     if (rescued) {
@@ -1191,6 +1252,10 @@ export function AskPanel({
     const wasClarifying = intent?.clarificationNeeded === true
     setIntent(next)
     if (canRun(next) || isResearchFirstHandoff(next)) {
+      // A run settles the area sync too: the confirmed region (or
+      // any other resolution) is what runs, and the sync's question
+      // is answered by the run itself.
+      setAreaSync(null)
       // The clarification banner retires with the run it was
       // waiting for (cure round 3): the parse set it because
       // nothing could run yet; the pick resolved and this intent
@@ -1720,6 +1785,7 @@ export function AskPanel({
           {!canRun(intent) && !isResearchFirstHandoff(intent) ? (
             <ClarificationPanel
               intent={intent}
+              areaSync={areaSync}
               candidates={clarificationCandidatesFor(
                 intent,
                 clarificationCandidates?.metricKeys ?? [],

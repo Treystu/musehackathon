@@ -5,6 +5,7 @@ import {
   type ModalState,
 } from '../../core/ai/decision-branches'
 import type { ResearchSource, ValidatedIntent } from '../../core/ai/provider'
+import type { RegionInterpretation } from '../../core/ai/area-mention'
 import type { ProxyError } from '../../core/ai/proxy-errors'
 import type { GeneralAnswerData } from './general-runner'
 
@@ -72,6 +73,15 @@ export interface PanelState {
   executionNote: string
   coverageNote: string
   research: PanelResearchState
+  /**
+   * The area sync for the current question (named-area cure,
+   * 2026-11-04): the region/area mention the reader named that the
+   * parse could not carry, with its leading interpretation when the
+   * gazetteer has one. The clarification panel renders it as the
+   * confirmation that must settle before anything runs. Null when
+   * the current question names no unresolved area.
+   */
+  areaSync: { mention: string; interpretation: RegionInterpretation | null } | null
 }
 
 /**
@@ -251,6 +261,7 @@ export function initialPanelState(): PanelState {
     executionNote: '',
     coverageNote: '',
     research: { status: 'idle' },
+    areaSync: null,
   }
 }
 

@@ -5,6 +5,7 @@ import {
 } from '../../core/ai/intent-edit'
 import { canRun } from '../../core/ai/intent-schema'
 import { costDefaultMeasure } from '../../core/ai/national-screen'
+import type { RegionInterpretation } from '../../core/ai/area-mention'
 import type { ValidatedIntent } from '../../core/ai/provider'
 import { measureLabel } from './plain-labels'
 
@@ -47,10 +48,22 @@ export function ClarificationPanel({
   candidates,
   onResolve,
   onRemovePlace,
+  areaSync,
 }: {
   intent: ValidatedIntent
   candidates: ClarificationCandidates
   onResolve: (next: ValidatedIntent) => void
+  /**
+   * The area sync (named-area cure, 2026-11-04): the region/area
+   * mention the reader named that the parse could not carry, with
+   * its leading interpretation when the gazetteer has one. While
+   * it stands, the panel's first job is the confirmation — the
+   * owner asked for exactly this sync ("asked if bay area was in
+   * California to confirm first") — and no pick may resolve the
+   * question placelessly around it: a measure on its own would
+   * screen the whole country, which is not the area named.
+   */
+  areaSync?: { mention: string; interpretation: RegionInterpretation | null } | null
   /**
    * Removes a parse-held place from inside the panel (item-16 cure
    * C3). Optional: hosts that do not wire it keep the held places
@@ -61,6 +74,9 @@ export function ClarificationPanel({
   const [geographies, setGeographies] = useState<string[]>([])
   const [metricKeys, setMetricKeys] = useState<string[]>([])
   const [error, setError] = useState('')
+  // Why a pick was refused under the area sync (the measure-only
+  // trap): stated where the reader acted, in the hint's place.
+  const [areaBlock, setAreaBlock] = useState('')
   // Latched once this panel has resolved: the parent unmounts the
   // panel on resolve, but a still-mounted instance (a test harness,
   // a slow parent) must never fire a second run for the same picks.
@@ -103,15 +119,20 @@ export function ClarificationPanel({
   // still missing, in plain words. A disabled button with no hint was
   // half of the F-C defect — the reader could not tell why. Under C2
   // the hint is also the F-C disclosure line in the runnable state.
-  const incompleteHint = canResolve
-    ? runsWithDefault
-      ? `No measure chosen, so this runs on ${measureLabel(DOMAIN_DEFAULT_MEASURE).toLowerCase()} — the cost measure this tool uses when none is named.`
-      : null
-    : mergedGeographies.length === 0 && mergedMetricKeys.length === 0
-      ? 'Pick a place and a measure, or a measure on its own to screen the whole country.'
-      : intent.mode === 'compare' && mergedGeographies.length < 2
-        ? 'Comparing needs two places — pick one more place to run these choices.'
-        : 'These choices cannot run yet — a place and a measure that can screen are both needed.'
+  // Under the area sync the generic hints mislead (they offer the
+  // whole-country measure pick the sync exists to refuse); the
+  // sync section and the areaBlock line carry the guidance there.
+  const incompleteHint = areaSync
+    ? null
+    : canResolve
+      ? runsWithDefault
+        ? `No measure chosen, so this runs on ${measureLabel(DOMAIN_DEFAULT_MEASURE).toLowerCase()} — the cost measure this tool uses when none is named.`
+        : null
+      : mergedGeographies.length === 0 && mergedMetricKeys.length === 0
+        ? 'Pick a place and a measure, or a measure on its own to screen the whole country.'
+        : intent.mode === 'compare' && mergedGeographies.length < 2
+          ? 'Comparing needs two places — pick one more place to run these choices.'
+          : 'These choices cannot run yet — a place and a measure that can screen are both needed.'
 
   /**
    * Runs the merged picks if — and only if — they are runnable,
@@ -123,6 +144,19 @@ export function ClarificationPanel({
     if (resolvedRef.current) return
     const mergedGeos = [...intent.geographies, ...nextGeographies]
     const mergedMets = [...intent.metricKeys, ...nextMetricKeys]
+    // Area-sync guard: while an area the reader named stands
+    // unconfirmed, a resolution carrying no geography at all is
+    // the national screen — the widening the sync exists to
+    // prevent. The pick is refused with the reason stated; the
+    // confirmation above (or a place pick) is the forward path.
+    if (areaSync && mergedGeos.length === 0) {
+      setAreaBlock(
+        areaSync.interpretation
+          ? `You named ${areaSync.mention}. Confirm the area above, or pick a place — a measure on its own would screen the whole country, which is not the area you named.`
+          : `You named ${areaSync.mention}, which this tool cannot place yet — a measure on its own would screen the whole country, which is not the area you named.`,
+      )
+      return
+    }
     const core = canResolveClarification({
       mode: intent.mode,
       geographies: mergedGeos,
@@ -150,6 +184,33 @@ export function ClarificationPanel({
     if (result.ok) {
       resolvedRef.current = true
       setError('')
+      onResolve(result.intent)
+      return
+    }
+    setError(ERROR_COPY[result.error] ?? 'That choice is not valid.')
+  }
+
+  /**
+   * The area confirmation: one tap settles the interpretation and
+   * runs the question as a screen inside the region. The measure
+   * is the reader's own pick when one stands (the parse's or a
+   * toggle above), and the disclosed domain default when none
+   * does — the F-C posture, stated in the sync copy below before
+   * anything runs. resolveClarification's region rule produces
+   * the sweep; this panel only carries the reader's decision.
+   */
+  function confirmRegion() {
+    if (resolvedRef.current || !areaSync?.interpretation) return
+    const region = areaSync.interpretation
+    const mergedMets = [...intent.metricKeys, ...metricKeys]
+    const result = resolveClarification(intent, {
+      geographies: [region.geography],
+      metricKeys: mergedMets.length === 0 ? [DOMAIN_DEFAULT_MEASURE] : [...metricKeys],
+    })
+    if (result.ok) {
+      resolvedRef.current = true
+      setError('')
+      setAreaBlock('')
       onResolve(result.intent)
       return
     }
@@ -184,10 +245,51 @@ export function ClarificationPanel({
   return (
     <section aria-label="Clarify the request" className="mt-4">
       <p className="text-base text-slate-700">
-        {intent.geographies.length === 0
-          ? 'Choose a place and a measure before anything runs — or just a measure, to screen the whole country by it.'
-          : 'Choose the place and measure before anything runs.'}
+        {areaSync
+          ? 'Before anything runs, settle the area you named.'
+          : intent.geographies.length === 0
+            ? 'Choose a place and a measure before anything runs — or just a measure, to screen the whole country by it.'
+            : 'Choose the place and measure before anything runs.'}
       </p>
+      {areaSync ? (
+        <div className="mt-2">
+          <p className="text-base text-slate-700">
+            {`You named ${areaSync.mention}.`}
+          </p>
+          {areaSync.interpretation ? (
+            <>
+              <p className="mt-1 text-base text-slate-700">
+                {'Is this the area you mean?'}
+              </p>
+              <div className="mt-1 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={confirmRegion}
+                  className="min-h-[44px] rounded-full border border-slate-900 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+                >
+                  {`Yes — ${areaSync.interpretation.label}`}
+                </button>
+              </div>
+              <p className="mt-1 text-sm text-slate-700">
+                {intent.metricKeys.length === 0 && metricKeys.length === 0
+                  ? `Nothing runs until you confirm. The screen then runs inside that area, on ${measureLabel(DOMAIN_DEFAULT_MEASURE).toLowerCase()} — the cost measure this tool uses when none is named — or on a measure you pick below.`
+                  : 'Nothing runs until you confirm. The screen then runs inside that area, on the measure in this request.'}
+              </p>
+            </>
+          ) : (
+            <p className="mt-1 text-sm text-slate-700">
+              {
+                'This tool cannot place that area yet, so nothing runs on it. Rephrase with a city or state name, or ask a new question.'
+              }
+            </p>
+          )}
+          {areaBlock ? (
+            <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-700">
+              {areaBlock}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {/*
         Panel-reads-its-parse (P3 step 8, battery E6): the places the
         parse already holds are choices already made, shown as such.
@@ -250,7 +352,9 @@ export function ClarificationPanel({
         </div>
       ) : intent.geographies.length === 0 ? (
         <p className="mt-2 text-sm text-slate-700">
-          {'No candidate places for this request — pick a measure below to screen the whole country by it.'}
+          {areaSync
+            ? 'No candidate places for this request — the area named above is the place this question is about.'
+            : 'No candidate places for this request — pick a measure below to screen the whole country by it.'}
         </p>
       ) : (
         <p className="mt-2 text-sm text-slate-700">

@@ -44,6 +44,7 @@
 import { isFilterLegal, withRunnability } from './intent-schema'
 import type { ValidatedIntent } from './provider'
 import { STATE_NAME_BY_CODE } from '../sweep/states'
+import { detectAreaMention } from './area-mention'
 
 /**
  * The state a geography names, by code ("TX") or full name ("Texas"),
@@ -387,6 +388,17 @@ export function rescueNationalScreen(
     // placeless national screen, as before.
     const recovered = stateNamedInWords(queryText)
     if (recovered) return boundedScreenIntent(metricKey, [recovered])
+    // Named-area survival (owner live failure, 2026-11-04): the
+    // reader named an area the parse could not carry ("the Bay
+    // area") — no state name for the recovery above, and no
+    // geography in the reply. Widening that question to the whole
+    // country under a "No place was named" note misstates it twice
+    // over: a place WAS named, and the screen is not the one asked
+    // for. The placeless completion is refused while an area
+    // mention stands; the question keeps its clarification, where
+    // the panel's area sync proposes the interpretation for
+    // confirmation before anything runs (core/ai/area-mention.ts).
+    if (detectAreaMention(queryText)) return null
     return nationalScreenIntent(metricKey)
   }
   if (!realGeographies.every(isBoundedScreenGeography)) return null

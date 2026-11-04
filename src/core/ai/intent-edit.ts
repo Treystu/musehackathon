@@ -12,6 +12,7 @@ import {
   withRunnability,
 } from './intent-schema'
 import { nationalScreenIntent } from './national-screen'
+import { isRegionGeography } from './area-mention'
 import type { IntentMode, ValidatedIntent } from './provider'
 
 export type IntentFilter = ValidatedIntent['filters'][number]
@@ -228,6 +229,29 @@ export function resolveClarification(
     }
   }
   const metricKeys = demographic?.kind === 'screen' ? demographic.metricKeys : mergedMetricKeys
+  // Confirmed region (named-area cure, 2026-11-04): a region
+  // geography the reader confirmed in the panel's area sync is a
+  // screen scope, never a lookup target — the region is a set of
+  // places to screen, and the runner resolves its membership
+  // (core/ai/area-mention.ts, resolveAnswerGeographies). The merged
+  // picks complete as a sweep over the named geographies, on the
+  // same posture as the placeless completion below: the completion
+  // the question asked for, visible in the understood request
+  // before anything runs.
+  if (geographies.some((g) => isRegionGeography(g))) {
+    const next = { ...intent, mode: 'sweep_filter' as IntentMode, geographies, metricKeys }
+    if (
+      !canResolveClarification({
+        mode: 'sweep_filter',
+        geographies,
+        metricKeys,
+        filters: intent.filters,
+      })
+    ) {
+      return { ok: false, error: 'clarification_required' }
+    }
+    return checked(withRunnability(next))
+  }
   if (geographies.length === 0 && intent.filters.length === 0) {
     const screenKey = metricKeys.find((key) => isRankLegal(key))
     if (screenKey !== undefined) return checked(nationalScreenIntent(screenKey))

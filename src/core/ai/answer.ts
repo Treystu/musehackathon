@@ -180,6 +180,7 @@ import {
   type RunProgressSnapshot,
 } from './run-progress'
 import { isFrameSegmentText, type NearFrameContext } from './near-frame'
+import type { GeographyGateContext } from './geography-gate'
 
 /* ------------------------------------------------------------------ */
 /* Stage types                                                         */
@@ -619,6 +620,39 @@ export interface ComposedAnswer {
    * the answer's own numbers, never a rendering's recount.
    */
   breadth?: BreadthAnswer
+  /**
+   * The geography-gate record (2026-11-04): present exactly when
+   * this answer ran under a geography gate — a researched criterion
+   * classified states first and the Census screen ran bounded to
+   * the qualifying set. The gate map frames its standings (each
+   * qualifying state's cheapest screened place on the headline
+   * measure); the criteria block's gate entry and the summary lead
+   * are composed from the same record, so every surface reads one
+   * classification, never a rendering's recount.
+   */
+  geographyGate?: GeographyGateRecord
+}
+
+/**
+ * One gate record: the classification the answer ran under and the
+ * per-state standings the bounded screen produced. Standings cover
+ * every bound state, with nulls where the state has no screened row
+ * carrying the headline measure — a state the research classified
+ * but the screen could not measure is shown as such on the map,
+ * never silently dropped from the frame.
+ */
+export interface GeographyGateRecord {
+  criterionLabel: string
+  boundStates: { code: string; name: string }[]
+  classifiedStates: { code: string; name: string }[]
+  winnerState: { code: string; name: string } | null
+  standings: {
+    code: string
+    name: string
+    cheapestRent: number | null
+    cheapestPlaceName: string | null
+    cheapestZcta: string | null
+  }[]
 }
 
 /**
@@ -3486,6 +3520,15 @@ export function criterionEvidenceFor(input: {
    * criterion measured off one claim about the reference alone).
    */
   nearFrame?: (NearFrameContext & { frameCriterionLabel: string | null }) | null
+  /**
+   * The geography gate (core/ai/geography-gate.ts), when the
+   * pipeline ran under one. The classifying criterion was retired
+   * from the research list (its service is the classification, not
+   * per-place annotation), so its evidence entry is composed from
+   * the gate record below — measured BY the classification that
+   * bounded the screen, with the classification's own sources.
+   */
+  geographyGate?: GeographyGateContext | null
 }): CriterionEvidence[] {
   const evidence: CriterionEvidence[] = []
   for (const criterion of input.criteria) {
@@ -3778,6 +3821,28 @@ export function criterionEvidenceFor(input: {
       sourceUrls: [],
     })
   }
+  // Geography gate: the classifying criterion's own entry, in the
+  // reader's words (the label the pipeline retired from the
+  // research list). Its measurement is the classification itself —
+  // the research resolved the criterion into a geography set BEFORE
+  // the screen ran, and the screen ran inside that set. The shipped
+  // specimen stamped this criterion "measured" off per-place
+  // annotation claims over an unbounded national screen; the gate
+  // entry states what was actually classified, the coverage, and
+  // the bound the screen used, with the classification's sources.
+  if (input.geographyGate) {
+    const gate = input.geographyGate
+    const classifiedNames = gate.classifiedStates.map((s) => s.name).join(', ')
+    evidence.push({
+      criterion: gate.criterionLabel,
+      kind: 'research',
+      status: 'met',
+      detail: gate.winnerState
+        ? `Classified from the cited research before the Census screen ran: the research singles out ${gate.winnerState.name} for this criterion, among the ${gate.classifiedStates.length} states it classifies as meeting it (${classifiedNames}). The cost screen then ran inside ${gate.winnerState.name} alone, as the question's dependent bound asks.`
+        : `Classified from the cited research before the Census screen ran: the research classifies ${gate.classifiedStates.length} states as meeting this criterion (${classifiedNames}) and singles out no one state as the strongest, so the cost screen ran inside those ${gate.classifiedStates.length} states.`,
+      sourceUrls: gate.sources.map((s) => s.url),
+    })
+  }
   // Criterion-slot accounting (P3 step 3, battery A4): a stated
   // income the reader asks to "live well on" has no slot in any
   // layer — nothing converts it to an affordability reading — so it
@@ -4056,6 +4121,80 @@ export function rankedStateLead(
   )
 }
 
+/**
+ * The geography gate's two-part lead (drug-law specimen cure,
+ * 2026-11-04): the terminal must LEAD with the answer the question
+ * asked — the state part answered from the classification, the
+ * place part answered from the bounded screen — each carrying its
+ * evidence class in the sentence's own words ("the cited research"
+ * / "the Census figures shown"). The place part follows the shipped
+ * conclusion discipline (rankedStateLead): the strong form ("has
+ * the lowest") only when the head row's margin band is disjoint
+ * from every other bounded row's band on the headline measure;
+ * otherwise the order form (heads the set ordered by the measure,
+ * lowest first). The head row is recomputed here from the bounded
+ * rows by the screen's own ordering (value, then ZCTA), so the
+ * lead names the set's extremum, not merely the first shown place.
+ */
+export function geographyGateLead(input: {
+  gate: GeographyGateContext
+  rows: readonly AreaRow[]
+  headlineKey: string
+}): string | null {
+  const { gate } = input
+  // The state names are listed, never counted: the summary's figure
+  // validator admits only numerals from the supplied figures, so a
+  // bare count ("classifies 5 states") fails verification closed —
+  // the count lives in the gate's evidence entry instead, where
+  // numerals are the accounting's own.
+  const names = gate.classifiedStates.map((s) => s.name)
+  const classifiedNames =
+    names.length <= 2
+      ? names.join(' and ')
+      : `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`
+  const statePart = gate.winnerState
+    ? `For the question's first part, the cited research singles out ${gate.winnerState.name} as the state meeting the stated criterion most strongly.`
+    : `For the question's first part, the cited research classifies ${classifiedNames} as meeting the stated criterion and names no state as the strongest.`
+  const label = figureClauseLabel(input.headlineKey)
+  const carrying = input.rows
+    .filter((row) => {
+      const v = row.metrics[input.headlineKey]
+      return typeof v === 'number' && Number.isFinite(v)
+    })
+    .sort((a, b) => {
+      const av = a.metrics[input.headlineKey] as number
+      const bv = b.metrics[input.headlineKey] as number
+      return av - bv || a.zcta.localeCompare(b.zcta)
+    })
+  const head = carrying[0]
+  if (!head) return statePart
+  const headValue = head.metrics[input.headlineKey] as number
+  const bandOf = (row: AreaRow): { lo: number; hi: number } | null => {
+    const moe = row.moes[input.headlineKey]
+    const value = row.metrics[input.headlineKey]
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null
+    if (typeof moe !== 'number' || !Number.isFinite(moe)) return null
+    return { lo: value - Math.abs(moe), hi: value + Math.abs(moe) }
+  }
+  const headBand = bandOf(head)
+  const clear = carrying
+    .slice(1)
+    .every((row) => {
+      const band = bandOf(row)
+      if (!headBand && !band) return true
+      if (!headBand || !band) {
+        const b = (headBand ?? band) as { lo: number; hi: number }
+        const other = headBand ? (row.metrics[input.headlineKey] as number) : headValue
+        return other < b.lo || other > b.hi
+      }
+      return band.lo > headBand.hi
+    })
+  const placePart = clear
+    ? `On the Census figures shown, ${head.name} has the lowest ${label} in the qualifying set.`
+    : `On the Census figures shown, ${head.name} heads the qualifying set's places ordered by ${label}, lowest first.`
+  return `${statePart} ${placePart}`
+}
+
 export function composeAnswer(input: {
   intent: ValidatedIntent
   screen: ScreenResult
@@ -4110,6 +4249,16 @@ export function composeAnswer(input: {
    * loop below. Absent = no frame.
    */
   nearFrame?: (NearFrameContext & { frameCriterionLabel: string | null }) | null
+  /**
+   * The geography gate the pipeline ran under (core/ai/
+   * geography-gate.ts): the classification resolved before the
+   * screen. Compose stamps its evidence entry, renders its claims
+   * as the classification's cited evidence, leads the summary with
+   * the two-part answer, and records the gate (with per-state
+   * standings from the bounded rows) on the answer for the map.
+   * Absent = no gate.
+   */
+  geographyGate?: GeographyGateContext | null
 }): ComposedAnswer {
   const { intent, screen } = input
   // Pull mode (research-first): candidates arrived from research, so
@@ -4246,7 +4395,41 @@ export function composeAnswer(input: {
     else generalClaims.push(claim)
   }
 
-  const sources = (input.research?.sources ?? []).filter((s) => citedUrls.has(s.url))
+  // Geography gate: the classification claims ride as general
+  // claims — they classify STATES, so they are attributed to no
+  // screened place — through the same hygiene every researched
+  // claim passes (citation gate, banned constructions, working
+  // narration), against the classification's own source list. They
+  // are the cited evidence behind the gate's evidence entry and the
+  // summary's state part.
+  if (input.geographyGate) {
+    for (const rawClaim of input.geographyGate.claims) {
+      if (rawClaim.sourceUrls.length === 0) {
+        droppedClaims.push(rawClaim)
+        continue
+      }
+      const filtered = filterBannedSentences(rawClaim.text)
+      for (const droppedSentence of filtered.dropped) {
+        droppedClaims.push({ text: droppedSentence, sourceUrls: [...rawClaim.sourceUrls] })
+      }
+      if (filtered.prose.length === 0) continue
+      const hygienic = filterWorkingNarration(filtered.prose, input.geographyGate.sources)
+      for (const droppedSegment of hygienic.dropped) {
+        droppedClaims.push({ text: droppedSegment, sourceUrls: [...rawClaim.sourceUrls] })
+      }
+      if (hygienic.prose.length === 0) continue
+      for (const url of rawClaim.sourceUrls) citedUrls.add(url)
+      generalClaims.push({ text: hygienic.prose, sourceUrls: [...rawClaim.sourceUrls] })
+    }
+  }
+
+  const sources = [
+    ...new Map(
+      [...(input.research?.sources ?? []), ...(input.geographyGate?.sources ?? [])].map(
+        (s) => [s.url, s] as const,
+      ),
+    ).values(),
+  ].filter((s) => citedUrls.has(s.url))
   const status: AnswerStatus = screen.rows.length === 0 ? 'empty' : 'verified'
   // Status is provisional until verifyAnswer runs; runAnswerPipeline
   // is the entry point that stamps the final status.
@@ -4266,6 +4449,7 @@ export function composeAnswer(input: {
     failedResearchCriteria: input.research?.failedCriteria,
     researchReAsked: input.research?.reAsked,
     nearFrame: input.nearFrame ?? null,
+    geographyGate: input.geographyGate ?? null,
   })
   // Summary-claim rule (P3 step 4, battery A1/B5/C5/D2): the
   // "meet all of the stated Census criteria" sentence renders ONLY
@@ -4337,7 +4521,7 @@ export function composeAnswer(input: {
     boundDisplayKeys.length > 0
       ? degradedComparisonLead({ mode: intent.mode, places, keys: boundDisplayKeys })
       : null
-  const summary =
+  const baseSummary =
     input.summaryOverride ??
     (screen.rows.length === 0
       ? 'No place in the loaded data meets all of the stated Census criteria.'
@@ -4352,6 +4536,50 @@ export function composeAnswer(input: {
               : input.rankedLead
                 ? `${input.rankedLead} The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`
                 : `The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`)
+  // Geography gate: the summary LEADS with the two-part answer the
+  // question asked (geographyGateLead) — the shipped specimen's
+  // summary led with the national screen's framing and left the
+  // state part to a footnote. The gate lead replaces nothing: the
+  // composed base summary follows it, with its criteria clauses.
+  const gateHeadlineKey = intent.metricKeys[0] ?? decomposedKeys[0] ?? 'median_gross_rent'
+  const gateLead =
+    input.geographyGate && screen.rows.length > 0 && !input.summaryOverride && !input.pullMode
+      ? geographyGateLead({ gate: input.geographyGate, rows: screen.rows, headlineKey: gateHeadlineKey })
+      : null
+  const summary = gateLead ? `${gateLead} ${baseSummary}` : baseSummary
+  // The gate record for the answer: per-state standings from the
+  // bounded rows (the cheapest screened row per bound state on the
+  // headline measure), the frame the gate map draws.
+  const gateRecord: GeographyGateRecord | undefined = input.geographyGate
+    ? {
+        criterionLabel: input.geographyGate.criterionLabel,
+        boundStates: input.geographyGate.boundStates.map((s) => ({ ...s })),
+        classifiedStates: input.geographyGate.classifiedStates.map((s) => ({ ...s })),
+        winnerState: input.geographyGate.winnerState ? { ...input.geographyGate.winnerState } : null,
+        standings: input.geographyGate.boundStates.map((state) => {
+          let cheapest: AreaRow | null = null
+          for (const row of screen.rows) {
+            if (stateSuffixOf(row.name) !== state.code) continue
+            const value = row.metrics[gateHeadlineKey]
+            if (typeof value !== 'number' || !Number.isFinite(value)) continue
+            if (
+              !cheapest ||
+              value < (cheapest.metrics[gateHeadlineKey] as number) ||
+              (value === cheapest.metrics[gateHeadlineKey] && row.zcta < cheapest.zcta)
+            ) {
+              cheapest = row
+            }
+          }
+          return {
+            code: state.code,
+            name: state.name,
+            cheapestRent: cheapest ? (cheapest.metrics[gateHeadlineKey] as number) : null,
+            cheapestPlaceName: cheapest ? cheapest.name : null,
+            cheapestZcta: cheapest ? cheapest.zcta : null,
+          }
+        }),
+      }
+    : undefined
   // Candidate direction (Lane A9 FM-4): on the research-first path
   // (pullMode — the places ARE the research's candidates), a place
   // whose serving claims all describe it as not meeting the stated
@@ -4413,6 +4641,7 @@ export function composeAnswer(input: {
     geographyDisclosures: [...(input.geographyDisclosures ?? [])],
     stateMethod: input.stateSupported ? STATE_AGGREGATION_METHOD : null,
     ...(input.rankedLead ? { rankedConclusion: true } : {}),
+    ...(gateRecord ? { geographyGate: gateRecord } : {}),
   }
 }
 
@@ -4622,6 +4851,25 @@ export interface AnswerPipelineInput {
    * frame; every shipped shape is untouched.
    */
   nearFrame?: NearFrameContext | null
+  /**
+   * The geography gate (core/ai/geography-gate.ts), built by the
+   * caller when a researched criterion classifies a coarser
+   * geography than the Census extremum the question seeks ("what
+   * state has the most relaxed drug laws — and the lowest cost of
+   * living in that state?"). The caller has already resolved the
+   * classification (research FIRST, before this pipeline runs) and
+   * supplies the bound through geographyZctas (the qualifying
+   * states' ZCTAs), the same seam the near frame uses. When
+   * supplied, the pipeline: retires the classifying criterion from
+   * the per-place research list (its service is the classification,
+   * accounted in the evidence from the gate record), takes the
+   * screen path (the gate owns the ordering — research-first's
+   * place-naming flow is not this shape's consumer), and hands the
+   * gate to compose for its evidence entry, its two-part summary
+   * lead, and the answer's gate record. Absent = no gate; every
+   * shipped shape is untouched.
+   */
+  geographyGate?: GeographyGateContext | null
 }
 
 function emptyAnswerFields(): Pick<
@@ -4714,6 +4962,22 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       researchCriteria.splice(frameIndex, 1)
     }
   }
+  // Geography gate: the classifying criterion retires from the
+  // research list the same way — the classification already ran
+  // (the caller resolved it before this pipeline), and per-place
+  // research over the bounded candidates must not re-ask it as an
+  // annotation (the specimen's degenerate loop: the criterion
+  // "served" by annotating places it played no part in selecting).
+  // Its evidence entry is composed from the gate record in
+  // criterionEvidenceFor.
+  if (input.geographyGate) {
+    const gateIndex = researchCriteria.findIndex(
+      (c) =>
+        c.id === input.geographyGate!.criterionId &&
+        c.label === input.geographyGate!.criterionLabel,
+    )
+    if (gateIndex >= 0) researchCriteria.splice(gateIndex, 1)
+  }
   const countyRequested = requestsCountyLevel(input.queryText ?? input.researchQuery, input.intent)
   const unsupportedGeography = countyRequested ? 'county' : null
   const geographyLevel: AnswerGeographyLevel = countyRequested
@@ -4791,6 +5055,11 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     !namedResearchCriterion &&
     hasUnclaimedCriterionPhrase(input.queryText ?? input.researchQuery ?? '', researchCriteria)
   const researchFirst =
+    // A supplied geography gate owns this run's ordering: the
+    // classification already resolved into the caller's bound, and
+    // the screen path below is its consumer — the research-first
+    // place-naming flow never engages under a gate.
+    !input.geographyGate &&
     researchCriteria.some((c) => !c.decomposedMetricKey) &&
     screenProbe.criteria.length === 0 &&
     (input.intent.metricKeys.length === 0 ||
@@ -5949,6 +6218,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     nearFrame: input.nearFrame
       ? { ...input.nearFrame, frameCriterionLabel }
       : undefined,
+    geographyGate: input.geographyGate ?? undefined,
   })
   const composedWithFailures =
     research?.failedCriteria?.length

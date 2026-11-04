@@ -51,6 +51,14 @@ import {
   detectNearFrame,
   type NearFrameContext,
 } from '../../core/ai/near-frame'
+import {
+  buildGeographyGateContext,
+  classifyStatesFromResearch,
+  detectGeographyGate,
+  gateBoundZctas,
+  gateClassificationQueryText,
+  type GeographyGateContext,
+} from '../../core/ai/geography-gate'
 import type { ZctaPoint } from '../../core/map/centroids'
 import {
   createHttpFlexibleTransport,
@@ -1031,6 +1039,66 @@ export async function composeAnswerForRequest(input: {
         ],
       }
     : resolved
+  // Geography gate (core/ai/geography-gate.ts): the question's
+  // first criterion is a researched classification of STATES and
+  // its second part seeks a Census extremum inside the state(s)
+  // the classification returns ("what state has the most relaxed
+  // drug laws — and the lowest cost of living in that state?").
+  // The classification resolves FIRST — one research pass, before
+  // any pipeline run — and the screen then runs bounded to the
+  // qualifying states through the same resolution seam the near
+  // frame uses. Detection is structural (the module's contract);
+  // an empty classification, a failed research call, or a bound
+  // with no rows in the loaded set leaves the shipped path
+  // standing, exactly as the near frame behaves when it cannot
+  // form. The near frame and the gate never co-engage (the frame
+  // needs a named anchor geography; the gate needs none named).
+  let geographyGate: GeographyGateContext | null = null
+  let gateBound: ReadonlySet<string> | null = null
+  if (input.research && !nearFrame) {
+    const gateSpec = detectGeographyGate({
+      queryText: input.queryText,
+      intent: input.intent,
+      researchCriteria,
+    })
+    if (gateSpec) {
+      const classificationStarted = performance.now()
+      const classificationResult = await input.provider
+        .research(
+          { queryText: gateClassificationQueryText(input.queryText, gateSpec) },
+          input.signal ?? new AbortController().signal,
+        )
+        .catch(() => null)
+      timings.classification = performance.now() - classificationStarted
+      if (classificationResult) {
+        const context = buildGeographyGateContext({
+          spec: gateSpec,
+          classification: classifyStatesFromResearch(classificationResult.prose, gateSpec),
+          sources: classificationResult.sources,
+        })
+        if (context) {
+          const bound = gateBoundZctas(rows, context.boundStates)
+          if (bound.size > 0) {
+            geographyGate = context
+            gateBound = bound
+          }
+        }
+      }
+    }
+  }
+  const boundResolved: ResolvedAnswerGeographies =
+    geographyGate && gateBound
+      ? {
+          ...frameResolved,
+          zctas: gateBound,
+          geographyDisclosures: [
+            geographyGate.winnerState
+              ? `The cost screen ran inside ${geographyGate.winnerState.name} only: the cited research singles out ${geographyGate.winnerState.name} for the question's first criterion, among the ${geographyGate.classifiedStates.length} states it classifies as meeting it.`
+              : `The cost screen ran inside the ${geographyGate.boundStates.length} states the cited research classifies as meeting the question's first criterion: ${geographyGate.boundStates.map((s) => s.name).join(', ')}.`,
+            ...frameResolved.geographyDisclosures,
+          ],
+        }
+      : frameResolved
   // Set when any assembly below had to shorten steering text to
   // fit the research route's ceiling; disclosed on the researched
   // criteria's evidence lines before the answer returns.
@@ -1067,15 +1135,20 @@ export async function composeAnswerForRequest(input: {
     runAnswerPipeline({
       intent: input.intent,
       rows,
-      geographyZctas: frameResolved.zctas.size > 0 ? frameResolved.zctas : undefined,
+      geographyZctas: boundResolved.zctas.size > 0 ? boundResolved.zctas : undefined,
       // The pipeline reads the SAME resolution result this runner
       // resolved from: its per-geography failures and its region
       // readings ride in, so the card's geography lines can never
       // contradict the resolution the card was composed from.
       unresolvedGeographies: frameResolved.unresolvedGeographies,
-      geographyDisclosures: frameResolved.geographyDisclosures,
+      geographyDisclosures: boundResolved.geographyDisclosures,
       stateAggregates: frameResolved.stateAggregates,
       nearFrame,
+      // The geography gate, when the classification resolved above:
+      // the pipeline retires the classifying criterion, takes the
+      // screen path under the bound (geographyZctas), and composes
+      // the gate's evidence, lead, and record.
+      geographyGate,
       // Screen-only (the preliminary staging): no research query,
       // so no research stage runs; the criteria decomposition
       // still reaches the pipeline exactly as on the full path,
@@ -1152,7 +1225,7 @@ export async function composeAnswerForRequest(input: {
   if (
     input.research &&
     input.onPreliminary &&
-    frameResolved.zctas.size > 0 &&
+    boundResolved.zctas.size > 0 &&
     breadthShapeFor({
       queryText: input.queryText,
       intent: input.intent,
@@ -1163,8 +1236,16 @@ export async function composeAnswerForRequest(input: {
     const screened = await runPipeline(input.queryText, false, true)
     timings.preliminary = performance.now() - preliminaryStarted
     if (screened.status !== 'blocked') {
+      // The gate's classifying criterion is NOT pending at this
+      // stage: its classification research already landed (it ran
+      // before this preliminary was composed), and the screen-only
+      // composition carries its real gate evidence entry. Every
+      // other research-served criterion is still in flight and is
+      // re-labeled pending below.
       const pendingLabels = new Set(
-        researchCriteria.filter((c) => !c.decomposedMetricKey).map((c) => c.label),
+        researchCriteria
+          .filter((c) => !c.decomposedMetricKey && c.label !== geographyGate?.criterionLabel)
+          .map((c) => c.label),
       )
       const kept = screened.criterionEvidence.filter(
         (entry) => !(entry.kind === 'research' && pendingLabels.has(entry.criterion)),

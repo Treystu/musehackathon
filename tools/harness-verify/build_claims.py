@@ -18,7 +18,7 @@ from pathlib import Path
 TARGETS = {
     "meta-client": (
         "src/core/ai/meta-client.ts",
-        [(44, 68), (313, 330), (725, 750), (781, 814)],
+        [(44, 68), (313, 348), (725, 765), (781, 835)],
         [
             {
                 "id": "mc-model",
@@ -44,7 +44,7 @@ TARGETS = {
     ),
     "answer": (
         "src/core/ai/answer.ts",
-        [(1748, 1833), (2209, 2221), (2460, 2471)],
+        [(4058, 4143), (5181, 5193), (5465, 5476)],
         [
             {
                 "id": "ans-figure-drift",

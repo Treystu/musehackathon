@@ -177,6 +177,51 @@ describe('weighted figures: population-weighted mean, RMS margin labelled approx
       { county: 'Boulder County, CO', metricKey: 'median_gross_rent', reason: 'partial_weight_coverage' },
     ])
   })
+
+  it('the weighted margin is the population-weighted RMS at real ACS scale (regression battery 2026-11-04, R-C)', () => {
+    // A Maine-shaped member set for a state aggregate of median
+    // age: seven ZIP areas whose published margins span the real
+    // B01002_001M range (0.9 for the populous areas, up to 9.4 for
+    // the smallest). The battery on production 7dc627e read Maine
+    // 45 +/-5 where an earlier verification on 9a75c2f recorded
+    // +/-1; the aggregation code is byte-identical across those
+    // builds, and this computation over the full ACS 2023 5-year
+    // ZCTA pull reproduces the battery's six readings exactly
+    // (ME 45 +/-5, PR 44 +/-2, VT 44 +/-6, FL 43 +/-3, NH 43 +/-4,
+    // WV 43 +/-8) — the +/-1 family came from a partial data
+    // surface, not from this rule. The pin holds the rule itself:
+    // the margin is the population-weighted root-mean-square of
+    // the member margins — not their mean (3.76 here), not an
+    // RMS diluted by the member count (0.82), not the maximum.
+    const members: Array<[string, number, number, number]> = [
+      // zcta, median_age, population, margin
+      ['04101', 44, 52000, 0.9],
+      ['04401', 46, 31000, 1.4],
+      ['04210', 47, 12500, 2.2],
+      ['04330', 45, 8600, 3.1],
+      ['04605', 48, 4300, 4.6],
+      ['04730', 43, 2100, 6.8],
+      ['04901', 49, 950, 9.4],
+    ]
+    const assignments = new Map<string, CountyAssignment>(
+      members.map(([zcta]) => [zcta, { name: 'Maine', state: 'ME' }]),
+    )
+    const { rows } = aggregateRowsToCounties(
+      members.map(([zcta, age, population, margin]) =>
+        row(zcta, { median_age: age, population }, { median_age: margin }),
+      ),
+      assignments,
+      ['median_age'],
+    )
+    const maine = rows[0]!
+    // (44*52000 + 46*31000 + 47*12500 + 45*8600 + 48*4300 +
+    //  43*2100 + 49*950) / 111450 = 45.148...
+    expect(maine.metrics.median_age).toBeCloseTo(45.148, 3)
+    // sqrt((52000*0.81 + 31000*1.96 + 12500*4.84 + 8600*9.61 +
+    //  4300*21.16 + 2100*46.24 + 950*88.36) / 111450) = 2.156...
+    expect(maine.moes.median_age).toBeCloseTo(2.156, 3)
+    expect(maine.approximateMarginKeys).toEqual(['median_age'])
+  })
 })
 
 describe('non-aggregable figures and unassigned rows', () => {

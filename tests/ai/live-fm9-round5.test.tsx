@@ -398,6 +398,9 @@ describe('round 5 at the App seam: partial margin coverage still renders margins
     expect(text).toContain('±')
     expect(text).toContain('approx.')
     expect(pageText()).toContain('not official Census state margins')
-    expect(text).toContain('Maine state average heads the states ordered by median age, highest first.')
+    // The lead's noun matches the ranked set's contents
+    // (regression battery 2026-11-04, R-E): the District of
+    // Columbia aggregate ranks inside this set.
+    expect(text).toContain('Maine state average heads the states and other Census geographies ordered by median age, highest first.')
   }, 180_000)
 })

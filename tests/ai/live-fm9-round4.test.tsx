@@ -382,8 +382,11 @@ describe('round 4 at the App seam: the rendered list is the ranked state aggrega
     // aggregate margin is wide (the uniform defaults), so the
     // bands overlap and the conclusion states the order — the
     // strong form is pinned at the runner seam above, where the
-    // bands carry it.
-    expect(text).toContain('Maine state average heads the states ordered by median age, highest first.')
+    // bands carry it. The noun is "states and other Census
+    // geographies" (regression battery 2026-11-04, R-E): this
+    // traversal's ranked set carries the District of Columbia
+    // aggregate, so the lead names the set it actually ranks.
+    expect(text).toContain('Maine state average heads the states and other Census geographies ordered by median age, highest first.')
     // No territory member place renders anywhere in the answer;
     // the territories are present only as the disclosure.
     for (const member of ['Charlotte Amalie', 'Christiansted', 'Frederiksted', 'Kingshill', 'Pago Pago', 'Hagatna', 'Saipan']) {
@@ -404,7 +407,7 @@ describe('round 4 at the App seam: the rendered list is the ranked state aggrega
     // sits beyond the rendered head — the pair's orders differ at
     // every position the two cards share, which is the direction
     // acceptance.
-    expect(text).toContain('Utah state average heads the states ordered by median age, lowest first.')
+    expect(text).toContain('Utah state average heads the states and other Census geographies ordered by median age, lowest first.')
     expect(text.indexOf('Utah state average')).toBeLessThan(text.indexOf('Alabama state average'))
     expect(text).not.toContain('Maine state average')
     for (const member of ['Charlotte Amalie', 'Christiansted', 'Frederiksted', 'Kingshill', 'Pago Pago', 'Hagatna', 'Saipan']) {

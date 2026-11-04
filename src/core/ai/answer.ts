@@ -459,6 +459,22 @@ export interface ComposedAnswer {
    */
   consideredNotMeeting?: string[]
   /**
+   * How many of the answer's places meet ALL the stated criteria
+   * (regression battery 2026-11-04): present only when the question
+   * carries at least one researched (non-decomposed) criterion —
+   * the Census criteria are met by construction on the places the
+   * screen kept, so the count turns on the researched criteria: a
+   * place counts only when its standing on EVERY researched
+   * criterion is positive (placeStanding). A place a criterion
+   * characterizes both ways (mixed), against (negative), or not
+   * at all (unassessed — including every place beyond the research
+   * cap) is assessed, not meeting. The card's overflow line reads
+   * this count instead of claiming every shown place meets the
+   * stated criteria while a criterion stands partial. Absent =
+   * no researched criterion, and the shipped line stands.
+   */
+  placesMeetingAllCriteria?: number
+  /**
    * Research-first candidates that RESOLVED to Census places
    * outside the geography the question asks about (Lane A10
    * FM-15): resolution is national, so a Michigan question's
@@ -3330,8 +3346,23 @@ const NARRATION_PROGRESS_RE =
  */
 const NARRATION_INTERIM_RE =
   /\b(?:initial|early|preliminary)\s+(?:results?|findings?)\b[^.!?]*\b(?:points?|suggests?|indicates?|shows?|leans?|favou?rs?)\b/i
+/**
+ * The meet-all alternative in this pattern is the verdict family
+ * (regression battery 2026-11-04, the Colorado specimen): a
+ * research claim asserting that a named SET of places meets all
+ * the criteria is a verdict over the candidate set, and compose —
+ * not research prose — owns that accounting (the card's summary
+ * and criterion evidence state it from the assessed set itself).
+ * The shipped pattern read only "meets all ... stated/reader's
+ * criteria"; the specimen's "meet ALL the criteria" and the
+ * research prompt's own "meet ALL of the reader's criteria" forms
+ * escaped it, so the prose list rendered as the answer's verdict
+ * while naming places the run never assessed (and omitting one
+ * it did). The family now covers meet/meets/meeting with the
+ * optional of/the/your/stated qualifiers in either order.
+ */
 const NARRATION_META_RE =
-  /\bresearch covered the first\b|\bwere not researched\b|\bnot addressed here\b|\bno web support found for\b|\bper pre-screening\b|\bfigures are shown separately\b|\bnot from the web\b|\bmeets all (?:of the |the )?(?:reader's |reader |stated )criteria\b|\bthe web (?:does not|doesn't|cannot|can't) support\b/i
+  /\bresearch covered the first\b|\bwere not researched\b|\bnot addressed here\b|\bno web support found for\b|\bper pre-screening\b|\bfigures are shown separately\b|\bnot from the web\b|\bmeet(?:s|ing)? all (?:of )?(?:the )?(?:reader's |reader |stated |your )?(?:stated )?criteria\b|\bthe web (?:does not|doesn't|cannot|can't) support\b/i
 const RAW_METRIC_KEY_RE =
   /\b(?:median_gross_rent|median_household_income|median_home_value|median_rent_burden_pct|no_internet_access)\b/
 
@@ -3707,6 +3738,12 @@ export function criterionEvidenceFor(input: {
    */
   nearFrame?: (NearFrameContext & { frameCriterionLabel: string | null }) | null
   /**
+   * The ZCTAs the research stage actually assessed, when supplied
+   * (see composeAnswer's field of the same name): the near frame's
+   * per-place coverage denominator. Absent = every shown place.
+   */
+  researchedZctas?: ReadonlySet<string>
+  /**
    * The geography gate (core/ai/geography-gate.ts), when the
    * pipeline ran under one. The classifying criterion was retired
    * from the research list (its service is the classification, not
@@ -3953,15 +3990,34 @@ export function criterionEvidenceFor(input: {
       // untouched: a state screen's criterion is served by its
       // cited sources as a set, and per-place tightening there
       // would falsify shapes the batteries pin.
-      const assessed = input.places.filter((place) =>
+      //
+      // The coverage denominator is the set research ASSESSED
+      // (regression battery 2026-11-04): the research stage runs
+      // over the capped candidate subset, so when the screen
+      // outgrows the cap the places beyond it were never research
+      // candidates at all — counting them against the criterion
+      // made the measured stamp unreachable and reported the
+      // cap's shadow as the criterion's partialness. When the
+      // caller supplies the assessed set, coverage reads against
+      // it (the cap itself is disclosed by the answer's cap
+      // line); unsupplied, every shown place is the denominator,
+      // exactly as shipped.
+      const denominator =
+        input.researchedZctas && input.researchedZctas.size > 0
+          ? input.places.filter((place) => input.researchedZctas!.has(place.zcta))
+          : input.places
+      const assessed = denominator.filter((place) =>
         serving.some((claim) => claimMentionsPlace(claim, place)),
       ).length
-      if (assessed === input.places.length) {
+      const capped = denominator.length < input.places.length
+      if (denominator.length > 0 && assessed === denominator.length) {
         evidence.push({
           criterion: criterion.label,
           kind: 'research',
           status: 'met',
-          detail: 'Served by the cited sources shown with the places.',
+          detail: capped
+            ? 'Served by the cited sources shown with the places research assessed.'
+            : 'Served by the cited sources shown with the places.',
           sourceUrls,
         })
       } else if (assessed > 0) {
@@ -3969,8 +4025,9 @@ export function criterionEvidenceFor(input: {
           criterion: criterion.label,
           kind: 'research',
           status: 'partially_measured',
-          detail:
-            'The cited sources shown with the places speak to this criterion for some of the places shown, not all of them, so it is measured only for the places whose entries cite it.',
+          detail: capped
+            ? `The cited sources shown with the places speak to this criterion for ${assessed} of the ${denominator.length} places research assessed, so it is measured only for those places.`
+            : 'The cited sources shown with the places speak to this criterion for some of the places shown, not all of them, so it is measured only for the places whose entries cite it.',
           sourceUrls,
         })
       } else {
@@ -3978,8 +4035,9 @@ export function criterionEvidenceFor(input: {
           criterion: criterion.label,
           kind: 'research',
           status: 'partially_measured',
-          detail:
-            'A cited source speaks to this criterion for the area generally, but not for any individual place shown, so it is not measured place by place.',
+          detail: capped
+            ? 'A cited source speaks to this criterion for the area generally, but not for any individual place research assessed, so it is not measured place by place.'
+            : 'A cited source speaks to this criterion for the area generally, but not for any individual place shown, so it is not measured place by place.',
           sourceUrls,
         })
       }
@@ -4334,6 +4392,28 @@ export function rankedStateLead(
   const label = figureClauseLabel(rankKey)
   const winnerValue = winner.metrics[rankKey]
   if (typeof winnerValue !== 'number' || !Number.isFinite(winnerValue)) return null
+  // The ranked set is the Census geographies the partitions formed
+  // — the fifty states plus any district or territory whose
+  // aggregate formed (Puerto Rico and the District of Columbia
+  // rank inside the shipped lists). The lead's noun follows the
+  // contents (regression battery 2026-11-04, R-E): "states" when
+  // every ranked row is a state, "states and other Census
+  // geographies" when a district or territory ranks among them.
+  // The aggregate rows carry their state code on the row (the
+  // aggregator's `state` field, or its synthetic key's segment).
+  const NON_STATE_CODES: ReadonlySet<string> = new Set(['AS', 'DC', 'GU', 'MP', 'PR', 'VI'])
+  const codeOf = (row: AreaRow): string | null => {
+    const carried = (row as { state?: unknown }).state
+    if (typeof carried === 'string' && carried.length > 0) return carried
+    const keyed = /^county:([A-Z]{2}):/.exec(row.zcta)
+    return keyed ? keyed[1]! : null
+  }
+  const setNoun = rows.some((row) => {
+    const code = codeOf(row)
+    return code !== null && NON_STATE_CODES.has(code)
+  })
+    ? 'states and other Census geographies'
+    : 'states'
   const bandOf = (row: AreaRow): { lo: number; hi: number } | null => {
     const moe = row.moes[rankKey]
     const value = row.metrics[rankKey]
@@ -4361,11 +4441,11 @@ export function rankedStateLead(
   if (clear) {
     return (
       `On the Census figures shown, ${winner.name} has the ` +
-      `${direction === 'descending' ? 'highest' : 'lowest'} ${label} of the states shown.`
+      `${direction === 'descending' ? 'highest' : 'lowest'} ${label} of the ${setNoun} shown.`
     )
   }
   return (
-    `On the Census figures shown, ${winner.name} heads the states ordered by ${label}, ` +
+    `On the Census figures shown, ${winner.name} heads the ${setNoun} ordered by ${label}, ` +
     `${direction === 'descending' ? 'highest first' : 'lowest first'}.`
   )
 }
@@ -4498,6 +4578,21 @@ export function composeAnswer(input: {
    * loop below. Absent = no frame.
    */
   nearFrame?: (NearFrameContext & { frameCriterionLabel: string | null }) | null
+  /**
+   * The ZCTAs the research stage actually assessed (the capped
+   * candidate subset), when the caller ran one. The near frame's
+   * per-place evidence rule reads its coverage against THIS set:
+   * research never sees places beyond the candidate cap, so
+   * stamping coverage against every shown place conflates the
+   * screen's size with the research's reach and makes the
+   * measured stamp unreachable on any run whose screen outgrows
+   * the cap (regression battery 2026-11-04: 58 screened places,
+   * research capped at 10, "School quality" stamped partially
+   * measured no matter what the assessed places' findings said).
+   * Absent = the research covered every shown place (the
+   * research-first shapes), and the shipped denominator stands.
+   */
+  researchedZctas?: ReadonlySet<string>
   /**
    * The geography gate the pipeline ran under (core/ai/
    * geography-gate.ts): the classification resolved before the
@@ -4743,6 +4838,7 @@ export function composeAnswer(input: {
     failedResearchCriteria: input.research?.failedCriteria,
     researchReAsked: input.research?.reAsked,
     nearFrame: input.nearFrame ?? null,
+    researchedZctas: input.researchedZctas,
     geographyGate: input.geographyGate ?? null,
     geographyGateFailure: input.geographyGateFailure ?? null,
   })
@@ -4915,6 +5011,21 @@ export function composeAnswer(input: {
       consideredNotMeeting = notMeeting
     }
   }
+  // The meeting count (regression battery 2026-11-04): computed
+  // over the FINAL place list, after the FM-4 partition, from the
+  // same standings the breadth surfaces read — a place meets all
+  // the stated criteria only when every researched criterion's
+  // standing for it is positive. The Census side needs no test
+  // here: on the screen path the listed places are the screen's
+  // survivors, and on the pull path the partition above already
+  // removed the places research described as not meeting.
+  const externalCriteria = researchCriteria.filter((c) => !c.decomposedMetricKey)
+  const placesMeetingAllCriteria =
+    externalCriteria.length > 0
+      ? rankedPlaces.filter((place) =>
+          externalCriteria.every((criterion) => placeStanding(place.claims, criterion) === 'positive'),
+        ).length
+      : undefined
   return {
     status,
     stage: 'compose',
@@ -4924,6 +5035,7 @@ export function composeAnswer(input: {
     screenedCount: screen.inScopeCount,
     places: rankedPlaces,
     ...(consideredNotMeeting ? { consideredNotMeeting } : {}),
+    ...(placesMeetingAllCriteria !== undefined ? { placesMeetingAllCriteria } : {}),
     generalClaims,
     sources,
     summary,
@@ -6547,6 +6659,12 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   // On the county path the subset is the county aggregates, so
   // research is told county names, never member ZCTAs.
   let research: ResearchStageResult | null = null
+  // The candidate subset the screen-path research stage assesses
+  // (stage 3's cap): compose's per-place coverage rules read
+  // against it, so a screen larger than the cap does not stamp
+  // its size onto the researched criteria (see composeAnswer's
+  // researchedZctas field).
+  let researchedZctas: ReadonlySet<string> | undefined
   const candidateCapApplied = effectiveScreen.rows.length > SCREENED_RESEARCH_CANDIDATE_CAP
   if (firstResearchDown) {
     // The research-first attempt above measured a total research
@@ -6577,6 +6695,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // that did not run).
     input.onStage?.('research', researchSubject)
     const capped = effectiveScreen.rows.slice(0, SCREENED_RESEARCH_CANDIDATE_CAP)
+    researchedZctas = new Set(capped.map((row) => row.zcta))
     if (input.onProgress && researchPassCriteria.length > 0) {
       // Research begins over a candidate set the screen has already
       // fixed: the initial snapshot carries those places with every
@@ -6662,6 +6781,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     nearFrame: input.nearFrame
       ? { ...input.nearFrame, frameCriterionLabel }
       : undefined,
+    researchedZctas,
     geographyGate: input.geographyGate ?? undefined,
     geographyGateAttribution: input.geographyGateAttribution,
     geographyGateFailure: input.geographyGateFailure ?? undefined,

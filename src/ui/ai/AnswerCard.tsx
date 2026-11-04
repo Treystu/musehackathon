@@ -682,12 +682,21 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
                 sourceVisibility={sourceVisibility}
               />
             ))}
-          {answer.places.length > ANSWER_CARD_PLACE_LIMIT && (
-            <p className="mt-3 text-base text-slate-600">
-              {count.format(answer.places.length - ANSWER_CARD_PLACE_LIMIT)} more places meet
-              the stated criteria — all of them are in the screening table below.
-            </p>
-          )}
+          {answer.places.length > ANSWER_CARD_PLACE_LIMIT &&
+            (answer.placesMeetingAllCriteria !== undefined &&
+            answer.placesMeetingAllCriteria < answer.places.length ? (
+              <p className="mt-3 text-base text-slate-600">
+                {count.format(answer.placesMeetingAllCriteria)} of the{' '}
+                {count.format(answer.places.length)} places in the screening table meet all of
+                the stated criteria; the rest are shown with the measures and findings assessed
+                for each of them.
+              </p>
+            ) : (
+              <p className="mt-3 text-base text-slate-600">
+                {count.format(answer.places.length - ANSWER_CARD_PLACE_LIMIT)} more places meet
+                the stated criteria — all of them are in the screening table below.
+              </p>
+            ))}
           {answer.generalClaims.length > 0 && (
             <div className="mt-4 border-t border-slate-100 pt-2">
               {answer.generalClaims.map((claim, i) => (

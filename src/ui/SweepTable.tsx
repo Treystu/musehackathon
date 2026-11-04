@@ -268,7 +268,16 @@ export function SweepTable({
         onScroll={(e) => setStart(Math.floor((e.target as HTMLDivElement).scrollTop / ROW_HEIGHT) - OVERSCAN)}
         className="mt-3 max-h-[560px] overflow-auto panel"
       >
-        <table className="w-full min-w-[760px] text-left text-base">
+        {/*
+          `aria-rowcount` lives on the table element: ARIA allows it
+          there and not on tbody (a11y evidence 2026-11-04: axe
+          aria-allowed-attr, critical, on every composed-answer
+          surface, from the tbody placement this replaces). With the
+          spacer rows it gives assistive technology the real size of
+          the set, so "33,791 rows" is not silently reduced to
+          "60 rows" by the windowing.
+        */}
+        <table className="w-full min-w-[760px] text-left text-base" aria-rowcount={visible.length}>
           <caption className="px-3 py-2 text-left text-sm text-slate-600">
             US ZIP code tabulation areas, American Community Survey 5-year estimates. {formatMetricNumber(visible.length, 'count')}
             areas in total, scrolled rather than truncated, so every ZIP code is reachable.
@@ -281,12 +290,7 @@ export function SweepTable({
               </th>
             </tr>
           </thead>
-          {/*
-            `aria-rowcount` and the spacer rows give assistive technology the
-            real size of the set, so "33,791 rows" is not silently reduced to
-            "60 rows" by the windowing.
-          */}
-          <tbody aria-rowcount={visible.length}>
+          <tbody>
             {start > 0 ? (
               <tr aria-hidden="true" style={{ height: start * ROW_HEIGHT }}>
                 <td colSpan={COLUMNS.length + 1} />

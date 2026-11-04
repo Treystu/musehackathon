@@ -104,7 +104,18 @@ export function Comparison({
               purpose, so it is not rebuilt as stacked cards.
             */}
             <div className="relative mt-3">
-              <div className="overflow-x-auto">
+              {/*
+                The scroller is keyboard-focusable (a11y evidence
+                2026-11-04: axe scrollable-region-focusable, serious,
+                mobile width — the table overflows at phone width and
+                a keyboard user had no way to scroll it). Its name is
+                the table's own caption subject.
+              */}
+              <div
+                className="overflow-x-auto"
+                tabIndex={0}
+                aria-label="Comparison table, scrollable sideways"
+              >
               {/*
                 table-words + a min-width on the label column: the global
                 overflow-wrap:anywhere rule let auto layout crush this

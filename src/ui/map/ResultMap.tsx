@@ -551,6 +551,16 @@ export function ResultMap({
    * the choropleth renderer and the county renderer, where a mixed
    * answer's plain places get exactly the scoped treatment.
    */
+  // Feature semantics (a11y evidence 2026-11-04: axe
+  // aria-prohibited-attr, serious, 25 nodes — the features carried
+  // aria-label + tabindex with no role, so their names were never
+  // exposed): a place feature ACTIVATES on click (it selects the
+  // place), so it carries role="button" with Enter and Space
+  // activation, the sibling maps' established pattern
+  // (QualifyingPlacesMap, ProgressivePlacesMap). The county
+  // aggregate paths in renderCounty do not activate — focus and
+  // hover only highlight — so they carry role="img": a labelled
+  // graphic, honestly not a control.
   const renderPlaceElement = (place: ResultMapPlace) => {
     if (load.kind !== 'ready' || !load.geometry || !fit) return null
     const feature = load.geometry!.features.get(place.zcta)
@@ -588,12 +598,19 @@ export function ResultMap({
           fill={place.figure ? colorForValue(place.figure.value, min, max) : NO_DATA_COLOR}
           stroke="#ffffff"
           strokeWidth={1.5}
+          role="button"
           tabIndex={0}
           data-result-place={place.key}
           aria-label={`${place.name}, ${place.zcta}: ${place.formatted ?? 'no figure for this measure'}`}
           onMouseEnter={() => setActiveKey(place.key)}
           onFocus={() => setActiveKey(place.key)}
           onClick={() => onSelect?.(place.zcta)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              onSelect?.(place.zcta)
+            }
+          }}
         />
       )
     }
@@ -607,6 +624,7 @@ export function ResultMap({
         fill={place.figure ? colorForValue(place.figure.value, min, max) : NO_DATA_COLOR}
         stroke={isActive ? '#0f172a' : '#ffffff'}
         strokeWidth={isActive ? 3 : 1}
+        role="button"
         tabIndex={0}
         data-result-place={place.key}
         aria-label={`${place.name}, ${place.zcta}: ${place.formatted ?? 'no figure for this measure'}`}
@@ -615,7 +633,10 @@ export function ResultMap({
         onFocus={() => setActiveKey(place.key)}
         onClick={() => onSelect?.(place.zcta)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') onSelect?.(place.zcta)
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onSelect?.(place.zcta)
+          }
         }}
       />
     )
@@ -674,6 +695,7 @@ export function ResultMap({
               fill={place.figure ? colorForValue(place.figure.value, min, max) : NO_DATA_COLOR}
               stroke={isActive ? '#0f172a' : '#ffffff'}
               strokeWidth={isActive ? 3 : 1}
+              role="img"
               tabIndex={0}
               data-result-place={place.key}
               aria-label={`${place.name}: ${place.formatted ?? 'no figure for this measure'}`}
@@ -724,6 +746,7 @@ export function ResultMap({
               fillOpacity={0.85}
               stroke={isActive ? '#0f172a' : '#ffffff'}
               strokeWidth={isActive ? 3 : 1.5}
+              role="button"
               tabIndex={0}
               data-result-place={place.key}
               aria-label={`${place.name}, ${place.zcta}: ${place.formatted ?? 'no figure for this measure'}`}
@@ -732,7 +755,10 @@ export function ResultMap({
               onFocus={() => setActiveKey(place.key)}
               onClick={() => onSelect?.(place.zcta)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') onSelect?.(place.zcta)
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onSelect?.(place.zcta)
+                }
               }}
             />
           )

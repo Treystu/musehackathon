@@ -317,7 +317,7 @@ export interface CriterionPoles {
   title?: string
 }
 
-export type CriterionEvidenceStatus = 'met' | 'partially_measured' | 'not_measurable'
+export type CriterionEvidenceStatus = 'met' | 'partially_measured' | 'not_measurable' | 'pending'
 
 /**
  * The no-place lookup outcome's detail text (Lane A10 FM-18),
@@ -415,6 +415,25 @@ export interface ComposedAnswer {
   failures: string[]
   /** The researched criteria decomposed from the question, in catalog order. */
   researchCriteria: ResearchCriterion[]
+  /**
+   * True on a PRELIMINARY composition (Phase 5 staging, 2026-11-03):
+   * the deterministic screen composition the runner hands the
+   * caller before research lands, with researched criteria carried
+   * as 'pending' evidence entries. A preliminary is a stage of a
+   * run, never its terminal — the caller replaces it with the
+   * completed composition, and a run stopped mid-flight lands it
+   * only with a runNote stating it was stopped. Core compose never
+   * sets this; the UI runner stamps it.
+   */
+  preliminary?: boolean
+  /**
+   * A note about how this answer came to stand, rendered at the
+   * card's head (the stopped-run terminal: the preliminary landed
+   * because the reader halted the run, and the card says so rather
+   * than standing as a silent partial). Set by the caller, never
+   * by compose.
+   */
+  runNote?: string
   /** One evidence entry per stated criterion (Census and researched). */
   criterionEvidence: CriterionEvidence[]
   /** The candidate cap that bounds a research pass (named constant below). */

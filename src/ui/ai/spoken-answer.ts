@@ -241,6 +241,10 @@ const OUTCOME_WORDS: Readonly<Record<CriterionEvidenceStatus, string>> = {
   met: 'measured',
   partially_measured: 'partially measured',
   not_measurable: 'not measurable from available sources',
+  // Phase 5: a preliminary's pending criteria are never spoken
+  // (voice speaks terminal answers only); the word exists so the
+  // record stays exhaustive over the status union.
+  pending: 'research pending',
 }
 
 /** The spoken sentence budget: no spoken summary exceeds this. */

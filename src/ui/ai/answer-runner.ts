@@ -1,4 +1,5 @@
 import {
+  breadthShapeFor,
   decomposeResearchCriteria,
   NO_PLACE_LOOKUP_DETAIL,
   requestsStateLevel,
@@ -901,6 +902,21 @@ export async function composeAnswerForRequest(input: {
    * the initial research's, never a restarted fraction.
    */
   onProgress?: (snapshot: RunProgressSnapshot) => void
+  /**
+   * Preliminary-first staging (Phase 5, 2026-11-03; decisions
+   * recorded in RESEARCHED-CLASS-PERF.md): for a researched
+   * question with a resolved ZIP set (breadth runs excluded —
+   * their roster is research-born), the caller receives the
+   * deterministic screen composition — figures screened,
+   * researched criteria carried as 'pending' evidence — as soon
+   * as it exists, before
+   * the branch evaluation, both bookends, and the research stage
+   * run. The completed composition still returns from this
+   * function's promise as before; the preliminary is a stage of
+   * the run, never its terminal. Observation-only, like onStage:
+   * it changes nothing the run computes.
+   */
+  onPreliminary?: (answer: ComposedAnswer) => void
 }): Promise<ComposedAnswer | null> {
   // Complete the resolution with the county crosswalk before the
   // unresolvable gate: the caller resolved with the place index
@@ -1047,7 +1063,7 @@ export async function composeAnswerForRequest(input: {
   // (FM-13): the observer seam is fire-and-forget, so the runner
   // keeps the last one it forwarded.
   const lastProgress: { current: RunProgressSnapshot | null } = { current: null }
-  const runPipeline = (query: string, forwardProgress: boolean) =>
+  const runPipeline = (query: string, forwardProgress: boolean, screenOnly = false) =>
     runAnswerPipeline({
       intent: input.intent,
       rows,
@@ -1060,7 +1076,13 @@ export async function composeAnswerForRequest(input: {
       geographyDisclosures: frameResolved.geographyDisclosures,
       stateAggregates: frameResolved.stateAggregates,
       nearFrame,
-      researchQuery: input.research ? query : undefined,
+      // Screen-only (the preliminary staging): no research query,
+      // so no research stage runs; the criteria decomposition
+      // still reaches the pipeline exactly as on the full path,
+      // so the preliminary's criteria accounting names every
+      // stated criterion — the runner then re-labels the
+      // research-served entries as pending (below).
+      researchQuery: screenOnly ? undefined : input.research ? query : undefined,
       // Decomposition always reads the reader's original words, never
       // the focused research query: the focus text names modes and
       // levels ("a short public transit ride") that the criterion
@@ -1079,27 +1101,92 @@ export async function composeAnswerForRequest(input: {
       countyAssignments: input.countyIndex
         ? input.countyIndex.assignmentsFor(rows.map((row) => row.zcta))
         : undefined,
-      onStage: input.onStage
-        ? (stage, subject) =>
-            input.onStage!(
-              stage === 'screen'
-                ? 'screening'
-                : stage === 'research'
-                  ? 'researching'
-                  : stage === 'compose'
-                    ? 'composing'
-                    : 'verifying',
-              subject ?? null,
-            )
-        : undefined,
+      onStage: screenOnly
+        ? undefined
+        : input.onStage
+          ? (stage, subject) =>
+              input.onStage!(
+                stage === 'screen'
+                  ? 'screening'
+                  : stage === 'research'
+                    ? 'researching'
+                    : stage === 'compose'
+                      ? 'composing'
+                      : 'verifying',
+                subject ?? null,
+              )
+          : undefined,
       onProgress:
-        forwardProgress && input.onProgress
+        !screenOnly && forwardProgress && input.onProgress
           ? (snapshot) => {
               lastProgress.current = snapshot
               input.onProgress!(snapshot)
             }
           : undefined,
     })
+
+  // Preliminary-first staging (Phase 5, 2026-11-03): for a
+  // place-bounded researched question, the deterministic screen
+  // composition exists in-process while research takes seconds to
+  // minutes of network time. It is composed FIRST — before the
+  // branch evaluation and both bookends, which may not block it —
+  // and handed to the caller with the research-served criteria
+  // re-labeled 'pending': the screen-only composition accounts
+  // them with no-research wording ("the lookup did not return"),
+  // which is false for a run whose research has not run yet, so
+  // those entries are replaced, never merely appended to. Census
+  // entries (screen criteria, decomposed readings, the near
+  // frame's own entry) are real measurements at this stage and
+  // stand as composed. A blocked screen composition hands over
+  // nothing: the full run's own refusal owns the terminal, as
+  // before. A throw here is defect-class (the full run executes
+  // the same deterministic stages first) and propagates to the
+  // caller's compose-failure terminal, unchanged.
+  //
+  // Scope: shapes with a resolved ZIP set in hand (place-bounded
+  // and state-screen questions). A BREADTH run (breadthShapeFor:
+  // set-form, one state, a poled criterion) is excluded — its
+  // roster is research-born, so a screen-only pass has no honest
+  // preliminary to show, and its progressive surface already
+  // exists (interim places + pass progress, Lane A7).
+  if (
+    input.research &&
+    input.onPreliminary &&
+    frameResolved.zctas.size > 0 &&
+    breadthShapeFor({
+      queryText: input.queryText,
+      intent: input.intent,
+      researchCriteria,
+    }) === null
+  ) {
+    const preliminaryStarted = performance.now()
+    const screened = await runPipeline(input.queryText, false, true)
+    timings.preliminary = performance.now() - preliminaryStarted
+    if (screened.status !== 'blocked') {
+      const pendingLabels = new Set(
+        researchCriteria.filter((c) => !c.decomposedMetricKey).map((c) => c.label),
+      )
+      const kept = screened.criterionEvidence.filter(
+        (entry) => !(entry.kind === 'research' && pendingLabels.has(entry.criterion)),
+      )
+      const keptLabels = new Set(kept.map((entry) => entry.criterion))
+      const pendingEntries = researchCriteria
+        .filter((c) => !c.decomposedMetricKey && pendingLabels.has(c.label) && !keptLabels.has(c.label))
+        .map((c) => ({
+          criterion: c.label,
+          kind: 'research' as const,
+          status: 'pending' as const,
+          detail:
+            'Research is still running for this criterion; this preliminary answer is updated when it lands.',
+          sourceUrls: [] as string[],
+        }))
+      input.onPreliminary({
+        ...screened,
+        preliminary: true,
+        criterionEvidence: [...kept, ...pendingEntries],
+      })
+    }
+  }
 
   // Branch evaluation at the screen -> research boundary (plan C7):
   // evaluated BEFORE the pipeline runs so a landed decision from an

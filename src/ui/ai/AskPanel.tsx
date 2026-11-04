@@ -578,6 +578,7 @@ export function AskPanel({
   validator = hermeticStubValidator,
   onExecute,
   onAnswerRequest,
+  onStopRun,
   onGeneralRequest,
   onAskStart,
   onVoiceModeChange,
@@ -633,6 +634,17 @@ export function AskPanel({
    * mounts), research fires in parallel with the parse, as before.
    */
   onAnswerRequest?: (intent: ValidatedIntent, queryText: string) => void
+  /**
+   * Halts the answer layer's in-flight run (Phase 5, 2026-11-03 —
+   * the normal AI-session convention): while a run is in flight
+   * the pill slot carries a Stop button in place of the removed
+   * Ask button, wired to this handler. The slot never invites a
+   * second submit (the 2026-11-02 lockout ruling stands); it
+   * offers the one action a running session should offer. Absent
+   * (standalone mounts), the slot stays empty during a run, as
+   * before.
+   */
+  onStopRun?: () => void
   /**
    * Hands a genuinely off-domain intent (plan C13: domain
    * 'off_domain' after the deterministic guards) and the reader's
@@ -1461,6 +1473,15 @@ export function AskPanel({
           {!runInFlight && (
             <button type="submit" className="btn-primary shrink-0">
               Ask
+            </button>
+          )}
+          {runInFlight && onStopRun && (
+            <button
+              type="button"
+              onClick={onStopRun}
+              className="shrink-0 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+            >
+              Stop
             </button>
           )}
         </div>

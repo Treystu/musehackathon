@@ -149,6 +149,17 @@ const ANSWER_BLOCKED_NOTE =
   'That question could not be screened as asked, so no answer was composed. The data views below still work.'
 const ANSWER_UNRESOLVED_NOTE =
   'The place named in this question could not be resolved, so no answer was composed. The data views below still work.'
+/**
+ * The stopped-run terminals (Phase 5, 2026-11-03): a run the
+ * reader halted with the Stop control lands honestly — never as
+ * a silent partial. With a preliminary composed, the card stands
+ * as the terminal carrying the stopped line (runNote) and its
+ * research-pending labels; without one, this note stands alone.
+ */
+const ANSWER_STOPPED_NOTE =
+  'Stopped — the run was halted before an answer was composed. The data views below still work.'
+const ANSWER_STOPPED_CARD_NOTE =
+  'Stopped before research finished — this is the screened preliminary answer. Criteria marked research pending were not completed.'
 
 /**
  * The bounded wait for the answer area's load waits (indicator
@@ -250,6 +261,22 @@ export default function App() {
    */
   const [askCentroids, setAskCentroids] = useState<readonly ZctaPoint[] | null | undefined>(undefined)
   const centroidsLoadStarted = useRef(false)
+  /**
+   * The preliminary answer for the in-flight request (Phase 5
+   * staging): the runner's screen composition, rendered while
+   * research runs and replaced by the completed answer at the
+   * terminal. Local display state only — the session store's
+   * answer remains the completed terminal, so voice and the other
+   * consumers never see a stage as a result.
+   */
+  const [preliminary, setPreliminary] = useState<{ id: number; answer: ComposedAnswer } | null>(null)
+  /**
+   * The current answer run's abort control (Phase 5): the Stop
+   * button and a superseding question both abort it. One entry,
+   * replaced per compose; the run clears its own entry as it
+   * settles.
+   */
+  const answerRunControl = useRef<{ id: number; controller: AbortController } | null>(null)
   /**
    * Tour dialog state. The dialog opens only when asked for (the header's
    * "How this works" button); there is no standing first-visit notice card
@@ -569,6 +596,11 @@ export default function App() {
     [],
   )
 
+  /** The Stop control's handler: halt the in-flight answer run. */
+  const stopAnswerRun = useCallback(() => {
+    answerRunControl.current?.controller.abort()
+  }, [])
+
   const handleAnswerRequest = useCallback((intent: ValidatedIntent, queryText: string) => {
     const id = ++answerRequestSeq.current
     // Adopt the run's staged-status clock (item 17): the parse began
@@ -579,6 +611,14 @@ export default function App() {
     const stageToken = sessionStore.ensureStageRun()
     answerStageTokens.current.set(id, stageToken)
     sessionStore.setStage(stageToken, 'screening')
+    // A superseding question halts the old run's work outright
+    // (Phase 5 stop discipline — the same controller the Stop
+    // control aborts) and drops its preliminary: a halted run
+    // that kept fetching would bill research nobody will read,
+    // and its landing is discarded by the sequence checks anyway.
+    answerRunControl.current?.controller.abort()
+    answerRunControl.current = null
+    setPreliminary(null)
     // A new question replaces the previous answer outright; a stale
     // card above fresh results would read as this question's answer.
     setAnswer(null)
@@ -1044,6 +1084,29 @@ export default function App() {
         })
       }
     }
+    // This run's abort control (Phase 5): registered before the
+    // compose starts so the Stop control and a superseding
+    // question can halt it from the first stage on.
+    const controller = new AbortController()
+    answerRunControl.current = { id, controller }
+    let preliminaryForRun: ComposedAnswer | null = null
+    // The stopped terminal (Phase 5): the preliminary, when one
+    // was composed, stands as the terminal carrying the stopped
+    // line and its research-pending labels — an honest halted
+    // state, never a silent partial; without one, the stopped
+    // note stands alone.
+    const landStopped = () => {
+      answerComposedIds.current.add(id)
+      setPreliminary(null)
+      if (preliminaryForRun) {
+        stampRunSummary(preliminaryForRun)
+        setAnswerNote(null)
+        setAnswer({ ...preliminaryForRun, preliminary: false, runNote: ANSWER_STOPPED_CARD_NOTE })
+      } else {
+        stampRunSummary(null)
+        setAnswerNote({ id, text: ANSWER_STOPPED_NOTE })
+      }
+    }
     const composeRun = (async () => {
       try {
         const composed = await composeAnswerForRequest({
@@ -1053,7 +1116,13 @@ export default function App() {
           resolved,
           provider: HOUSE_PROVIDER,
           research: needsResearch(queryText),
-          signal: new AbortController().signal,
+          signal: controller.signal,
+          onPreliminary: (preliminaryAnswer) => {
+            preliminaryForRun = preliminaryAnswer
+            if (answerRequestSeq.current === id) {
+              setPreliminary({ id, answer: preliminaryAnswer })
+            }
+          },
           placeIndex: placeIndex ?? null,
           countyIndex: countyIndex ?? null,
           centroids: askCentroids ?? null,
@@ -1068,7 +1137,17 @@ export default function App() {
         // (a sweep chunk landing, the place index arriving), which
         // stranded the request with nothing rendered at all.
         if (answerRequestSeq.current !== id) return
+        // Stopped while composing: the composition that settles
+        // after an abort is a degraded artifact of halted work
+        // (the pipeline tolerates research failure by design, so
+        // an aborted research stage can still resolve) — it is
+        // discarded and the stopped terminal lands instead.
+        if (controller.signal.aborted) {
+          landStopped()
+          return
+        }
         answerComposedIds.current.add(id)
+        setPreliminary(null)
         stampRunSummary(composed)
         if (composed) {
           setAnswerNote(null)
@@ -1083,6 +1162,13 @@ export default function App() {
         }
       } catch (err) {
         if (answerRequestSeq.current !== id) return
+        // Stopped while composing: an abort surfaces as a thrown
+        // abort error from the halted fetches — the stopped
+        // terminal, not a compose failure.
+        if (controller.signal.aborted) {
+          landStopped()
+          return
+        }
         // A thrown run is a terminal state with a note and a
         // diagnostics record, never a silent catch. The executed
         // views below remain available. Since the compose-
@@ -1106,6 +1192,7 @@ export default function App() {
         setAnswerNote({ id, text: ANSWER_COMPOSE_FAILED_NOTE })
       } finally {
         answerInFlightIds.current.delete(id)
+        if (answerRunControl.current?.id === id) answerRunControl.current = null
         // Only the current request's compose releases the frame
         // claim; a superseded run's settle leaves the newer run's
         // claim standing (handleAnswerRequest also resets it).
@@ -2101,6 +2188,7 @@ export default function App() {
                   figures={askFigures}
                   onExecute={executeIntentForPanel}
                   onAnswerRequest={handleAnswerRequest}
+                  onStopRun={stopAnswerRun}
                   onGeneralRequest={handleGeneralRequest}
                   onAskStart={handleAskStart}
                   onVoiceModeChange={setVoiceMode}
@@ -2227,6 +2315,38 @@ export default function App() {
                     {answerNote.text}
                   </p>
                 </section>
+              </div>
+            ) : preliminary &&
+              answerRequest &&
+              preliminary.id === answerRequest.id &&
+              (answerRequest.epoch ?? 0) === answerState.askEpoch ? (
+              <div
+                ref={setAnswerRegion}
+                tabIndex={-1}
+                data-answer-region
+                className="anim-rise mx-auto mt-6 max-w-3xl px-2"
+              >
+                {/*
+                  The preliminary (Phase 5): the screened card stands
+                  while the run continues — the staged line above it
+                  keeps the run's progress visible, and the card
+                  itself carries the preliminary banner and its
+                  research-pending criteria. The completed answer
+                  replaces it at the terminal (the branch above);
+                  a stopped run lands it as the terminal with the
+                  stopped line on the card, through the same branch.
+                */}
+                <p className="mb-3 flex items-center gap-2 text-sm text-slate-500">
+                  <StagedStatus
+                    session={sessionStore}
+                    ack={
+                      needsResearch(answerRequest.queryText)
+                        ? researchAck('the stated criteria')
+                        : 'Let me look into that.'
+                    }
+                  />
+                </p>
+                <AnswerCard answer={preliminary.answer} />
               </div>
             ) : answerRequest && (stage !== null || composeInFlight) ? (
               <div className="anim-rise mx-auto mt-6 max-w-3xl px-2">

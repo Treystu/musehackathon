@@ -294,6 +294,10 @@ const EVIDENCE_STATUS_LABELS: Readonly<Record<string, string>> = {
   met: 'measured',
   partially_measured: 'partially measured',
   not_measurable: 'not measurable from available sources',
+  // Phase 5 preliminary staging: the criterion's research has not
+  // landed yet. The label says exactly that — pending is shown as
+  // pending, never dressed as a measurement.
+  pending: 'research pending',
 }
 
 /** The per-criterion evidence list: each stated criterion with its status beside it. */
@@ -585,6 +589,17 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
       {answer.refinementNote && (
         <p role="note" className="mt-2 text-base text-slate-600">
           {answer.refinementNote}
+        </p>
+      )}
+      {answer.runNote && (
+        <p role="note" className="mt-2 text-base text-slate-600">
+          {answer.runNote}
+        </p>
+      )}
+      {answer.preliminary && (
+        <p role="note" className="mt-2 text-base text-slate-600">
+          Preliminary answer — the screened figures below are final; research is still running,
+          and criteria marked research pending will be updated when it lands.
         </p>
       )}
       {answer.verification?.wonder === 'concerns' &&

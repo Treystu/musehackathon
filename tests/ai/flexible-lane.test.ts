@@ -1044,7 +1044,7 @@ describe('K1 the resolution re-ask', () => {
     expect(answer.places.map((p) => p.name)).toContain('Tampa, FL')
   })
 
-  it('a double zero-yield stays bounded at two stage calls and keeps the honest note shape', async () => {
+  it('a double zero-yield stays bounded (stage, one re-ask, one second draw) and keeps the honest note shape', async () => {
     const stub = k1ResearchStub([
       {
         prose: 'Educators mention Traverse City, MI for its schools.',
@@ -1063,7 +1063,15 @@ describe('K1 the resolution re-ask', () => {
       queryText: 'best schools in florida',
       researchCriteria: ['best schools in florida'],
     })
-    expect(stub.calls()).toBe(2)
+    // CHANGED 2026-11-04 (Q6 round 4): the count was 2 — first
+    // stage plus the one resolution re-ask. The bounded second
+    // draw (one further stage, varied steering) now fires on a
+    // run still grounding zero with material in hand — this
+    // pin's shape exactly — bringing the total to 3 stage calls.
+    // The boundedness this pin protects is unchanged in kind:
+    // one re-ask and one second draw, never a loop, and the
+    // terminal assertions below are byte-identical.
+    expect(stub.calls()).toBe(3)
     expect(answer.status).toBe('empty')
     expect(answer.noCensusMatch).toBe(true)
     // K3 adaptation (2026-11-03): both names carry an explicit MI
@@ -1092,12 +1100,16 @@ describe('K1 the resolution re-ask', () => {
       queryText: 'best schools in florida',
       researchCriteria: ['best schools in florida'],
     })
-    // Three provider calls: the first stage, then the re-ask stage's
+    // Five provider calls: the first stage, then the re-ask stage's
     // own two attempts — researchPerCriterion's FM-11 discipline
     // retries a totally-failed stage once before it throws, and the
-    // throw is what lands here. The bound that matters is the
-    // pipeline's: ONE resolution re-ask, never a loop.
-    expect(stub.calls()).toBe(3)
+    // throw is what lands here — then the second draw's stage and
+    // its own two attempts (CHANGED 2026-11-04, Q6 round 4: the
+    // bounded second draw fires on the still-zero run, and its
+    // failure, exactly like the re-ask's, keeps the first yield
+    // untouched). The bound that matters is the pipeline's: ONE
+    // resolution re-ask and ONE second draw, never a loop.
+    expect(stub.calls()).toBe(5)
     expect(answer.status).toBe('empty')
     // K3 partition, as in the double zero-yield pin above: the
     // first yield's name is accounted as an out-of-state name

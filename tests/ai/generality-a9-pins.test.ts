@@ -633,7 +633,13 @@ describe('A9 pins — variance (FM-11: one bounded re-ask of an all-empty stage)
     // the pipeline's separate, bounded resolution mechanism, and
     // the failure record survives the merge (a criterion stays
     // failed only when both stages failed it).
-    expect(calls.n).toBe(4)
+    // CHANGED 2026-11-04 (Q6 round 4): the count is now 6 — the
+    // pipeline's bounded second draw adds its own stage call set
+    // (on this stub both its passes are down, so the stage's own
+    // FM-11 pair is what the two added calls are) after the
+    // re-ask's set. The stage-level invariant is untouched, and
+    // the failure record below still survives.
+    expect(calls.n).toBe(6)
     expect(answer.researchFailures).toContain('Coffee nearby')
   })
 })

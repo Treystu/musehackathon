@@ -312,6 +312,16 @@ describe('research-first handoff: the discriminator', () => {
     // partial-answer paths refused it); the retained measure now
     // rides along as chosen and the handoff fires. A FILTER remains
     // runnable Census content and still keeps clarification below.
+    //
+    // CHANGED AGAIN (Q6 round 2, 2026-11-04 — route discipline):
+    // the filter exclusion now reads the reader's words. A filter
+    // whose value the reader never stated is the parse's invention,
+    // not their bound: on an all-researched question (OWNER_QUESTION
+    // decomposes to schools + fast food, no Census measure) it no
+    // longer keeps clarification — the handoff fires with the
+    // invented filter stripped. The exclusion stands for a bound
+    // the reader DID state (its value in their words), pinned by
+    // the second case below.
     expect(
       researchFirstHandoff(
         { ...externalOnlyParse([]), metricKeys: ['median_gross_rent'] },
@@ -325,6 +335,15 @@ describe('research-first handoff: the discriminator', () => {
           filters: [{ metricKey: 'median_gross_rent', op: 'lt', value: 1500 }],
         },
         OWNER_QUESTION,
+      ),
+    ).toMatchObject({ filters: [], clarificationNeeded: false })
+    expect(
+      researchFirstHandoff(
+        {
+          ...externalOnlyParse([]),
+          filters: [{ metricKey: 'median_gross_rent', op: 'lt', value: 1500 }],
+        },
+        'Which area has the best schools and the fewest fast food restaurants, in places with rent under $1,500?',
       ),
     ).toBeNull()
     // Genuine ambiguity in the current parse: the panel's case.

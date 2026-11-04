@@ -16,7 +16,9 @@ import type {
 import { diagnostics } from '../../core/ai/diagnostics'
 import {
   SALARY_FIGURE_RE,
+  allResearchedCriteria,
   decomposeResearchCriteria,
+  everyFilterUnstated,
   filterWorkingNarration,
   hasUnclaimedCriterionContent,
   rankDirectionFromQuery,
@@ -364,8 +366,11 @@ export function dropUngroundedGeographies(
  *
  * The discriminator, built from the parse state that actually
  * exists. A clarifying intent hands off when ALL of these hold:
- *  - nothing-to-screen: the parse carries no Census bound (no
- *    filters), so clarification's only forward path would be
+ *  - nothing-to-screen: the parse carries no Census bound the
+ *    reader stated (no filters, or only filters whose values appear
+ *    nowhere in the reader's words on an all-researched question —
+ *    the parse's inventions, stripped in the handoff; see the
+ *    function body), so clarification's only forward path would be
  *    inventing a Census question the reader did not ask. A retained
  *    metricKey is not runnable content on its own — it is a measure
  *    to SHOW — and since P3 step 2 it rides along as chosen rather
@@ -414,7 +419,26 @@ export function researchFirstHandoff(
   // (its figures are pulled and shown), the external criteria are
   // researched or labelled, and the partial answer ships. A filter
   // still excludes: a filtered intent is screen-servable as asked.
-  if (intent.filters.length > 0) return null
+  //
+  // Route discipline (Q6 round 2, 2026-11-04): the filter exclusion
+  // holds only for a filter that is the reader's own content. When
+  // every criterion the question states is researched (no Census
+  // measure among them — the class test is answer.ts's, shared with
+  // the pipeline) and no filter value appears in the reader's words,
+  // the filters are the parse's invention: the demo question's
+  // national-screen realization carried an invented rent bound, and
+  // reading it as a stated bound refused a question that asks the
+  // Census for nothing. The invented filters are stripped in the
+  // handoff below (the pipeline's own condition lifts its veto for
+  // the same class, so a runnable realization is covered there; a
+  // clarifying one is covered here). A reader-stated bound — its
+  // value in their words — still excludes, exactly as shipped.
+  const criteriaForRoute = researchFirstCriteria(queryText)
+  const filtersAreInventions =
+    intent.filters.length > 0 &&
+    allResearchedCriteria(criteriaForRoute) &&
+    everyFilterUnstated(intent, queryText)
+  if (intent.filters.length > 0 && !filtersAreInventions) return null
   if (hasAmbiguousPlaceCandidates(intent.geographies)) return null
   if (!queryText || PROTECTED_CHARACTERIZATION_RE.test(queryText)) return null
   // Characterization by politics keeps the coverage-note posture
@@ -422,8 +446,16 @@ export function researchFirstHandoff(
   // and the clarification stay, and standalone research remains the
   // fallback whose failure produces the note.
   if (politicsCoverageNote(queryText)) return null
-  if (researchFirstCriteria(queryText).length === 0) return null
-  const handedOff = { ...intent, clarificationNeeded: false }
+  if (criteriaForRoute.length === 0) return null
+  const handedOff = {
+    ...intent,
+    clarificationNeeded: false,
+    // The parse's invented bounds are not the reader's request:
+    // they come out here, so the handed-off intent carries no
+    // Census content it was never asked for (isResearchFirstHandoff's
+    // shape test reads the same state).
+    ...(filtersAreInventions ? { filters: [] } : {}),
+  }
   handedOffIntents.add(handedOff)
   return handedOff
 }

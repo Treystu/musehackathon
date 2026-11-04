@@ -448,6 +448,17 @@ export const SCREEN_VARS = [
   VARS.noInternetAccess,
   VARS.averageHouseholdSize,
   VARS.medianAge,
+  // The median-age margin rides the screen too (B01002_001M, verified
+  // published in the ACS 2023 5-year variables registry, 2026-11-03):
+  // median age is a rank-legal Ask measure (FM-9 ruling), and a ranked
+  // screen that cannot show the figure's margin renders a bare point
+  // estimate — the presentation this app exists to avoid. The detail
+  // fetch has always requested it; the screen omitted it, so live
+  // ranked median-age answers carried no margins (measured live,
+  // 2026-11-03). The latency note above covers the cost: on the
+  // chunked path a margin column costs what the headline margins cost,
+  // which the file's own measurement puts at ~0.02s per chunk.
+  VARS.medianAge.replace(/E$/, 'M'),
   VARS.belowPovertyCount,
   VARS.bachelorsCount,
   VARS.commutingWorkers,

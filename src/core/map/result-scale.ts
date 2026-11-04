@@ -407,6 +407,14 @@ export function overflowPlaceSummary(answer: ComposedAnswer): {
 export function resultMapRelevant(answer: ComposedAnswer): boolean {
   if (answer.status !== 'verified') return false
   if (answer.researchNamedPlaces !== undefined) return false
+  // Geography gate (2026-11-04): a gated answer's choropleth would
+  // color the bounded screen's places by the driving metric — the
+  // specimen's wrong-geography map (the cheapest ZIPs, encoding
+  // neither the classification nor the in-state winner). The gate
+  // map (GateStatesMap) frames the qualifying states instead; the
+  // two are mutually exclusive by this exclusion, so a terminal
+  // mounts at most one map.
+  if (answer.geographyGate !== undefined) return false
   if (answer.places.length < 2) return false
   return drivingMetricKey(answer) !== null
 }
@@ -491,6 +499,21 @@ export function terminalChartKinds(answer: ComposedAnswer): TerminalChartKind[] 
         spokenName: 'the map',
         subject: 'the areas by their standing',
         sentence: `The map shows the areas of ${answer.breadth.geographyLabel} by ${answer.breadth.criterionLabel.toLowerCase()}.`,
+      },
+    ]
+  }
+  // The gate map (2026-11-04): the terminal mounts it for a
+  // geography-gated answer in place of the choropleth, so speech
+  // names its actual content — the qualifying states by their
+  // cheapest screened figure on the headline measure.
+  if (answer.geographyGate && answer.status === 'verified') {
+    const key = answer.geographyGate.headlineKey
+    return [
+      {
+        kind: 'map',
+        spokenName: 'the map',
+        subject: 'the qualifying states by their cheapest screened places',
+        sentence: `The map shows the qualifying states shaded by their cheapest screened ${metricLabel(key).toLowerCase()}.`,
       },
     ]
   }

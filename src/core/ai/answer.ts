@@ -643,6 +643,8 @@ export interface ComposedAnswer {
  */
 export interface GeographyGateRecord {
   criterionLabel: string
+  /** The headline Census measure the bounded screen ranked by — the map's shading measure. */
+  headlineKey: string
   boundStates: { code: string; name: string }[]
   classifiedStates: { code: string; name: string }[]
   winnerState: { code: string; name: string } | null
@@ -4553,6 +4555,7 @@ export function composeAnswer(input: {
   const gateRecord: GeographyGateRecord | undefined = input.geographyGate
     ? {
         criterionLabel: input.geographyGate.criterionLabel,
+        headlineKey: gateHeadlineKey,
         boundStates: input.geographyGate.boundStates.map((s) => ({ ...s })),
         classifiedStates: input.geographyGate.classifiedStates.map((s) => ({ ...s })),
         winnerState: input.geographyGate.winnerState ? { ...input.geographyGate.winnerState } : null,

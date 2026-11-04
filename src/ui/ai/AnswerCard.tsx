@@ -13,6 +13,7 @@ import {
 } from '../../core/map/result-scale'
 import { formatMetricNumber } from '../metric-format'
 import { ResultMap } from '../map/ResultMap'
+import { GateStatesMap } from '../map/GateStatesMap'
 import { QualifyingPlacesMap } from '../map/QualifyingPlacesMap'
 import { ProgressivePlacesMap } from '../map/ProgressivePlacesMap'
 import { FlexibleAnswer } from './FlexibleAnswer'
@@ -811,6 +812,18 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
         progressive map component in its terminal mode: the same
         surface the run filled, settled.
       */}
+      {/*
+        GATE MAP (drug-law specimen cure, 2026-11-04): a
+        geography-gated answer mounts the qualifying-states map —
+        the frame the question asks for (states shaded by their
+        cheapest screened figure, winner identifiable) — in place
+        of the result choropleth, which resultMapRelevant excludes
+        for gate answers. Mutually exclusive with both maps below
+        by the same construction as the breadth mount.
+      */}
+      {answer.status === 'verified' && answer.geographyGate && (
+        <GateStatesMap answer={answer} />
+      )}
       {answer.status === 'verified' && answer.breadth && (
         <ProgressivePlacesMap
           places={[]}
@@ -827,7 +840,7 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
         />
       )}
       {answer.status === 'verified' && resultMapRelevant(answer) && <ResultMap answer={answer} />}
-      {answer.status === 'verified' && !answer.breadth && qualifyingPlacesMapRelevant(answer) && (
+      {answer.status === 'verified' && !answer.breadth && !answer.geographyGate && qualifyingPlacesMapRelevant(answer) && (
         <QualifyingPlacesMap
           places={orderedPlaces(answer).slice(0, ANSWER_CARD_PLACE_LIMIT)}
         />

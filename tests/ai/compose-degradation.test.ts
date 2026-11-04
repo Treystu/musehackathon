@@ -162,6 +162,66 @@ describe('pipeline: research-first, total research failure', () => {
     expectEveryCriterionAccounted(answer)
   })
 
+  // The 2026-11-03 live specimen (scenario-coverage seat): "Which is
+  // cheaper, Hilo or East Honolulu?" — the parse retained no measures,
+  // so the combined carry was the only criterion; research-first
+  // engaged over the two named places; research failed on both
+  // attempts; pre-cure the terminal keyed on the research outcome and
+  // named NO place while the screened comparison sat in hand. The
+  // degrade rule is about the screen's shape, not the bound's kind:
+  // when the screen is bounded to the named places' own rows, that
+  // screen IS the answer and the research failure is recorded on it.
+  const CHEAPER_Q = 'Which is cheaper, Hilo or East Honolulu?'
+  const HI_COMPARE_ROWS: AreaRow[] = [
+    { zcta: '96720', name: 'Hilo, HI', metrics: { median_gross_rent: 1346, median_home_value: 458100, median_household_income: 77331 }, moes: { median_gross_rent: 52, median_home_value: 12269, median_household_income: 4536 } },
+    { zcta: '96778', name: 'Pahoa, HI', metrics: { median_gross_rent: 1259, median_home_value: 331300, median_household_income: 46563 }, moes: { median_gross_rent: 316, median_home_value: 56083, median_household_income: 7413 } },
+    { zcta: '96821', name: 'East Honolulu, HI', metrics: { median_gross_rent: 2946, median_home_value: 1457700, median_household_income: 151455 }, moes: { median_gross_rent: 338, median_home_value: 85996, median_household_income: 10633 } },
+  ]
+
+  it('named places bound in hand, no retained measures: total failure degrades onto the named-places card', async () => {
+    const calls = { count: 0 }
+    const answer = await runAnswerPipeline({
+      intent: intent({ mode: 'compare', geographies: ['Hilo, HI', 'East Honolulu, HI'], metricKeys: [] }),
+      rows: HI_COMPARE_ROWS,
+      geographyZctas: new Set(['96720', '96821']),
+      researchQuery: CHEAPER_Q,
+      queryText: CHEAPER_Q,
+      provider: downProvider(calls),
+    })
+    // Research was genuinely attempted (stage + re-ask) and its
+    // failure is recorded — the cure is at terminal selection, not
+    // at engagement.
+    expect(calls.count).toBe(2)
+    expect(answer.status).toBe('verified')
+    expect(answer.places.map((p) => p.name).sort()).toEqual(['East Honolulu, HI', 'Hilo, HI'])
+    expect(answer.summary).not.toContain('no place is named')
+    // The screened comparison rides the card: with no measure
+    // retained anywhere, the named-places figure pull supplies the
+    // headline money figures from the rows, margins included.
+    const hilo = answer.places.find((p) => p.name === 'Hilo, HI')!
+    const east = answer.places.find((p) => p.name === 'East Honolulu, HI')!
+    expect(hilo.figures).toContainEqual(expect.objectContaining({ key: 'median_gross_rent', value: 1346, marginOfError: 52 }))
+    expect(hilo.figures).toContainEqual(expect.objectContaining({ key: 'median_home_value', value: 458100 }))
+    expect(east.figures).toContainEqual(expect.objectContaining({ key: 'median_gross_rent', value: 2946, marginOfError: 338 }))
+    expect(east.figures).toContainEqual(expect.objectContaining({ key: 'median_home_value', value: 1457700 }))
+    expect(answer.researchFailures).toContain('Outside-Census criteria')
+    expectEveryCriterionAccounted(answer)
+  })
+
+  it('CONTROL — named places that never resolved to rows: total failure still lands the honest note', async () => {
+    const answer = await runAnswerPipeline({
+      intent: intent({ mode: 'compare', geographies: ['Hilo, HI', 'East Honolulu, HI'], metricKeys: [] }),
+      rows: HI_COMPARE_ROWS,
+      researchQuery: CHEAPER_Q,
+      queryText: CHEAPER_Q,
+      provider: downProvider(),
+    })
+    expect(answer.status).toBe('empty')
+    expect(answer.places).toHaveLength(0)
+    expect(answer.summary).toContain(DID_NOT_RETURN)
+    expectEveryCriterionAccounted(answer)
+  })
+
   it('placeless: total failure lands the honest note answer, never a throw', async () => {
     const answer = await runAnswerPipeline({
       intent: intent({ geographies: [], metricKeys: [] }),

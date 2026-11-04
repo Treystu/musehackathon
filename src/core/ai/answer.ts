@@ -3616,6 +3616,8 @@ export function composeAnswer(input: {
   unsupportedGeography?: string | null
   /** Research-first answers pull a headline Census figure even when the question named no measure. */
   pullMode?: boolean
+  /** The named-places ZCTA bound the screen was composed under, when the caller resolved one. */
+  geographyZctas?: ReadonlySet<string>
   summaryOverride?: string
   /** The top-N count the reader asked for, stamped verbatim for the card's shortfall line. */
   requestedCount?: number | null
@@ -3659,12 +3661,36 @@ export function composeAnswer(input: {
         .flatMap((k) => (k === 'no_internet_access' ? [k, 'households'] : [k])),
     ),
   ]
+  // Named-places bound (screen-first): when the composed screen is
+  // exactly the places the question named — every row inside the
+  // resolved geographyZctas bound — and the question retained no
+  // measure anywhere (no intent measures, no decomposed pull), the
+  // card still needs the figures a place comparison is read on. The
+  // pulled set is the headline money figures every screened row
+  // carries (rent, home value, household income); like the pull-mode
+  // figure above, these are display figures, never criteria — no
+  // Census criterion entry is created for them. Without this, the
+  // degraded terminal for the 2026-11-03 "cheaper, Hilo or East
+  // Honolulu" specimen named both places with no figures at all,
+  // under a summary claiming figures were shown.
+  const boundDisplayKeys =
+    !input.pullMode &&
+    intent.metricKeys.length === 0 &&
+    decomposedKeys.length === 0 &&
+    input.geographyZctas &&
+    input.geographyZctas.size > 0 &&
+    screen.rows.length > 0 &&
+    screen.rows.every((row) => input.geographyZctas!.has(row.zcta))
+      ? ['median_gross_rent', 'median_home_value', 'median_household_income']
+      : []
   const figureIntent: ValidatedIntent =
     input.pullMode && intent.metricKeys.length === 0
       ? { ...intent, metricKeys: [...new Set(['median_gross_rent', ...decomposedKeys])] }
       : decomposedKeys.length > 0
         ? { ...intent, metricKeys: [...new Set([...intent.metricKeys, ...decomposedKeys])] }
-        : intent
+        : boundDisplayKeys.length > 0
+          ? { ...intent, metricKeys: boundDisplayKeys }
+          : intent
   const places: AnswerPlace[] = screen.rows.map((row) => {
     const figures = figuresForRow(row, figureIntent, screen.criteria)
     const meta = input.countyMeta?.get(row.zcta)
@@ -4438,7 +4464,28 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           : undefined,
       )
     } catch {
-      if (stateBounded) {
+      // The degrade question is whether the screen this pipeline is
+      // about to run is itself an answer-shaped universe for the
+      // question. Two shapes qualify: a state bound (the state screen
+      // IS the sweep the question asks over) and the named-places
+      // bound — when the intent's geographies resolved to ZCTAs in
+      // hand, screenRows bounds the screen to exactly those places'
+      // rows, so the screened figures answer the question and the
+      // research failure belongs ON that card as a recorded criterion
+      // failure, not in place of it. The 2026-11-03 live specimen
+      // ("Which is cheaper, Hilo or East Honolulu?", research down on
+      // both attempts) terminated naming no place because this branch
+      // keyed only on the state bound while the two places' screened
+      // comparison sat in hand. What still lands the honest note: no
+      // answer-shaped screen in hand — a placeless question, or named
+      // places that never resolved to rows — where any screen the
+      // pipeline could show would be a dump, not an answer.
+      const namedPlacesBound =
+        input.intent.geographies.length > 0 &&
+        !!input.geographyZctas &&
+        input.geographyZctas.size > 0 &&
+        [...input.geographyZctas].some((z) => input.rows.some((r) => r.zcta === z))
+      if (stateBounded || namedPlacesBound) {
         firstResearchDown = true
       } else {
         firstResearchFailed = true
@@ -5250,6 +5297,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     // research stage to be accounted.
     researchCriteria,
     candidateCapApplied: research && !firstResearchDown ? candidateCapApplied : false,
+    geographyZctas: input.geographyZctas,
     geographyLevel,
     unsupportedGeography: effectiveUnsupportedGeography,
     countyMeta: mergedMeta,

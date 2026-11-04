@@ -1242,13 +1242,27 @@ export function unclaimedCriterionSegments(
   for (const raw of queryText.split(/\s+and\s+|,\s*/i)) {
     const segment = raw.trim().replace(/[?.!]+$/, '').trim()
     if (segment.length === 0) continue
+    // A state clause predicating an ABSENCE ("which state has no
+    // income tax? or sales tax?") states a classification, not a
+    // measure reading: the noun phrase it predicates may contain a
+    // measure-head word ("income"), but the clause does not read
+    // that measure — it sorts states by whether the thing exists.
+    // The measure-word test below claimed such segments outright
+    // (measured 2026-11-04: the tax specimen decomposed to the
+    // cost criterion alone, the classification vanished, and the
+    // question fell to a state-average screen ranked by an unasked
+    // measure). The absence-predicate shape is never claimedDirect.
+    const stateAbsencePredicate =
+      (/\b(?:which|what)\s+states?\b/i.test(segment) || /\bstates?\s+(?:that|which)\b/i.test(segment)) &&
+      /\b(?:has|have|having)\s+no\s+[a-z]/i.test(segment)
     const claimedDirect =
-      RESEARCH_CRITERION_CATALOG.some((entry) => entry.pattern.test(segment)) ||
-      /\$\s?\d/.test(segment) ||
-      segment
-        .toLowerCase()
-        .split(/[^a-z'-]+/)
-        .some((w) => MEASURE_HEAD_WORDS.has(w))
+      !stateAbsencePredicate &&
+      (RESEARCH_CRITERION_CATALOG.some((entry) => entry.pattern.test(segment)) ||
+        /\$\s?\d/.test(segment) ||
+        segment
+          .toLowerCase()
+          .split(/[^a-z'-]+/)
+          .some((w) => MEASURE_HEAD_WORDS.has(w)))
     // Superlative phrases: claimed ones are removed before the
     // residue count so the frame they ride on cannot inflate it;
     // an unclaimed one marks the segment, and its captured words

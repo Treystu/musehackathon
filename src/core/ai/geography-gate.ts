@@ -23,10 +23,18 @@
  *   1. the intent names no geography (the bound must be derived);
  *   2. a Census extremum is present (an intent metric or a
  *      decomposed-metric criterion) for the gate to bound;
- *   3. the question carries a state-domain superlative clause
- *      ("what/which state ... most/least/best/worst ...") AND a
- *      dependent bound ("in that state / those states / the same
- *      state") tying the extremum to the classification's output;
+ *   3. the question carries a state-domain CLASSIFYING clause —
+ *      a superlative ("what/which state ... most/least/best/worst
+ *      ..."), an absence predicate ("which state has no income
+ *      tax"), or a presence predicate whose criterion carries a
+ *      favorable marker ("which states allow ...") — AND a
+ *      dependent bound ("in/for/among that state / those states /
+ *      the same state", or a closing "there") tying the extremum
+ *      to the classification's output. Round 3 (2026-11-04): the
+ *      tax specimen classified by predicate with a set-valued
+ *      answer and no superlative anywhere; requiring one left the
+ *      gate unengaged while a state-aggregate screen ranked by an
+ *      unasked measure answered in its place;
  *   4. a residue ("combined") researched criterion with no Census
  *      decomposition exists to do the classifying — catalog
  *      criteria keep their shipped per-place semantics, and a
@@ -65,6 +73,17 @@ export interface GateStateRef {
 export interface GeographyGateSpec {
   /** The classifying criterion (residue class, no Census decomposition). */
   criterion: GateCriterionRef
+  /**
+   * The dependent extremum's Census metric: the decomposed
+   * criterion's own key when the question decomposes one (the
+   * deterministic measure mapping — "lowest cost of living" is
+   * median_gross_rent on every path), else the intent's first
+   * metric. The runner leads the gate run's intent with it, so a
+   * parse that named a different measure first (the tax specimen's
+   * live parse led with household income) cannot silently re-rank
+   * the bounded screen by an unasked measure.
+   */
+  extremumMetricKey: string | null
 }
 
 const STATE_SUPERLATIVE_RE =
@@ -72,6 +91,28 @@ const STATE_SUPERLATIVE_RE =
 const STATE_WITH_SUPERLATIVE_RE =
   /\bstates?\s+with\s+the\s+(?:most|least|best|worst|highest|lowest)\b/i
 const DEPENDENT_BOUND_RE = /\bin\s+(?:that|those|the same)\s+states?\b/i
+/**
+ * A state clause predicating an ABSENCE ("which state has no
+ * income tax", "states that have no sales tax"): the researched
+ * criterion CLASSIFIES states by a predicate, with a set-valued
+ * answer, instead of ranking them by a superlative (round 3,
+ * 2026-11-04 — the tax specimen carried no superlative at all,
+ * and the round-1 detection, which required one, never engaged).
+ */
+const STATE_ABSENCE_CLAUSE_RE =
+  /\b(?:which|what)\s+states?\b[^.?!]*?\b(?:has|have|having)\s+no\s+[a-z]/i
+const STATES_THAT_ABSENCE_RE = /\bstates?\s+(?:that|which)\s+(?:have|has|having)\s+no\s+[a-z]/i
+/** Any state-domain clause ("which states ...", "states that ..."). */
+const STATE_CLAUSE_RE = /\b(?:which|what)\s+states?\b|\bstates?\s+(?:that|which)\b/i
+/**
+ * The dependent bound's wider prepositions (round 3): the tax
+ * specimen binds with "for those states", where round 1 read only
+ * "in that state". The bare anaphor "there" closing the question
+ * ("...the cheapest rent zip there?") binds the same way.
+ */
+const DEPENDENT_BOUND_WIDE_RE =
+  /\b(?:in|for|within|among|across)\s+(?:that|those|the same)\s+states?\b/i
+const DEPENDENT_THERE_RE = /\bthere\s*[?.!]*$/i
 const RESTRICTIVE_POLE_RE =
   /\b(?:strictest|toughest|harshest|most restrictive|least relaxed|least permissive|most prohibitive)\b/i
 
@@ -90,13 +131,38 @@ export function detectGeographyGate(input: {
     input.intent.metricKeys.length > 0 ||
     input.researchCriteria.some((c) => !!c.decomposedMetricKey)
   if (!hasExtremum) return null
-  if (!STATE_SUPERLATIVE_RE.test(input.queryText) && !STATE_WITH_SUPERLATIVE_RE.test(input.queryText)) {
-    return null
-  }
-  if (!DEPENDENT_BOUND_RE.test(input.queryText)) return null
   const criterion = input.researchCriteria.find((c) => c.id === 'combined' && !c.decomposedMetricKey)
   if (!criterion) return null
-  return { criterion }
+  // The classifying clause, three shapes (round 3): a state-domain
+  // SUPERLATIVE ("what state has the most relaxed drug laws"), an
+  // ABSENCE predicate ("which state has no income tax"), or a
+  // PRESENCE predicate whose criterion text carries a favorable
+  // marker ("which states allow recreational marijuana" — the
+  // criterion itself must say the favorable thing, so a Census
+  // state question that merely decomposes beside a residue
+  // criterion is not swept in). A pure Census state superlative
+  // (the FM-9 pair) never reaches here: it decomposes to no
+  // residue criterion at all.
+  const superlativeClause =
+    STATE_SUPERLATIVE_RE.test(input.queryText) || STATE_WITH_SUPERLATIVE_RE.test(input.queryText)
+  const absenceClause =
+    STATE_ABSENCE_CLAUSE_RE.test(input.queryText) || STATES_THAT_ABSENCE_RE.test(input.queryText)
+  const presenceClause =
+    STATE_CLAUSE_RE.test(input.queryText) &&
+    (FAVORABLE_RE.test(criterion.text) || /\b(?:allows?|permits?)\b/i.test(input.queryText))
+  if (!superlativeClause && !absenceClause && !presenceClause) return null
+  if (
+    !DEPENDENT_BOUND_RE.test(input.queryText) &&
+    !DEPENDENT_BOUND_WIDE_RE.test(input.queryText) &&
+    !DEPENDENT_THERE_RE.test(input.queryText)
+  ) {
+    return null
+  }
+  const extremumMetricKey =
+    input.researchCriteria.find((c) => !!c.decomposedMetricKey)?.decomposedMetricKey ??
+    input.intent.metricKeys[0] ??
+    null
+  return { criterion, extremumMetricKey }
 }
 
 /**

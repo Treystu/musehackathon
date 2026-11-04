@@ -5713,6 +5713,38 @@ function groundingReAskQuery(base: string, ungroundedNames: readonly string[]): 
   return query.length + sentence.length <= 480 ? query + sentence : query
 }
 
+/** The second draw's marker sentence (Q6 round 4) — tests and
+ * call accounting key on it. */
+export const RESEARCH_SECOND_DRAW_LEAD = 'Take a fresh approach'
+
+/**
+ * The second draw's query (Q6 round 4, 2026-11-04): when the
+ * first yield and the grounding re-ask both ground zero places,
+ * the failure mode the live double-ask measured is yield
+ * VARIANCE — an independent draw of the same question served
+ * (run 2 carded Fort Smith while run 1 dead-ended). A second
+ * draw that merely repeats the first ask re-rolls the same
+ * distribution; the steering varies the draw on the axes the
+ * dead-end yields shared: it leads with the LAST-stated
+ * criterion instead of the first, and it asks for small towns
+ * and suburbs (the first yields' candidates were large metros
+ * and methodology prose) in the groundable "City, State" form,
+ * several of them, spread across states. Under the same 480
+ * guard as the other steerings: a query that cannot carry it
+ * falls back to the nomination-steered base — a plain re-draw
+ * still draws from the variance, which is the point.
+ */
+function researchSecondDrawQuery(base: string, criteriaLabels: readonly string[]): string {
+  const lead = criteriaLabels[criteriaLabels.length - 1]
+  const sentence =
+    ` ${RESEARCH_SECOND_DRAW_LEAD}: lead with ${lead ?? 'the last-stated criterion'} this time.` +
+    ' Name at least five specific small towns or suburbs — not large cities — that fit all of' +
+    ' the stated criteria, spread across different states where the evidence allows, each a' +
+    ' specific incorporated place written as "City, State".'
+  const steered = `${base}\n${sentence.trim()}`
+  return steered.length <= 480 ? steered : researchNominationQuery(base)
+}
+
 export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<ComposedAnswer> {
   const signal = input.signal ?? new AbortController().signal
   // Stage 1: parse gate. The intent arrived from the intent route,
@@ -6596,7 +6628,26 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         ...m.bare.unresolved,
       ]),
     ]
-    const everyCappedRowDirectionNegative =
+    // The gathered-material test (Q6 round 4, 2026-11-04): ONE
+    // test at every zero-place seam on this path — the re-ask
+    // below and the second draw after it consult the same
+    // predicate, so a yield shape cannot be material at one seam
+    // and invisible at the next. Material is anything the
+    // research actually gathered: an extracted name in any
+    // channel (resolved, ambiguous, or unresolved), a counted
+    // fragment mention (a mention the extraction gate read and
+    // set aside — the run-1 live yield's only name-shaped
+    // residue: seven fragments, every name channel empty), or a
+    // claim. A yield empty in EVERY channel has nothing to steer
+    // toward and nothing to complete from — that is FM-11's and
+    // the honest note's ground, unchanged.
+    const gatheredMaterial = (): boolean =>
+      m.extracted.length +
+        m.bare.ambiguous.length +
+        m.bare.unresolved.length +
+        m.bare.fragments >
+        0 || research.claims.length > 0
+    const cappedRowsDirectionNegative = (): boolean =>
       m.cappedRows.length > 0 &&
       m.cappedRows.every((row) =>
         placeDirectionNegative(
@@ -6605,11 +6656,10 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         ),
       )
     if (
-      (m.cappedRows.length === 0 || everyCappedRowDirectionNegative) &&
+      (m.cappedRows.length === 0 || cappedRowsDirectionNegative()) &&
       !firstResearchFailed &&
       !breadthActive &&
-      (m.extracted.length + m.bare.ambiguous.length + m.bare.unresolved.length > 0 ||
-        research.claims.length > 0)
+      gatheredMaterial()
     ) {
       try {
         const steered = await researchPerCriterion(
@@ -6625,6 +6675,46 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         m = await materialize(research)
       } catch {
         // The first yield stands, exactly as gathered.
+      }
+    }
+    // The second draw (Q6 round 4, 2026-11-04): the re-ask above
+    // has now had its one bounded attempt, and the run STILL
+    // grounds nothing — zero capped rows, or only rows the
+    // research itself describes as not meeting the criteria —
+    // while material is in hand. The parent's live double-ask on
+    // 358ce75 measured this exact state: run 1 dead-ended there
+    // (research ran, seven fragment mentions, claims serving the
+    // criteria, no floor reached because the completion's drafts
+    // named no place from a names-empty packet), and run 2 — an
+    // independent draw of the same question — served. Before the
+    // run falls to the completion floor, it draws the research
+    // ONE more time with varied steering (researchSecondDrawQuery:
+    // last criterion first, small towns and suburbs, "City,
+    // State" form). Exactly one extra stage — no loop, no third
+    // draw; a throwing draw keeps the gathered yields exactly as
+    // they stand, and the floor decision below reads whatever
+    // the merged materialization holds.
+    if (
+      (m.cappedRows.length === 0 || cappedRowsDirectionNegative()) &&
+      !firstResearchFailed &&
+      !breadthActive &&
+      gatheredMaterial()
+    ) {
+      try {
+        const secondDraw = await researchPerCriterion(
+          input.provider!,
+          input.intent.geographies,
+          researchCriteria,
+          researchSecondDrawQuery(
+            input.researchQuery!,
+            researchCriteria.map((c) => c.label),
+          ),
+          signal,
+        )
+        research = mergeResearchStages(research, secondDraw)
+        m = await materialize(research)
+      } catch {
+        // The gathered yields stand, exactly as gathered.
       }
     }
     const { extracted, bare, unresolvedCandidates, outOfStateCandidates, binding } = m

@@ -452,6 +452,211 @@ export function buildNearFrameContext(input: {
  * prefix entirely). Null exactly when buildNearFrameContext would
  * return null for want of candidates.
  */
+/* ------------------------------------------------------------------ */
+/* The radius frame                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The radius frame: "What's the cheapest place to live in Florida
+ * within 100 miles of Miami?" — a stated radius anchored at a named
+ * place BESIDE a broader geography (here the state sweep).
+ *
+ * Measured defect (owner live specimen, 2026-11-04, production
+ * 94f796e): the parse carried both geographies (FL + Miami, FL),
+ * so the near frame above — which requires exactly one geography
+ * and reference semantics — could not engage, and no other layer
+ * read the radius as geography at all. Decomposition has no
+ * catalog entry for a radius phrase and the question is a single
+ * clause, so the radius rode into research as part of one combined
+ * criterion whose text is the whole question; the research stage
+ * assessed that criterion per place from web snippets, the answer
+ * led with places hundreds of miles outside the radius (Putnam
+ * County at ~282 mi, Blountstown at ~454 mi), rendered raw
+ * search-result titles as finding prose, and never named the
+ * cheapest place actually inside the radius. Proximity is
+ * geography, not a research topic: the product's own centroid
+ * geography answers it deterministically.
+ *
+ * The frame's semantics differ from the near frame's in exactly
+ * two ways, both read off the question's shape:
+ *   - The anchor is INSIDE its own radius: "within 100 miles of
+ *     Miami" includes Miami's own ZIP areas as candidates. There
+ *     is no reference and no baseline.
+ *   - Ranking is the question's own measure over the in-radius
+ *     set — no relative bound.
+ * Detection requires a STATED radius (no default reading in this
+ * class), the anchor's name immediately after the phrase's
+ * of/from, an intent geography naming that anchor as a place, and
+ * at least one further geography beside it — the last condition
+ * is the discrimination from the near frame's single-geography
+ * class, which keeps its questions.
+ */
+export interface RadiusFrameSpec {
+  /** The intent geography string that names the anchor, verbatim. */
+  anchorGeography: string
+  /** The stated radius, in miles. */
+  radiusMiles: number
+  /**
+   * The reader's radius phrase verbatim, anchor name included
+   * ("within 100 miles of Miami") — the pipeline strips exactly
+   * this span from a criterion's text to test whether the
+   * criterion carries anything beyond the radius.
+   */
+  phraseText: string
+}
+
+const RADIUS_PHRASE_RES: readonly RegExp[] = [
+  /\bwithin\s+an?\s+(\d{1,3})\s*[-\s](?:miles?|mi)\s+radius\s+of\s+/i,
+  /\bwithin\s+(\d{1,3})\s*(?:miles?|mi)\s+radius\s+of\s+/i,
+  /\binside\s+(?:an?\s+)?(\d{1,3})\s*[-\s](?:miles?|mi)\s+radius\s+of\s+/i,
+  /\b(\d{1,3})\s*[-\s](?:miles?|mi)\s+radius\s+(?:of|around)\s+/i,
+  /\bwithin\s+(\d{1,3})\s*(?:miles?|mi)\s+of\s+/i,
+  /\bno\s+more\s+than\s+(\d{1,3})\s*(?:miles?|mi)\s+from\s+/i,
+]
+
+/**
+ * Detect the radius frame in a question, from the reader's words
+ * and the parsed intent together. Pure text + intent, like
+ * detectNearFrame, so the App can precheck before any load.
+ */
+export function detectRadiusFrame(
+  queryText: string | undefined,
+  intent: ValidatedIntent,
+): RadiusFrameSpec | null {
+  if (!queryText || queryText.trim() === '') return null
+  if (intent.geographies.length < 2) return null
+  for (const pattern of RADIUS_PHRASE_RES) {
+    const match = pattern.exec(queryText)
+    if (!match) continue
+    const radiusMiles = Number.parseInt(match[1]!, 10)
+    if (!Number.isFinite(radiusMiles) || radiusMiles <= 0) continue
+    const after = queryText.slice(match.index + match[0].length)
+    for (const geography of intent.geographies) {
+      const trimmed = geography.trim()
+      if (/^\d{5}$/.test(trimmed)) continue
+      if (COUNTY_LIKE_RE.test(geographyNamePart(trimmed))) continue
+      if (isStateGeographyText(trimmed)) continue
+      const anchorName = geographyNamePart(trimmed)
+      if (anchorName === '') continue
+      if (!after.toLowerCase().startsWith(anchorName.toLowerCase())) continue
+      const nextChar = after.charAt(anchorName.length)
+      if (nextChar !== '' && /[A-Za-z]/.test(nextChar)) continue
+      return {
+        anchorGeography: geography,
+        radiusMiles,
+        phraseText: queryText.slice(
+          match.index,
+          match.index + match[0].length + anchorName.length,
+        ),
+      }
+    }
+  }
+  return null
+}
+
+export interface RadiusFrameContext {
+  /** "Miami, FL" — the anchor's reader-facing label. */
+  anchorLabel: string
+  /** The anchor place's display name ("Miami"). */
+  anchorName: string
+  anchorZctas: ReadonlySet<string>
+  /** Every ZIP area of every in-radius place, the anchor's included. */
+  candidateZctas: ReadonlySet<string>
+  candidatePrefixes: string[]
+  /** How many places (index records) fall inside the radius. */
+  candidatePlaceCount: number
+  radiusMiles: number
+  /** The reader's radius phrase, verbatim (see RadiusFrameSpec). */
+  phraseText: string
+}
+
+/**
+ * Build the radius frame context: the anchor plus every place
+ * whose nearest ZIP-area centroid lies within the radius of one
+ * of the anchor's ZIP-area centroids (nearCandidates' grain — a
+ * place is inside when its nearest centroid is), optionally
+ * intersected with a restricting ZIP set (the co-named state's
+ * areas, supplied by the caller). Null when the anchor is unknown
+ * to the index, the anchor has no centroid (no distance basis
+ * exists), or the restricted set is empty — every null leaves the
+ * shipped path standing.
+ */
+export function buildRadiusFrameContext(input: {
+  spec: RadiusFrameSpec
+  placeIndex: PlaceIndex
+  centroids: readonly ZctaPoint[]
+  restrictZctas?: ReadonlySet<string> | null
+}): RadiusFrameContext | null {
+  const anchor = anchorHitFor(input.placeIndex, input.spec.anchorGeography)
+  if (!anchor) return null
+  const centroidsByZip = new Map(input.centroids.map((p) => [p.zcta, p]))
+  const anchorPoints = anchor.zips
+    .map((zip) => centroidsByZip.get(zip))
+    .filter((p): p is ZctaPoint => !!p)
+  if (anchorPoints.length === 0) return null
+  const near = nearCandidates(
+    input.placeIndex,
+    centroidsByZip,
+    anchor,
+    input.spec.radiusMiles,
+  )
+  const candidatePlaces: PlaceSuggestion[] = [anchor, ...near.map((c) => c.place)]
+  const restrict = input.restrictZctas ?? null
+  const candidateZctas = new Set<string>()
+  let candidatePlaceCount = 0
+  for (const place of candidatePlaces) {
+    let contributed = false
+    for (const zip of place.zips) {
+      if (restrict && !restrict.has(zip)) continue
+      candidateZctas.add(zip)
+      contributed = true
+    }
+    if (contributed) candidatePlaceCount++
+  }
+  if (candidateZctas.size === 0) return null
+  return {
+    anchorLabel: `${anchor.displayName}, ${anchor.state}`,
+    anchorName: anchor.displayName,
+    anchorZctas: new Set(anchor.zips),
+    candidateZctas,
+    candidatePrefixes: [...new Set([...candidateZctas].map((z) => z.slice(0, 2)))].sort(),
+    candidatePlaceCount,
+    radiusMiles: input.spec.radiusMiles,
+    phraseText: input.spec.phraseText,
+  }
+}
+
+/**
+ * The radius candidate set's sweep-scope prefixes, for the App's
+ * scoped load (the nearCandidatePrefixes twin). Null exactly when
+ * buildRadiusFrameContext would return null (no restriction is
+ * applied at this seam — the load widening is a superset by
+ * design, and the runner's restricted context bounds the screen).
+ */
+export function radiusCandidatePrefixes(input: {
+  spec: RadiusFrameSpec
+  placeIndex: PlaceIndex
+  centroids: readonly ZctaPoint[]
+}): string[] | null {
+  const context = buildRadiusFrameContext(input)
+  return context ? context.candidatePrefixes : null
+}
+
+/**
+ * Remove the reader's radius phrase from a text (a criterion's
+ * text, which derives from the same question the spec was
+ * detected in). Returns the remainder with whitespace collapsed,
+ * or null when the phrase is not present to remove.
+ */
+export function stripRadiusPhrase(text: string, phraseText: string): string | null {
+  const idx = text.toLowerCase().indexOf(phraseText.toLowerCase())
+  if (idx < 0) return null
+  return (text.slice(0, idx) + ' ' + text.slice(idx + phraseText.length))
+    .replace(/\s+([,?.!])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 export function nearCandidatePrefixes(input: {
   spec: NearFrameSpec
   placeIndex: PlaceIndex

@@ -51,7 +51,10 @@ import {
   detectAreaMention,
   regionInterpretationFor,
 } from '../../core/ai/area-mention'
-import { rerouteSimilarityToNearFrame } from '../../core/ai/near-frame'
+import {
+  detectRadiusFrame,
+  rerouteSimilarityToNearFrame,
+} from '../../core/ai/near-frame'
 import { rerouteGateShape } from '../../core/ai/geography-gate'
 import { STATE_NAME_BY_CODE } from '../../core/sweep/states'
 import { removeGeography } from '../../core/ai/intent-edit'
@@ -1178,7 +1181,17 @@ export function AskPanel({
     )
     setIntent(parsed)
     let flowNote: string | null = null
-    if (rescued) {
+    const radiusSpec = detectRadiusFrame(queryText ?? '', parsed)
+    if (radiusSpec) {
+      // The radius is part of the geography the screen applies
+      // (the radius frame at the runner bounds the screen to the
+      // in-radius set), so the note names it as geography — the
+      // shipped specimen's note named only the state and the city
+      // while the screen silently ran over the whole state.
+      const label = NATIONAL_SCREEN_LABELS[parsed.metricKeys[0]!] ?? 'that measure'
+      flowNote =
+        `This screens the places within ${radiusSpec.radiusMiles} miles of ${radiusSpec.anchorGeography.trim()} by ${label}, lowest first. The understood request is below.`
+    } else if (rescued) {
       const label = NATIONAL_SCREEN_LABELS[rescued.metricKeys[0]!] ?? 'that measure'
       flowNote =
         rescued.geographies.length === 0

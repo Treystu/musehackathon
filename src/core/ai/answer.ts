@@ -179,7 +179,12 @@ import {
   type BreadthStanding,
   type RunProgressSnapshot,
 } from './run-progress'
-import { isFrameSegmentText, type NearFrameContext } from './near-frame'
+import {
+  isFrameSegmentText,
+  stripRadiusPhrase,
+  type NearFrameContext,
+  type RadiusFrameContext,
+} from './near-frame'
 import {
   stateCountPhrase,
   type GateStateRef,
@@ -1827,6 +1832,80 @@ export function filterValueStatedInWords(
     if (Number.isFinite(parsed) && Math.abs(parsed - value) < 0.051) return true
   }
   return false
+}
+
+/**
+ * Whether the combined criterion at `index` carries nothing beyond
+ * a radius frame's phrase — the retirement test for the radius
+ * frame (near-frame.ts). Only a combined (residue) criterion can
+ * be the radius carry: a catalog criterion is a criterion, never a
+ * frame. The reader's exact phrase is stripped from the
+ * criterion's text; what remains retires with it only when it
+ * decomposes to nothing unclaimed beside the criteria already
+ * present (the ranking frame and the question's claimed Census
+ * content are not outside criteria — "What's the cheapest place to
+ * live in Florida" beside its radius states no research topic).
+ * When the phrase is not present verbatim (a segment decomposition
+ * re-cased it), the pure-segment test applies: the text is only
+ * the anchor, the radius, and radius vocabulary. A criterion
+ * carrying a genuine second topic ("a thriving arts scene within
+ * 100 miles of Miami") never retires — its remainder still reads
+ * as unclaimed content, and the accounting invariant keeps it.
+ */
+export function criterionRetiresForRadius(
+  criteria: readonly ResearchCriterion[],
+  index: number,
+  frame: RadiusFrameContext,
+): boolean {
+  const criterion = criteria[index]
+  if (!criterion || criterion.id !== 'combined') return false
+  const stripped = stripRadiusPhrase(criterion.text, frame.phraseText)
+  if (stripped !== null) {
+    if (stripped.replace(/[?.!]+$/, '').trim() === '') return true
+    const others = criteria.filter((_, i) => i !== index)
+    // The remainder is read the way the segment machinery reads
+    // an uncontracted question: its scaffold set carries "what"
+    // but not "what's", so the contracted ranking frame alone
+    // ("What's the cheapest place to live in Florida?") reads as
+    // unclaimed content while the identical uncontracted question
+    // decomposes to nothing (both probed in-suite). Expanding the
+    // contraction for the TEST — the text itself is never
+    // rewritten — separates the ranking frame (no topic: retires)
+    // from a remainder carrying a genuine topic ("a thriving arts
+    // scene": still unclaimed, never retires).
+    const expanded = stripped.replace(/\b(what|where|which|who|how)'s\b/gi, '$1 is')
+    return !hasUnclaimedCriterionContent(expanded, others)
+  }
+  const rest = criterion.text
+    .toLowerCase()
+    .split(frame.anchorName.toLowerCase())
+    .join(' ')
+    .replace(
+      /\b(?:within|inside|no|more|than|miles?|mi|radius|of|from|around|the|a|an)\b/g,
+      ' ',
+    )
+    .replace(/[\d\s().,—–-]+/g, '')
+  return rest.length === 0
+}
+
+/**
+ * Whether any researched (non-decomposed) criterion survives the
+ * radius frame's retirement — the caller's test for whether the
+ * research stage has anything to serve on a radius-framed run at
+ * all. When nothing survives, the radius question is a pure Census
+ * screen inside the radius and no research call is made for it
+ * (the specimen's per-place distance findings were research spent
+ * on a question geography already answers).
+ */
+export function radiusFrameLeavesResearch(
+  criteria: readonly ResearchCriterion[],
+  frame: RadiusFrameContext,
+): boolean {
+  return criteria.some(
+    (criterion, index) =>
+      !criterion.decomposedMetricKey &&
+      !criterionRetiresForRadius(criteria, index, frame),
+  )
 }
 
 /**
@@ -3886,6 +3965,15 @@ export function criterionEvidenceFor(input: {
    */
   nearFrame?: (NearFrameContext & { frameCriterionLabel: string | null }) | null
   /**
+   * The radius frame (core/ai/near-frame.ts), when the pipeline
+   * ran under one, with the label of the radius criterion it
+   * retired. Arms the frame's evidence entry below: measured by
+   * construction from the product's own centroid geography, the
+   * in-radius place count stated — the radius is geography the
+   * screen applied, never a researched annotation.
+   */
+  radiusFrame?: (RadiusFrameContext & { frameCriterionLabel: string | null }) | null
+  /**
    * The ZCTAs the research stage actually assessed, when supplied
    * (see composeAnswer's field of the same name): the near frame's
    * per-place coverage denominator. Absent = every shown place.
@@ -4217,6 +4305,29 @@ export function criterionEvidenceFor(input: {
       detail:
         input.places.length > 0
           ? `Measured from the product's own place geography: every place shown is within ${frame.radiusMiles} miles of ${frame.anchorLabel} (ZIP-area centroid distance), and ${frame.anchorLabel} itself is the comparison reference for this question, not one of the candidates.${frame.radiusStated ? '' : ` The question stated no radius; ${frame.radiusMiles} miles is the reading used for "near".`}`
+          : 'No place within the stated radius is shown, so the distance test has nothing to measure here.',
+      sourceUrls: [],
+    })
+  }
+  // Radius frame: the radius criterion's own entry, in the
+  // reader's words (the label the pipeline retired from the
+  // research list). Its measurement is the frame itself — the
+  // screen ran inside the radius, drawn deterministically from
+  // the product's own centroid geography at the caller, so the
+  // distance test is the screen's bound, stated with its basis
+  // and its count. The shipped specimen instead "measured" this
+  // criterion from web snippets per place and led with places
+  // that fail it.
+  const radiusLabel = input.radiusFrame?.frameCriterionLabel ?? null
+  if (input.radiusFrame && radiusLabel) {
+    const frame = input.radiusFrame
+    evidence.push({
+      criterion: radiusLabel,
+      kind: 'census',
+      status: input.places.length > 0 ? 'met' : 'not_measurable',
+      detail:
+        input.places.length > 0
+          ? `Measured from the product's own place geography: the screen ran inside the stated radius — a place is inside when its nearest ZIP-area centroid lies within ${frame.radiusMiles} miles of one of ${frame.anchorLabel}'s ZIP-area centroids — and ${frame.candidatePlaceCount} places fall inside it, the anchor's own ZIP areas included.`
           : 'No place within the stated radius is shown, so the distance test has nothing to measure here.',
       sourceUrls: [],
     })
@@ -4757,6 +4868,13 @@ export function composeAnswer(input: {
    */
   nearFrame?: (NearFrameContext & { frameCriterionLabel: string | null }) | null
   /**
+   * The radius frame the pipeline ran under (core/ai/near-frame.ts),
+   * with the label of the radius criterion the pipeline retired
+   * from the research list. Drives the frame's evidence entry in
+   * criterionEvidenceFor. Absent = no frame.
+   */
+  radiusFrame?: (RadiusFrameContext & { frameCriterionLabel: string | null }) | null
+  /**
    * The ZCTAs the research stage actually assessed (the capped
    * candidate subset), when the caller ran one. The near frame's
    * per-place evidence rule reads its coverage against THIS set:
@@ -5016,6 +5134,7 @@ export function composeAnswer(input: {
     failedResearchCriteria: input.research?.failedCriteria,
     researchReAsked: input.research?.reAsked,
     nearFrame: input.nearFrame ?? null,
+    radiusFrame: input.radiusFrame ?? null,
     researchedZctas: input.researchedZctas,
     geographyGate: input.geographyGate ?? null,
     geographyGateFailure: input.geographyGateFailure ?? null,
@@ -5578,6 +5697,21 @@ export interface AnswerPipelineInput {
    */
   nearFrame?: NearFrameContext | null
   /**
+   * The radius frame (core/ai/near-frame.ts), built by the caller
+   * when the question states a radius anchored at a named place
+   * beside a broader geography ("What's the cheapest place to
+   * live in Florida within 100 miles of Miami?"). When supplied,
+   * the caller's geographyZctas IS the frame's candidate set (the
+   * anchor's own ZIP areas included — the anchor is inside its
+   * own radius, never a reference), and the pipeline retires the
+   * decomposed criterion that carries nothing beyond the radius
+   * phrase: the frame is served by construction, accounted in the
+   * evidence from the product's own centroid geography, and never
+   * researched. Absent = no frame; every shipped shape is
+   * untouched.
+   */
+  radiusFrame?: RadiusFrameContext | null
+  /**
    * The geography gate (core/ai/geography-gate.ts), built by the
    * caller when a researched criterion classifies a coarser
    * geography than the Census extremum the question seeks ("what
@@ -5804,6 +5938,61 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     if (frameIndex >= 0) {
       frameCriterionLabel = researchCriteria[frameIndex]!.label
       researchCriteria.splice(frameIndex, 1)
+    }
+  }
+  // Radius frame: the decomposed criterion carrying nothing
+  // beyond the radius phrase is retired from the research list —
+  // the frame is served by construction (the caller bounded the
+  // screen to the in-radius set, drawn deterministically from the
+  // product's own centroid geography), and researching it was the
+  // specimen's degenerate loop: per-place distance findings
+  // assembled from web snippets, headed by places that fail the
+  // very test they were annotated with. Its label is kept for the
+  // evidence entry criterionEvidenceFor composes from the frame:
+  // the reader's own radius phrase when the retired criterion's
+  // text is the whole question (the combined carry's shape for a
+  // single-clause radius question), its own label otherwise. Only
+  // a combined criterion can be the radius carry (see
+  // criterionRetiresForRadius); a segment carrying a second topic
+  // is never retired.
+  let radiusCriterionLabel: string | null = null
+  if (input.radiusFrame) {
+    const radiusIndex = researchCriteria.findIndex((_, index) =>
+      criterionRetiresForRadius(researchCriteria, index, input.radiusFrame!),
+    )
+    if (radiusIndex < 0) {
+      // No criterion carried the radius as its own (decomposition
+      // beside a catalog criterion — schools — never segments it):
+      // the frame still accounts it, under the reader's own
+      // phrase. A combined criterion that survives because it
+      // carries a second topic keeps that topic, but the radius
+      // words are stripped from its text first, so its research
+      // pass is never asked about distance either.
+      radiusCriterionLabel =
+        input.radiusFrame.phraseText.charAt(0).toUpperCase() +
+        input.radiusFrame.phraseText.slice(1)
+      for (const criterion of researchCriteria) {
+        if (criterion.id !== 'combined') continue
+        const strippedText = stripRadiusPhrase(criterion.text, input.radiusFrame.phraseText)
+        if (strippedText !== null && strippedText.replace(/[?.!]+$/, '').trim() !== '') {
+          criterion.text = strippedText
+        }
+      }
+    }
+    if (radiusIndex >= 0) {
+      const retired = researchCriteria[radiusIndex]!
+      const questionText = (input.queryText ?? input.researchQuery ?? '')
+        .replace(/[?.!]+$/, '')
+        .trim()
+        .toLowerCase()
+      const wholeQuestion =
+        retired.text.replace(/[?.!]+$/, '').trim().toLowerCase() === questionText &&
+        questionText !== ''
+      radiusCriterionLabel = wholeQuestion
+        ? input.radiusFrame.phraseText.charAt(0).toUpperCase() +
+          input.radiusFrame.phraseText.slice(1)
+        : retired.label
+      researchCriteria.splice(radiusIndex, 1)
     }
   }
   // Geography gate: the classifying criterion retires from the
@@ -7232,6 +7421,9 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     summaryOverride: countyEmptySummary,
     nearFrame: input.nearFrame
       ? { ...input.nearFrame, frameCriterionLabel }
+      : undefined,
+    radiusFrame: input.radiusFrame
+      ? { ...input.radiusFrame, frameCriterionLabel: radiusCriterionLabel }
       : undefined,
     researchedZctas,
     geographyGate: input.geographyGate ?? undefined,

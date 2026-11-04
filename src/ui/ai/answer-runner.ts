@@ -2,6 +2,7 @@ import {
   breadthShapeFor,
   decomposeResearchCriteria,
   NO_PLACE_LOOKUP_DETAIL,
+  radiusFrameLeavesResearch,
   requestsStateLevel,
   runAnswerPipeline,
   screenCriteriaFromIntent,
@@ -48,8 +49,11 @@ import {
 } from '../../core/ai/nearby'
 import {
   buildNearFrameContext,
+  buildRadiusFrameContext,
   detectNearFrame,
+  detectRadiusFrame,
   type NearFrameContext,
+  type RadiusFrameContext,
 } from '../../core/ai/near-frame'
 import {
   buildGeographyGateContext,
@@ -1144,6 +1148,61 @@ export async function composeAnswerForRequest(input: {
         ],
       }
     : resolved
+  // Radius frame (core/ai/near-frame.ts): the question states a
+  // radius anchored at a named place beside a broader geography
+  // ("What's the cheapest place to live in Florida within 100
+  // miles of Miami?"). The near frame cannot serve this shape (it
+  // requires exactly one geography and reference semantics), and
+  // without a frame the radius reached the research stage as a
+  // criterion and the screen ran over the whole state — the
+  // 2026-11-04 specimen led with places hundreds of miles outside
+  // the radius, annotated from web snippets. When the frame
+  // engages, the resolution handed to the pipeline is the
+  // frame's: the in-radius candidate set (the anchor's own ZIP
+  // areas included, intersected with a co-named state's areas)
+  // replaces the state union as the screen bound, and the radius
+  // reading rides in as a geography disclosure. When every
+  // researched criterion the question decomposes to is the radius
+  // carry itself, no research runs for the run at all (decided at
+  // the pipeline call below): the radius never reaches the
+  // research/material path.
+  let radiusFrame: RadiusFrameContext | null = null
+  let radiusResolved: ResolvedAnswerGeographies | null = null
+  if (!nearFrame && input.placeIndex && input.centroids && input.centroids.length > 0) {
+    const radiusSpec = detectRadiusFrame(input.queryText, input.intent)
+    if (radiusSpec) {
+      let restrictZctas: Set<string> | null = null
+      for (const geography of input.intent.geographies) {
+        if (geography.trim() === radiusSpec.anchorGeography.trim()) continue
+        const code = stateCodeForGeography(geography.trim())
+        if (code) {
+          restrictZctas = new Set(
+            [...input.placeIndex.byZip]
+              .filter(([, record]) => record.state === code)
+              .map(([zip]) => zip),
+          )
+        }
+      }
+      radiusFrame = buildRadiusFrameContext({
+        spec: radiusSpec,
+        placeIndex: input.placeIndex,
+        centroids: input.centroids,
+        restrictZctas,
+      })
+      if (radiusFrame) {
+        radiusResolved = {
+          ...resolved,
+          zctas: radiusFrame.candidateZctas,
+          scopePrefixes: radiusFrame.candidatePrefixes,
+          geographyDisclosures: [
+            `The places shown are the places within ${radiusFrame.radiusMiles} miles of ${radiusFrame.anchorLabel}: ${radiusFrame.candidatePlaceCount} places fall inside the radius, counted by ZIP-area centroid distance from ${radiusFrame.anchorName}'s own ZIP areas, its own ZIP areas included.`,
+            ...resolved.geographyDisclosures,
+          ],
+        }
+      }
+    }
+  }
+  const framedResolved: ResolvedAnswerGeographies = radiusResolved ?? frameResolved
   // Geography gate (core/ai/geography-gate.ts): the question's
   // first criterion is a researched classification of STATES and
   // its second part seeks a Census extremum inside the state(s)
@@ -1178,7 +1237,7 @@ export async function composeAnswerForRequest(input: {
   // ask exceeded the research route's query ceiling and both
   // specimens' gates died here invisibly.
   let geographyGateFailure: GeographyGateFailureContext | null = null
-  if (input.research && !nearFrame) {
+  if (input.research && !nearFrame && !radiusFrame) {
     gateSpec = detectGeographyGate({
       queryText: input.queryText,
       intent: input.intent,
@@ -1271,7 +1330,7 @@ export async function composeAnswerForRequest(input: {
   const boundResolved: ResolvedAnswerGeographies =
     geographyGate && gateBound
       ? {
-          ...frameResolved,
+          ...framedResolved,
           zctas: gateBound,
           geographyDisclosures: [
             geographyGate.winnerState
@@ -1288,10 +1347,10 @@ export async function composeAnswerForRequest(input: {
             // or outside the bound is explicable from this line
             // alone, never from the line on a map.
             'ZIP areas are counted in the state of the place they belong to, so a ZIP area that crosses a state line is screened — and shown — under that one state.',
-            ...frameResolved.geographyDisclosures,
+            ...framedResolved.geographyDisclosures,
           ],
         }
-      : frameResolved
+      : framedResolved
   // Set when any assembly below had to shorten steering text to
   // fit the research route's ceiling; disclosed on the researched
   // criteria's evidence lines before the answer returns.
@@ -1348,6 +1407,19 @@ export async function composeAnswerForRequest(input: {
           ],
         }
       : null
+  // Radius frame research discipline: when the frame engaged and
+  // every researched criterion the question decomposes to is the
+  // radius carry (or a decomposed Census criterion), the research
+  // stage has nothing to serve — the run passes no research query,
+  // exactly the preliminary staging's combination (criteria reach
+  // the pipeline, no research stage runs). A surviving genuine
+  // criterion (schools beside the radius) keeps its research,
+  // which then runs over the in-radius candidates only. The
+  // pipeline's own retirement of the radius criterion is the
+  // second layer of the same discipline.
+  const radiusSuppressResearch = radiusFrame
+    ? !radiusFrameLeavesResearch(researchCriteria, radiusFrame)
+    : false
   const runPipeline = (query: string, forwardProgress: boolean, screenOnly = false) =>
     runAnswerPipeline({
       intent: gateIntent ?? input.intent,
@@ -1357,10 +1429,11 @@ export async function composeAnswerForRequest(input: {
       // resolved from: its per-geography failures and its region
       // readings ride in, so the card's geography lines can never
       // contradict the resolution the card was composed from.
-      unresolvedGeographies: frameResolved.unresolvedGeographies,
+      unresolvedGeographies: framedResolved.unresolvedGeographies,
       geographyDisclosures: boundResolved.geographyDisclosures,
-      stateAggregates: geographyGate ? undefined : frameResolved.stateAggregates,
+      stateAggregates: geographyGate ? undefined : framedResolved.stateAggregates,
       nearFrame,
+      radiusFrame,
       // The geography gate, when the classification resolved above:
       // the pipeline retires the classifying criterion, takes the
       // screen path under the bound (geographyZctas), and composes
@@ -1383,7 +1456,11 @@ export async function composeAnswerForRequest(input: {
       // so the preliminary's criteria accounting names every
       // stated criterion — the runner then re-labels the
       // research-served entries as pending (below).
-      researchQuery: screenOnly ? undefined : input.research ? query : undefined,
+      researchQuery: screenOnly
+        ? undefined
+        : input.research && !radiusSuppressResearch
+          ? query
+          : undefined,
       // Decomposition always reads the reader's original words, never
       // the focused research query: the focus text names modes and
       // levels ("a short public transit ride") that the criterion

@@ -7,7 +7,12 @@ import { validateCensusKey as validateCensusKeyLive } from '../core/censusKey'
 import { DISPLAYABLE_KEYS } from '../core/ai/intent-schema'
 import type { ValidatedIntent } from '../core/ai/provider'
 import { asStateCode, loadPlaceIndex, splitStateSuffix, type PlaceIndex, type PlaceSuggestion } from '../core/zcta-place-index'
-import { detectNearFrame, nearCandidatePrefixes } from '../core/ai/near-frame'
+import {
+  detectNearFrame,
+  detectRadiusFrame,
+  nearCandidatePrefixes,
+  radiusCandidatePrefixes,
+} from '../core/ai/near-frame'
 import { loadCentroids } from '../core/map/projection'
 import type { ZctaPoint } from '../core/map/centroids'
 import { loadCountyIndex, type CountyIndex } from '../core/zcta-county-index'
@@ -955,8 +960,15 @@ export default function App() {
     // centroid load failure engages nothing: the shipped path
     // stands, unchanged.
     const frameSpec = placeIndex ? detectNearFrame(queryText, intent) : null
+    // Radius frame precheck (the near frame's twin): a stated
+    // radius beside a broader geography ("cheapest place in
+    // Florida within 100 miles of Miami") draws its candidates
+    // from the same centroid geography, so the load and the
+    // coverage union run on the same terms.
+    const radiusSpec =
+      !frameSpec && placeIndex ? detectRadiusFrame(queryText, intent) : null
     let coverageResolved = resolved
-    if (frameSpec && placeIndex) {
+    if ((frameSpec || radiusSpec) && placeIndex) {
       if (askCentroids === undefined) {
         if (!centroidsLoadStarted.current) {
           centroidsLoadStarted.current = true
@@ -968,7 +980,13 @@ export default function App() {
         if (stillWaiting()) return
       } else if (askCentroids) {
         const framePrefixes =
-          nearCandidatePrefixes({ spec: frameSpec, placeIndex, centroids: askCentroids }) ?? []
+          (frameSpec
+            ? nearCandidatePrefixes({ spec: frameSpec, placeIndex, centroids: askCentroids })
+            : radiusCandidatePrefixes({
+                spec: radiusSpec!,
+                placeIndex,
+                centroids: askCentroids,
+              })) ?? []
         if (framePrefixes.length > 0) {
           coverageResolved = {
             ...resolved,

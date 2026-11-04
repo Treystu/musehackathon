@@ -141,6 +141,21 @@ export function Methodology({
             what the sources say, with the citation attached — the weighing stays with the reader.
           </p>
           <p>
+            The geography of a question is read as geography, never as a topic for web research. A
+            question can name an area the data cannot place exactly — &ldquo;the Bay area&rdquo;, say.
+            The assistant does not drop the name and does not guess silently: it asks the reader to
+            confirm the region it read (&ldquo;You named &lsquo;Bay area&rsquo;. Is this the area you
+            mean?&rdquo;), and nothing is screened while the name stands unconfirmed. A confirmed region
+            is screened at its full county membership — the San Francisco Bay Area is its nine
+            counties — and the answer states the reading it used; an area the tool cannot place at all
+            is named as unplaceable rather than answered around. A stated distance works the same way:
+            &ldquo;within 100 miles of Miami&rdquo; bounds the screen before anything is ranked. A place
+            is inside when its nearest ZIP-area centroid lies within the stated distance of one of the
+            anchor place&rsquo;s own ZIP-area centroids — the centroid geography the site&rsquo;s maps
+            are drawn from — and the anchor&rsquo;s own ZIP areas count as inside. The answer states
+            the radius, the anchor, and how many places fell inside it.
+          </p>
+          <p>
             A question that is not about places or data at all — arithmetic, a joke, a thought
             experiment — is answered by the model from its own knowledge, in the answer column
             under a label that says exactly that: it is the model&rsquo;s own answer, outside the
@@ -169,9 +184,17 @@ export function Methodology({
             Muse Spark 1.3 and Muse Wonder — with a Muse Wonder judge; the convergence specialist is
             pinned to Muse models as well, every run is cost-bounded before dispatch and recorded in a
             hash-chained ledger that is verified afterwards, and each run's event record is audited so
-            that no model other than a Muse model takes part. The first panel verdicts are pending an
-            upstream limit reset, so those checks are in place but not yet green. Sovereign-Harness runs
-            only at verification time; it does not drive, route, or check live requests. Changes to this
+            that no model other than a Muse model takes part. The panel ran on 2026-11-04 against the
+            build then frozen for submission, and the panel and its judge rejected all seven defect
+            claims made against these properties. It ran on a locally patched harness transport,
+            because the released sovereign-harness 0.5.1 hard-wires the panel&rsquo;s model calls to a
+            third-party router rather than the Muse models API; the transport fix is pull request #449
+            to the harness repository (Treystu/harness), open and not merged, and the run&rsquo;s
+            verdicts are recorded on that pull request. One change has shipped to the assistant since
+            the panel ran — a stated radius in a question is now applied by the screen as geography
+            (below) instead of being researched — and the panel has not been re-run against it.
+            Sovereign-Harness runs only at verification time; it does not drive, route, or check live
+            requests. Changes to this
             layer are additionally scored before they ship by Jev, a typed judgement model, under the
             project's Jev gate policy. Questions are routed through the Muse models API by
             a proxy whose meter counts every call at flat per-call rates for budget accounting only; the
@@ -296,8 +319,9 @@ export function Methodology({
           referral fees and no paid placement.
         </p>
         <p className="section-note mt-2">
-          Three things are true and worth stating plainly rather than glossing. The repository sits in a GitHub
-          organisation, which is an organisation that can delete it, so it is not unowned in the strict sense.
+          Three things are true and worth stating plainly rather than glossing. The repository sits in a
+          personal GitHub account (Treystu), which is an account that can delete it, so it is not unowned
+          in the strict sense.
           Donations are possible, but they go to a person&rsquo;s accounts rather than to a collective, so the
           money is personal property and the balance is not public. And nothing here is funded, so nothing here
           is guaranteed &mdash; a source can change and the maintainer can stop.

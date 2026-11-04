@@ -643,9 +643,16 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
             The composed summary names the outcome when criteria were
             applied. With no criteria (a plain lookup) the place and
             its figure are the statement, so the sentence is skipped
-            rather than claiming criteria that were never stated.
+            rather than claiming criteria that were never stated. A
+            ranked conclusion renders on its own signal (cure round
+            4): a state ranking's winner sentence claims no criteria —
+            it IS the outcome — and the sort metric that produced it
+            is a metric key, not a criterion, so the criteria gate
+            hid it on exactly the answers that needed it.
           */}
-          {(answer.criteria.length > 0 || answer.researchCriteria.length > 0) && (
+          {(answer.criteria.length > 0 ||
+            answer.researchCriteria.length > 0 ||
+            answer.rankedConclusion) && (
             <p className="mt-2 text-base leading-relaxed text-slate-800">{answer.summary}</p>
           )}
           <CriterionEvidenceList answer={answer} />

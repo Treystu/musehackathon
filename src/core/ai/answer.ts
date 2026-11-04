@@ -399,6 +399,17 @@ export interface ComposedAnswer {
   generalClaims: ResearchedClaim[]
   sources: AnswerSource[]
   summary: string
+  /**
+   * True when the summary leads with a ranked conclusion (the
+   * state-unit ranking terminal, cure round 4, 2026-11-03). The
+   * card renders the summary on this signal even when no criterion
+   * was stated: the card's criteria gate exists to skip the
+   * neutral framing sentence on plain lookups, and on the live
+   * state-superlative path it also hid the ranking's winner
+   * sentence entirely — the sort metric is a metric key, not a
+   * filter criterion, so the answer carried neither criteria list.
+   */
+  rankedConclusion?: boolean
   droppedClaims: ResearchedClaim[]
   failures: string[]
   /** The researched criteria decomposed from the question, in catalog order. */
@@ -3827,6 +3838,69 @@ function degradedComparisonLead(input: {
   return `On the Census figures shown, ${parts.join('; ')}.`
 }
 
+/**
+ * The conclusion for a state-unit ranking terminal (cure round 4,
+ * 2026-11-03): the ranked state aggregates are the answer, and the
+ * summary names the state the ranking puts first. The sentence
+ * takes one of two forms under the same precision discipline the
+ * degraded comparison lead follows — a winner is asserted ("has
+ * the highest / lowest ...") only when the winner's own
+ * margin-of-error band on the ranked figure clears every other
+ * shown state's band, and clears the bare value of any state whose
+ * figure carries no margin; where the bands do not carry that
+ * claim, the sentence states only the order the card itself shows
+ * ("heads the states ordered by ..."), which is true by
+ * construction. Numeral-free, like every composed summary, and
+ * free of the validator's comparative constructions in both forms,
+ * so the claim the verify stage can check is the ordering, never
+ * an unstated precision.
+ */
+export function rankedStateLead(
+  rows: readonly AreaRow[],
+  rankKey: string,
+  direction: RankDirection,
+): string | null {
+  const winner = rows[0]
+  if (!winner) return null
+  const label = figureClauseLabel(rankKey)
+  const winnerValue = winner.metrics[rankKey]
+  if (typeof winnerValue !== 'number' || !Number.isFinite(winnerValue)) return null
+  const bandOf = (row: AreaRow): { lo: number; hi: number } | null => {
+    const moe = row.moes[rankKey]
+    const value = row.metrics[rankKey]
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null
+    if (typeof moe !== 'number' || !Number.isFinite(moe)) return null
+    return { lo: value - Math.abs(moe), hi: value + Math.abs(moe) }
+  }
+  const winnerBand = bandOf(winner)
+  const clear =
+    rows.length >= 2 &&
+    rows.slice(1).every((row) => {
+      const value = row.metrics[rankKey]
+      if (typeof value !== 'number' || !Number.isFinite(value)) return false
+      const band = bandOf(row)
+      if (!winnerBand && !band) return true
+      if (!winnerBand || !band) {
+        // One side banded, the other not: the band must not
+        // contain the other side's value.
+        const b = (winnerBand ?? band) as { lo: number; hi: number }
+        const other = winnerBand ? value : winnerValue
+        return other < b.lo || other > b.hi
+      }
+      return direction === 'descending' ? band.hi < winnerBand.lo : band.lo > winnerBand.hi
+    })
+  if (clear) {
+    return (
+      `On the Census figures shown, ${winner.name} has the ` +
+      `${direction === 'descending' ? 'highest' : 'lowest'} ${label} of the states shown.`
+    )
+  }
+  return (
+    `On the Census figures shown, ${winner.name} heads the states ordered by ${label}, ` +
+    `${direction === 'descending' ? 'highest first' : 'lowest first'}.`
+  )
+}
+
 export function composeAnswer(input: {
   intent: ValidatedIntent
   screen: ScreenResult
@@ -3865,6 +3939,14 @@ export function composeAnswer(input: {
   geographyDisclosures?: readonly string[]
   /** True when a state-average place was composed from a named state geography. */
   stateSupported?: boolean
+  /**
+   * The ranked conclusion for a state-unit ranking terminal,
+   * computed by the pipeline at the ranking seam (it owns the
+   * direction reading and the ranked rows) and prepended to the
+   * summary by compose, in the position the degraded comparison
+   * lead occupies on its own shape.
+   */
+  rankedLead?: string | null
 }): ComposedAnswer {
   const { intent, screen } = input
   // Pull mode (research-first): candidates arrived from research, so
@@ -4082,7 +4164,9 @@ export function composeAnswer(input: {
             ? 'The places named here meet all of the stated Census criteria, with the deciding figures shown from Census data.'
             : comparisonLead
               ? `${comparisonLead} The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`
-              : `The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`)
+              : input.rankedLead
+                ? `${input.rankedLead} The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`
+                : `The places named here are shown with their Census figures for the measures in this request.${partialClause}${notMeasuredClause}`)
   // Candidate direction (Lane A9 FM-4): on the research-first path
   // (pullMode — the places ARE the research's candidates), a place
   // whose serving claims all describe it as not meeting the stated
@@ -4143,6 +4227,7 @@ export function composeAnswer(input: {
     notMeasurableCounties: [...(input.notMeasurableCounties ?? [])],
     geographyDisclosures: [...(input.geographyDisclosures ?? [])],
     stateMethod: input.stateSupported ? STATE_AGGREGATION_METHOD : null,
+    ...(input.rankedLead ? { rankedConclusion: true } : {}),
   }
 }
 
@@ -5381,6 +5466,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
   let stateMeta: Map<string, { memberZctas: string[]; approximateMarginKeys: readonly string[] }> | undefined
   let stateSupported = false
   let stateRankingApplied = false
+  let stateRankedLead: string | null = null
   const pipelineDisclosures: string[] = []
   if (!countySupported && input.stateAggregates && input.stateAggregates.length > 0) {
     const figureKeys = [
@@ -5417,6 +5503,22 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
           `${aggregate.label} was named as a state average, but its figures could not be ` +
             'aggregated from the available ZIP-area figures, so no state average is shown for it.',
         )
+        // The failed average's members leave with it (cure round
+        // 4, 2026-11-03): the members entered the screen as the
+        // average's material, and keeping them replaced the dropped
+        // average with its own ZIP places. Measured live on
+        // production da4e60e: the partitions ACS publishes nothing
+        // for (AS/GU/MP/VI — 17 ZCTA rows the sweep carries as
+        // absent rows, no figures at all) stayed in the terminal
+        // set ahead of every formed state average, and the
+        // leftovers falsified the state-ranking guard below
+        // (every terminal row a state aggregate), so no ranking,
+        // no state level, and no winner ever reached the card —
+        // the rendered list was the unaggregated remainder, in
+        // screen order, identical for "oldest" and "youngest".
+        // A ZIP the intent named outright stays, under the same
+        // exception the formed branch below keeps for it.
+        rows = rows.filter((row) => !memberSet.has(row.zcta) || zipNamed.has(row.zcta))
         continue
       }
       stateSupported = true
@@ -5463,6 +5565,11 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         return (direction === 'descending' ? bv - av : av - bv) || a.name.localeCompare(b.name, 'en')
       })
       stateRankingApplied = true
+      // The ranked conclusion (cure round 4): computed here, where
+      // the ranked rows and the direction reading both live, and
+      // carried to compose as the summary's lead — the unranked
+      // terminal this replaces named no state at all.
+      stateRankedLead = rankedStateLead(rows, rankKey, direction)
     }
     if (stateSupported) effectiveScreen = { ...effectiveScreen, rows }
   }
@@ -5586,6 +5693,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
     notMeasurableCounties,
     geographyDisclosures: [...(input.geographyDisclosures ?? []), ...pipelineDisclosures],
     stateSupported,
+    rankedLead: stateRankedLead,
     summaryOverride: countyEmptySummary,
   })
   const composedWithFailures =

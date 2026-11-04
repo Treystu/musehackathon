@@ -62,8 +62,22 @@ export interface SweepManifest {
  * the count of commuting workers — the metric is now that count under an honest
  * label. Rows cached under v6 would render the old meanings under the new
  * labels forever, so the stamp moves again.
+ *
+ * v8: the variable set grew by one — B01002_001M, the median-age margin,
+ * joined SCREEN_VARS (cure round 3) — but the stamp did not move with it,
+ * so chunks parsed under v7 by the earlier build kept being served
+ * verbatim: parsed rows in which the margin column does not exist, which
+ * no sanitiser can restore, since a cache hit bypasses fetch and parse.
+ * Measured live on production eab3d37 (2026-11-03): the ranked
+ * state-average answer rendered bare integers on all 52 state cards in a
+ * browser holding v7 chunks, while a fresh session on the same build
+ * rendered the "± approx." margins — the state combiner found zero
+ * margin-carrying members in every state because the margin had never
+ * been fetched into those rows. The stamp moves now, one full refetch is
+ * the honest cost, and tests/ai/screen-median-age-margin.test.ts pins
+ * the variable set and the stamp moving together.
  */
-export const SWEEP_VERSION = 'acs5:2023:screen:v7-honest-labels'
+export const SWEEP_VERSION = 'acs5:2023:screen:v8-median-age-margin'
 
 export interface SweepScope {
   /** Empty means the whole country. Otherwise a list of two-digit ZIP prefixes. */

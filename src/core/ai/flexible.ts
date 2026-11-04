@@ -600,6 +600,39 @@ export function verifyFlexibleAnswer(
     if (banned) failures.push(`banned construction in flexible answer (${banned}): ${surface}`)
   }
 
+  // Place-figure binding (round 4, 2026-11-04): the flexible
+  // lane's prose is model-drafted, and its typed figures are
+  // checked above — but a dollar figure in prose naming a place
+  // was bound to nothing, the same gap the strict seam carried
+  // (a lead naming a place at a figure its own entry contradicts).
+  // A dollar figure in a sentence naming a place that carries
+  // figures must equal one of that place's own figures or an
+  // answer-level figure; a place carrying no figures binds
+  // nothing and is skipped, as on the strict seam.
+  const answerFigureValues = answer.figures.map((f) => f.value)
+  for (const surface of [answer.prose, ...answer.places.map((p) => p.note ?? '')]) {
+    if (!surface) continue
+    for (const sentence of surface.split(/(?<=[.!?])\s+/)) {
+      const lower = sentence.toLowerCase()
+      const named = answer.places.filter(
+        (p) => p.figures.length > 0 && lower.includes(p.name.toLowerCase()),
+      )
+      if (named.length === 0) continue
+      for (const match of sentence.matchAll(/\$\s?([\d,]+(?:\.\d+)?)/g)) {
+        const value = Number(match[1]!.replace(/,/g, ''))
+        if (!Number.isFinite(value)) continue
+        const bound =
+          answerFigureValues.some((v) => Math.round(v) === Math.round(value)) ||
+          named.some((p) => p.figures.some((f) => Math.round(f.value) === Math.round(value)))
+        if (!bound) {
+          failures.push(
+            `flexible prose figure not bound to named place: $${value} in "${sentence}" matches no figure of ${named.map((p) => p.name).join(', ')}`,
+          )
+        }
+      }
+    }
+  }
+
   return { ok: failures.length === 0, failures }
 }
 

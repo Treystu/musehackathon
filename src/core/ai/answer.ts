@@ -180,7 +180,11 @@ import {
   type RunProgressSnapshot,
 } from './run-progress'
 import { isFrameSegmentText, type NearFrameContext } from './near-frame'
-import { stateCountPhrase, type GeographyGateContext } from './geography-gate'
+import {
+  stateCountPhrase,
+  type GeographyGateContext,
+  type GeographyGateFailureContext,
+} from './geography-gate'
 
 /* ------------------------------------------------------------------ */
 /* Stage types                                                         */
@@ -631,6 +635,17 @@ export interface ComposedAnswer {
    * classification, never a rendering's recount.
    */
   geographyGate?: GeographyGateRecord
+  /**
+   * The detected-but-unapplied gate (round 4, 2026-11-04): present
+   * exactly when a geography gate was detected for this question
+   * but could not be applied (the classification lookup did not
+   * return, the research named no qualifying state, or no screened
+   * place falls inside the qualifying set). The criteria block
+   * accounts the classifying criterion from this record — the
+   * answer states the criterion could not be applied and why —
+   * and no surface may imply the restriction happened.
+   */
+  geographyGateFailure?: GeographyGateFailureContext
 }
 
 /**
@@ -3545,6 +3560,14 @@ export function criterionEvidenceFor(input: {
    * bounded the screen, with the classification's own sources.
    */
   geographyGate?: GeographyGateContext | null
+  /**
+   * The detected-but-unapplied gate (round 4): the classifying
+   * criterion was retired from the research list (the gate's
+   * detection claimed it), so its evidence entry is composed from
+   * this record — the criterion could not be applied, with the
+   * reason, and the answer's non-restriction stated plainly.
+   */
+  geographyGateFailure?: GeographyGateFailureContext | null
 }): CriterionEvidence[] {
   const evidence: CriterionEvidence[] = []
   for (const criterion of input.criteria) {
@@ -3892,6 +3915,26 @@ export function criterionEvidenceFor(input: {
           ? `Classified from the cited research before the Census screen ran: the research singles out ${gate.winnerState.name} for this criterion, among the ${stateCountPhrase(gate.classifiedStates.length)} it classifies as meeting it (${classifiedNames}). The cost screen then ran inside ${gate.winnerState.name} alone, as the question's dependent bound asks.`
           : `Classified from the cited research before the Census screen ran: the research classifies ${stateCountPhrase(gate.classifiedStates.length)} as meeting this criterion (${classifiedNames}) and singles out no one state as the strongest, so the cost screen ran inside ${gate.classifiedStates.length === 1 ? 'that' : 'those'} ${stateCountPhrase(gate.classifiedStates.length)}.`),
       sourceUrls: gate.sources.map((s) => s.url),
+    })
+  }
+  // Detected-but-unapplied gate (round 4): the classifying
+  // criterion's entry states that the gate could not be applied
+  // and why, and that the answer is NOT restricted to the states
+  // the criterion names. The shipped failure this replaces: the
+  // gate died silently at the classification call and the ungated
+  // card carried research prose deflecting the reader to filter
+  // a map themselves — a gate that cannot be applied is accounted
+  // as unapplied, never outsourced to the reader.
+  if (input.geographyGateFailure) {
+    const failure = input.geographyGateFailure
+    evidence.push({
+      criterion: failure.criterionLabel,
+      kind: 'research',
+      status: 'not_measurable',
+      detail:
+        `This criterion could not be applied in this run: ${failure.reason}. ` +
+        'The answer below is not restricted to the states this criterion names.',
+      sourceUrls: [],
     })
   }
   // Criterion-slot accounting (P3 step 3, battery A4): a stated
@@ -4310,6 +4353,8 @@ export function composeAnswer(input: {
    * Absent = no gate.
    */
   geographyGate?: GeographyGateContext | null
+  /** The detected-but-unapplied gate (round 4), accounted in the evidence and recorded on the answer. */
+  geographyGateFailure?: GeographyGateFailureContext | null
 }): ComposedAnswer {
   const { intent, screen } = input
   // Pull mode (research-first): candidates arrived from research, so
@@ -4474,6 +4519,40 @@ export function composeAnswer(input: {
     }
   }
 
+  // Gate-shaped claim discipline (round 4, 2026-11-04): on a
+  // gate-shaped answer (a gate formed, or one was detected but
+  // could not be applied), three classes of research-carried
+  // prose never render. (1) SET-RELATION claims about the
+  // classified lists ("the two lists are disjoint") — compose
+  // owns that accounting: when a gate formed, its evidence entry
+  // computes the overlap from the lists themselves; when none
+  // formed, no record verifies the claim (the 5c32847 specimen
+  // asserted disjointness while Alaska and New Hampshire sat in
+  // both lists). (2) DEFLECTION imperatives telling the reader to
+  // apply the restriction themselves ("use the gate map below",
+  // "filtering the map to your chosen states") — applying the
+  // criterion is the product's job or an accounted failure, never
+  // the reader's. (3) GATE-MAP references when no gate formed —
+  // a gate map cannot be referred to on a card that has none.
+  if (input.geographyGate || input.geographyGateFailure) {
+    const SET_RELATION_RE =
+      /\bdisjoint\b|\bmutually exclusive\b|\bno overlap\b|\bnon-?overlapping\b/i
+    const DEFLECTION_RE =
+      /\buse the (?:gate )?map\b|\bfilter(?:ing)? the map\b|\bto narrow this\b|\bnarrow (?:this|the list) to\b/i
+    const GATE_MAP_RE = /gate[ -]map/i
+    for (let i = generalClaims.length - 1; i >= 0; i--) {
+      const text = generalClaims[i]!.text
+      if (
+        SET_RELATION_RE.test(text) ||
+        DEFLECTION_RE.test(text) ||
+        (!input.geographyGate && GATE_MAP_RE.test(text))
+      ) {
+        droppedClaims.push(generalClaims[i]!)
+        generalClaims.splice(i, 1)
+      }
+    }
+  }
+
   const sources = [
     ...new Map(
       [...(input.research?.sources ?? []), ...(input.geographyGate?.sources ?? [])].map(
@@ -4501,6 +4580,7 @@ export function composeAnswer(input: {
     researchReAsked: input.research?.reAsked,
     nearFrame: input.nearFrame ?? null,
     geographyGate: input.geographyGate ?? null,
+    geographyGateFailure: input.geographyGateFailure ?? null,
   })
   // Summary-claim rule (P3 step 4, battery A1/B5/C5/D2): the
   // "meet all of the stated Census criteria" sentence renders ONLY
@@ -4694,6 +4774,9 @@ export function composeAnswer(input: {
     stateMethod: input.stateSupported ? STATE_AGGREGATION_METHOD : null,
     ...(input.rankedLead ? { rankedConclusion: true } : {}),
     ...(gateRecord ? { geographyGate: gateRecord } : {}),
+    ...(input.geographyGateFailure
+      ? { geographyGateFailure: input.geographyGateFailure }
+      : {}),
   }
 }
 
@@ -4781,7 +4864,80 @@ export function verifyAnswer(
     failures.push(`summary failed validator: ${verdict.failure}: ${verdict.detail}`)
   }
 
+  // Place-figure binding (round 4, 2026-11-04): the validator
+  // above admits a summary numeral that appears in ANY shown
+  // place's figures — it binds figures to the ANSWER, not to the
+  // place a sentence names. The live specimen's lead named
+  // Bridgeport, CA at $1,025/mo while Bridgeport's screened row
+  // (and its own place entry on the same card) is $225: no seam
+  // could reject it. The binding rule: a dollar figure in a
+  // sentence that names shown places must equal a figure OF one
+  // of the places that sentence names. Applied to the summary,
+  // and — restricted to sentences that read the figure as a
+  // Census measure (rent / cost of living / household income /
+  // home value) — to general claims, the prose surface the
+  // specimen's lead rode in on.
+  failures.push(...placeFigureBindingFailures(answer.summary, answer.places, 'summary'))
+  const MEASURE_KEYWORDS: readonly { pattern: RegExp; key: string }[] = [
+    { pattern: /\brent\b|\bcost of living\b/i, key: 'median_gross_rent' },
+    { pattern: /\bhousehold income\b/i, key: 'median_household_income' },
+    { pattern: /\bhome value\b|\bhouse price\b/i, key: 'median_home_value' },
+  ]
+  for (const claim of answer.generalClaims) {
+    for (const sentence of claim.text.split(/(?<=[.!?])\s+/)) {
+      const measure = MEASURE_KEYWORDS.find((m) => m.pattern.test(sentence))
+      if (!measure) continue
+      const lower = sentence.toLowerCase()
+      for (const place of answer.places) {
+        if (!lower.includes(place.name.toLowerCase())) continue
+        const expected = place.figures.find((f) => f.key === measure.key)?.value
+        if (expected === undefined) continue
+        for (const match of sentence.matchAll(/\$\s?([\d,]+(?:\.\d+)?)/g)) {
+          const value = Number(match[1]!.replace(/,/g, ''))
+          if (Number.isFinite(value) && Math.round(value) !== Math.round(expected)) {
+            failures.push(
+              `claim figure not bound to named place: ${place.name} ${measure.key} is ${expected}, claim says ${value}: ${sentence}`,
+            )
+          }
+        }
+      }
+    }
+  }
+
   return { ok: failures.length === 0, failures }
+}
+
+/**
+ * Dollar figures in prose sentences that name shown places,
+ * checked against the named places' own figures: every figure in
+ * a sentence must equal some figure of some place the sentence
+ * names. A sentence naming no shown place is out of scope (anchor
+ * and reference figures are accounted by their own seams).
+ */
+export function placeFigureBindingFailures(
+  text: string,
+  places: readonly AnswerPlace[],
+  surface: string,
+): string[] {
+  const failures: string[] = []
+  for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+    const lower = sentence.toLowerCase()
+    const named = places.filter((p) => lower.includes(p.name.toLowerCase()))
+    if (named.length === 0) continue
+    for (const match of sentence.matchAll(/\$\s?([\d,]+(?:\.\d+)?)/g)) {
+      const value = Number(match[1]!.replace(/,/g, ''))
+      if (!Number.isFinite(value)) continue
+      const bound = named.some((p) =>
+        p.figures.some((f) => Math.round(f.value) === Math.round(value)),
+      )
+      if (!bound) {
+        failures.push(
+          `${surface} figure not bound to named place: $${value} in "${sentence}" matches no figure of ${named.map((p) => p.name).join(', ')}`,
+        )
+      }
+    }
+  }
+  return failures
 }
 
 /* ------------------------------------------------------------------ */
@@ -4922,6 +5078,16 @@ export interface AnswerPipelineInput {
    * shipped shape is untouched.
    */
   geographyGate?: GeographyGateContext | null
+  /**
+   * The detected-but-unapplied gate (round 4): detected by the
+   * caller, unappliable there (classification lookup failed,
+   * empty classification, or an empty bound). The classifying
+   * criterion retires from the research list (its accounting is
+   * the failure entry compose stamps from this record), and the
+   * gate-shaped claim discipline in compose applies. Absent = no
+   * gate was detected.
+   */
+  geographyGateFailure?: GeographyGateFailureContext | null
 }
 
 function emptyAnswerFields(): Pick<
@@ -5029,6 +5195,19 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
         c.label === input.geographyGate!.criterionLabel,
     )
     if (gateIndex >= 0) researchCriteria.splice(gateIndex, 1)
+  }
+  // Detected-but-unapplied gate (round 4): the classifying
+  // criterion retires the same way — its service was claimed by
+  // the gate's detection, and per-place research must not re-serve
+  // it as an annotation that reads as applied. Its evidence entry
+  // is composed from the failure record in criterionEvidenceFor.
+  if (input.geographyGateFailure) {
+    const failureIndex = researchCriteria.findIndex(
+      (c) =>
+        c.id === input.geographyGateFailure!.criterionId &&
+        c.label === input.geographyGateFailure!.criterionLabel,
+    )
+    if (failureIndex >= 0) researchCriteria.splice(failureIndex, 1)
   }
   const countyRequested = requestsCountyLevel(input.queryText ?? input.researchQuery, input.intent)
   const unsupportedGeography = countyRequested ? 'county' : null
@@ -6288,6 +6467,7 @@ export async function runAnswerPipeline(input: AnswerPipelineInput): Promise<Com
       ? { ...input.nearFrame, frameCriterionLabel }
       : undefined,
     geographyGate: input.geographyGate ?? undefined,
+    geographyGateFailure: input.geographyGateFailure ?? undefined,
   })
   const composedWithFailures =
     research?.failedCriteria?.length

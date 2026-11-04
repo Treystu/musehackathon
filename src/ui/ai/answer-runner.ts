@@ -59,6 +59,7 @@ import {
   gateClassificationQueryText,
   stateCountPhrase,
   type GeographyGateContext,
+  type GeographyGateFailureContext,
   type GeographyGateSpec,
 } from '../../core/ai/geography-gate'
 import type { ZctaPoint } from '../../core/map/centroids'
@@ -1058,6 +1059,17 @@ export async function composeAnswerForRequest(input: {
   let geographyGate: GeographyGateContext | null = null
   let gateBound: ReadonlySet<string> | null = null
   let gateSpec: GeographyGateSpec | null = null
+  // Detected-but-unapplied gate (round 4, 2026-11-04): when
+  // detection forms a spec but the gate cannot be applied, the
+  // failure is RECORDED and handed to the pipeline, which
+  // accounts the classifying criterion as unapplied with the
+  // reason. The shipped behavior converted every failure to a
+  // silent null and the ungated card implied — or, via carried
+  // research prose, outsourced — a restriction that never
+  // happened; measured live on 5c32847, where the classification
+  // ask exceeded the research route's query ceiling and both
+  // specimens' gates died here invisibly.
+  let geographyGateFailure: GeographyGateFailureContext | null = null
   if (input.research && !nearFrame) {
     gateSpec = detectGeographyGate({
       queryText: input.queryText,
@@ -1073,17 +1085,35 @@ export async function composeAnswerForRequest(input: {
         )
         .catch(() => null)
       timings.classification = performance.now() - classificationStarted
-      if (classificationResult) {
+      if (!classificationResult) {
+        geographyGateFailure = {
+          criterionId: gateSpec.criterion.id,
+          criterionLabel: gateSpec.criterion.label,
+          reason: 'the classification lookup did not return',
+        }
+      } else {
         const context = buildGeographyGateContext({
           spec: gateSpec,
           classification: classifyStatesFromResearch(classificationResult.prose, gateSpec),
           sources: classificationResult.sources,
         })
-        if (context) {
+        if (!context) {
+          geographyGateFailure = {
+            criterionId: gateSpec.criterion.id,
+            criterionLabel: gateSpec.criterion.label,
+            reason: 'the cited research named no state meeting this criterion',
+          }
+        } else {
           const bound = gateBoundZctas(rows, context.boundStates)
           if (bound.size > 0) {
             geographyGate = context
             gateBound = bound
+          } else {
+            geographyGateFailure = {
+              criterionId: gateSpec.criterion.id,
+              criterionLabel: gateSpec.criterion.label,
+              reason: 'no screened place falls inside the states the research classifies',
+            }
           }
         }
       }
@@ -1176,6 +1206,12 @@ export async function composeAnswerForRequest(input: {
       // screen path under the bound (geographyZctas), and composes
       // the gate's evidence, lead, and record.
       geographyGate,
+      // The detected-but-unapplied gate, when detection formed a
+      // spec the classification could not carry: the pipeline
+      // accounts the classifying criterion as unapplied with the
+      // recorded reason, and the gate-shaped claim discipline
+      // applies to the ungated card.
+      geographyGateFailure,
       // Screen-only (the preliminary staging): no research query,
       // so no research stage runs; the criteria decomposition
       // still reaches the pipeline exactly as on the full path,

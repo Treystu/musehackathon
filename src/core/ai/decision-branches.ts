@@ -16,7 +16,7 @@
  */
 import { applicableModes, modeListText, type NearbyMode } from './nearby'
 
-export type BranchId = 'transport' | 'school-level' | 'budget-anchor'
+export type BranchId = 'transport' | 'school-level' | 'budget-anchor' | 'proximity-distance'
 
 export interface BranchOption {
   id: string
@@ -67,6 +67,24 @@ export const BRANCH_CATALOG: Readonly<Record<BranchId, BranchDefinition>> = {
     ],
     dismissLabel: 'Answer either way',
   },
+  /**
+   * The generic proximity branch (Hail-Mary H4): it claims the
+   * uncatalogued 'combined' research criterion, so a proximity-shaped
+   * follow-up whose sole criterion no catalogued branch claims can
+   * reach the modal by construction. Options are distances, not
+   * modes: the modal proposes the distance for the reader to
+   * confirm instead of the pipeline defaulting silently.
+   */
+  'proximity-distance': {
+    id: 'proximity-distance',
+    criterionIds: ['combined'],
+    options: [
+      { id: '5', label: 'Within 5 miles' },
+      { id: '10', label: 'Within 10 miles' },
+      { id: '25', label: 'Within 25 miles' },
+    ],
+    dismissLabel: 'Keep the 25-mile reading',
+  },
 }
 
 export function branchDefinition(branch: string): BranchDefinition | null {
@@ -97,6 +115,7 @@ export function subjectForCriterion(criterionId: string, question: string): stri
     return 'restaurants near these places'
   }
   if (criterionId === 'amenities') return 'the places nearby'
+  if (criterionId === 'combined') return 'the places nearby'
   if (
     criterionId === 'median_gross_rent' ||
     criterionId === 'median_rent_burden_pct' ||
@@ -129,6 +148,8 @@ export function phraseBranchQuestion(
       return `Quick question — which school level should count for ${subject}?`
     case 'budget-anchor':
       return `Quick question — for ${subject}, should the budget be read as rent alone, or rent plus utilities?`
+    case 'proximity-distance':
+      return `Quick question — for ${subject}, what distance should count as near?`
   }
 }
 
@@ -149,6 +170,8 @@ export function rephraseBranchQuestion(
       return `Quick question — for ${criterionLabel.toLowerCase()} (${subject}), which school level should count?`
     case 'budget-anchor':
       return `Quick question — for ${criterionLabel.toLowerCase()} (${subject}), should the budget be read as rent alone, or rent plus utilities?`
+    case 'proximity-distance':
+      return `Quick question — for ${criterionLabel.toLowerCase()} (${subject}), what distance should count as near?`
   }
 }
 
@@ -199,6 +222,14 @@ export function decisionEffect(branch: BranchId, option: string): DecisionEffect
       focusText: `The reader is asking about ${levelText}: weigh findings about that level and say which level each finding describes.`,
     }
   }
+  if (branch === 'proximity-distance') {
+    return {
+      branch,
+      option,
+      stage: 'research',
+      focusText: `The reader confirmed nearby means within ${option} miles: count a place as near only when it is within that distance, and say which distance each finding falls inside.`,
+    }
+  }
   return {
     branch,
     option,
@@ -225,6 +256,9 @@ export function refinementNote(branch: BranchId, option: string): string {
   }
   if (branch === 'school-level') {
     return `Refined with your answer: ${option === 'all' ? 'all school levels' : `${option} schools`} counted.`
+  }
+  if (branch === 'proximity-distance') {
+    return `Refined with your answer: nearby means within ${option} miles.`
   }
   return `Refined with your answer: budget read as ${option === 'total-cost' ? 'rent plus utilities' : 'rent alone'}.`
 }

@@ -171,6 +171,7 @@ export const BRANCH_CHOICE_OPTIONS: readonly string[] = [
   'transport',
   'school-level',
   'budget-anchor',
+  'proximity-distance',
   'none-of-these',
 ]
 

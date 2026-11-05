@@ -52,6 +52,7 @@ import {
   buildRadiusFrameContext,
   detectNearFrame,
   detectRadiusFrame,
+  hasStatedRadius,
   radiusPreemptsNear,
   type NearFrameContext,
   type RadiusFrameContext,
@@ -880,6 +881,10 @@ export async function evaluateDecisionProposal(input: {
   if (!definition) return undefined
   if (input.decisions[definition.id] !== undefined) return undefined
   if (input.closedBranches.has(definition.id)) return undefined
+  // A stated distance is used as stated (Hail-Mary H4): the
+  // proximity-distance branch never interjects when the reader's
+  // own words already give the radius.
+  if (definition.id === 'proximity-distance' && hasStatedRadius(input.queryText)) return undefined
   const criterion = criteria.find((c) => definition.criterionIds.includes(c.id))
   if (!criterion) return undefined
 
@@ -913,6 +918,55 @@ export async function evaluateDecisionProposal(input: {
     options: definition.options.map((option) => ({ ...option })),
     dismissLabel: definition.dismissLabel,
   }
+}
+
+/**
+ * The deterministic unstated-distance proposal (Hail-Mary H4): a
+ * bare 'near <place>' the near frame read at the silent 25-mile
+ * default proposes the distance for the reader to confirm instead
+ * of defaulting silently. No Jev transport is consulted — the
+ * proposal is a pure function of the engaged frame — so it fires
+ * exactly when the default reading is in force: frame engaged,
+ * radius unstated, branch undecided and unclosed. A stated radius
+ * is used as stated and never proposes.
+ */
+export function unstatedDistanceProposal(input: {
+  queryText: string
+  nearFrame: NearFrameContext | null
+  decisions: DecisionsRecord
+  closedBranches: ReadonlySet<string>
+}): ComposedAnswer['decisionProposal'] {
+  const definition = branchDefinition('proximity-distance')
+  if (!definition) return undefined
+  if (!input.nearFrame || input.nearFrame.radiusStated) return undefined
+  if (input.decisions[definition.id] !== undefined) return undefined
+  if (input.closedBranches.has(definition.id)) return undefined
+  const subject = `places near ${input.nearFrame.anchorName}`
+  return {
+    branch: definition.id,
+    criterionId: 'combined',
+    questionText: phraseBranchQuestion(definition.id, input.queryText, 'distance', subject),
+    options: definition.options.map((option) => ({ ...option })),
+    dismissLabel: definition.dismissLabel,
+  }
+}
+
+/**
+ * Apply a landed proximity-distance decision to a near-frame spec
+ * (Hail-Mary H4): the confirmed distance replaces the silent
+ * default, and the reading is henceforth stated — the disclosure
+ * names the reader's own confirmed radius. A stated radius and
+ * an undecided question pass through untouched.
+ */
+export function applyDecidedDistance<T extends { radiusMiles: number; radiusStated: boolean }>(
+  spec: T,
+  decisions: DecisionsRecord,
+): T {
+  const decided = decisions['proximity-distance']
+  if (spec.radiusStated || typeof decided !== 'string' || !/^\d+$/.test(decided)) return spec
+  const miles = Number.parseInt(decided, 10)
+  if (!Number.isFinite(miles) || miles <= 0) return spec
+  return { ...spec, radiusMiles: miles, radiusStated: true }
 }
 
 /**
@@ -1128,13 +1182,16 @@ export async function composeAnswerForRequest(input: {
     const nearDeclined =
       !!spec && !!radiusSpecHere && radiusPreemptsNear(input.queryText, spec)
     if (spec && !nearDeclined) {
+      // A landed proximity-distance decision replaces the silent
+      // default before the candidate set is drawn (Hail-Mary H4).
+      const decidedSpec = applyDecidedDistance(spec, decisions)
       const costCriterion = researchCriteria.find((c) => c.id === 'cost_of_living')
       const baselineKey = costCriterion?.decomposedMetricKey ?? 'median_gross_rent'
       const decomposedKeys = researchCriteria
         .map((c) => c.decomposedMetricKey)
         .filter((k): k is string => !!k)
       nearFrame = buildNearFrameContext({
-        spec,
+        spec: decidedSpec,
         placeIndex: input.placeIndex,
         centroids: input.centroids,
         rows,
@@ -1372,7 +1429,7 @@ export async function composeAnswerForRequest(input: {
     } else if (decisions.transport !== undefined) {
       focuses.push(decisionEffect('transport', decisions.transport).focusText)
     }
-    for (const branch of ['school-level', 'budget-anchor'] as const) {
+    for (const branch of ['school-level', 'budget-anchor', 'proximity-distance'] as const) {
       const landed = decisions[branch]
       if (landed !== undefined) focuses.push(decisionEffect(branch, landed).focusText)
     }
@@ -1598,6 +1655,16 @@ export async function composeAnswerForRequest(input: {
       decisions,
       closedBranches: stack.closedBranches,
       jevTransport: stack.jevTransport,
+    })
+    // The deterministic unstated-distance read (Hail-Mary H4):
+    // when the Jev path stays silent but the near frame is on its
+    // unstated default, the distance proposal fires without a
+    // transport — the default is never silent again.
+    proposal ??= unstatedDistanceProposal({
+      queryText: input.queryText,
+      nearFrame,
+      decisions,
+      closedBranches: stack.closedBranches,
     })
     timings.branch = performance.now() - started
   }

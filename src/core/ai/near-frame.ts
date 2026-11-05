@@ -57,6 +57,16 @@ export const DEFAULT_NEAR_RADIUS_MILES = 25
 
 const COUNTY_LIKE_RE = /\b(county|parish|borough|census area|municipality)\b/i
 const WITHIN_RADIUS_RE = /\bwithin\s+(\d{1,3})\s*miles?\b/i
+
+/**
+ * Whether the reader's words state a radius (Hail-Mary H4): a
+ * stated distance is used as stated and never triggers the
+ * unstated-distance proposal.
+ */
+export function hasStatedRadius(queryText: string | undefined): boolean {
+  if (!queryText) return false
+  return WITHIN_RADIUS_RE.test(queryText)
+}
 const COST_COMPARATIVE_RE =
   /\b(?:lower|cheaper|less\s+expensive|more\s+affordable)\b/i
 

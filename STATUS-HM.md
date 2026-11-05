@@ -20,8 +20,9 @@ Cure: `fragment-carry.ts` — standing screen from last answer request; `isFragm
 Pins: `hail-mary-h3.test.tsx` (gate fresh vs fragment; merge carries; Colorado → Walmart chain with slots + superseded request; chips visible + removable). Gate correction 2026-11-05: removed the short-query length fallback after it merged a fresh schools/fast-food question into the standing Hilo screen (`ask-reset-lockout` real-App pin); gate now requires an explicit fragment signal plus no parsed geography. Suite neighbors 34/34 + golden 8/8 green; tsc clean.
 
 ## H4 — W2 uncatalogued criteria + bare-near distance
-Status: QUEUED.
-Plan: generic proximity criterion in decision catalog + deterministic unstated-distance proposal modal; stated distance used as stated. Pins: uncatalogued specimen reaches modal; bare-near proposes; stated used.
+Status: DONE (this push).
+Cure: `proximity-distance` branch in the decision catalog claiming `combined` (J-BRANCH choice list extended); deterministic `unstatedDistanceProposal` fires on an engaged unstated near frame with no transport; stated-radius guard suppresses the branch in the Jev path (`hasStatedRadius`); landed choice replaces the silent default via `applyDecidedDistance` (reads as stated) and steers research focus; dismiss keeps the 25-mile reading.
+Pins: `hail-mary-h4.test.tsx` (combined specimen reaches modal; bare-near proposes deterministically; stated suppresses both paths; landed effect + note; pass-throughs). Updated J-BRANCH catalog pin. Full suite 205/2193 + golden 8/8 + tsc clean.
 
 ## H5 — stretch residuals
 Status: QUEUED (only after H1–H4 pushed green).

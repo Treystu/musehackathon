@@ -130,6 +130,7 @@ describe('jev judgment sets', () => {
       'transport',
       'school-level',
       'budget-anchor',
+      'proximity-distance',
       'none-of-these',
     ])
     expect(phraseQuestions()).toHaveLength(1)

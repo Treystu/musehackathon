@@ -237,6 +237,15 @@ describe('AnswerCard — breadth terminal wiring', () => {
 
   it('mounts the breadth map, suppresses the qualifying map and the cap line, and prints the counts line', async () => {
     render(<AnswerCard answer={breadthAnswer()} />)
+    // H1 answer-only: the in-answer map sits behind the collapsed
+    // 'Show the map' disclosure; expand it before asserting the mount.
+    const details = container.querySelector('details')
+    expect(details?.querySelector('summary')?.textContent).toContain('Show the map')
+    await act(async () => {
+      ;(details as HTMLDetailsElement).open = true
+      details!.dispatchEvent(new Event('toggle'))
+      await new Promise((r) => setTimeout(r, 20))
+    })
     await flushUntil(() => container.querySelector('[data-testid="breadth-places-map"]') !== null)
     expect(container.querySelector('[data-testid="qualifying-places-map"]')).toBeNull()
     const text = container.textContent ?? ''

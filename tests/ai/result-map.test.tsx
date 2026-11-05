@@ -333,7 +333,7 @@ describe('ResultMap — failure', () => {
     expectNoGateButton()
     await flushUntil(() => (container.textContent ?? '').includes('could not be loaded'))
     expect(container.textContent).toContain(
-      'The map for this answer could not be loaded. Every figure is in the answer above and the screening table below.',
+      "The map for this answer could not be loaded. Every figure is in the answer above and in 'Explore the full results'.",
     )
     expect(container.querySelector('svg')).toBeNull()
   }, 30000)
@@ -365,7 +365,7 @@ describe('ResultMap — failure', () => {
       })
     }
     expect(container.textContent).toContain(
-      'The map for this answer could not be loaded. Every figure is in the answer above and the screening table below.',
+      "The map for this answer could not be loaded. Every figure is in the answer above and in 'Explore the full results'.",
     )
     expect(container.textContent).not.toContain('Loading the map for this answer...')
     expect(container.querySelector('svg')).toBeNull()

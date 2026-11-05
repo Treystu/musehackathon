@@ -42,7 +42,7 @@ import { measureLabel } from './ai/plain-labels'
 import { diagnostics } from '../core/ai/diagnostics'
 import { PROXY_ERRORS } from '../core/ai/proxy-errors'
 import { stateCodeForGeography } from '../core/ai/national-screen'
-import { AnswerCard } from './ai/AnswerCard'
+import { AnswerCard, ASK_DATA_DISCLOSURE_LABEL } from './ai/AnswerCard'
 import {
   answerScopeCovered,
   composeAnswerForRequest,
@@ -204,6 +204,11 @@ export default function App() {
    * execution lands the reader on the mode that shows its result.
    */
   const [mode, setMode] = useState<'ask' | 'data'>('ask')
+  // H1 answer-only Ask view (2026-11-05): collapsed data disclosure.
+  // False until the reader expands it; reset at every ask start so a
+  // composed answer lands answer-only with no table rows mounted.
+  // Manual Explore (no composed answer) bypasses it and keeps full renders.
+  const [askDataOpen, setAskDataOpen] = useState(false)
   const [term, setTerm] = useState('')
   const [sorting, setSorting] = useState<ScreeningSort>({
     presetId: DEFAULT_PRESET.id,
@@ -393,6 +398,13 @@ export default function App() {
   const answerRequest = answerState.request
   const answer = answerState.answer
   const setAnswer = (value: ComposedAnswer | null) => sessionStore.setAnswerState({ answer: value })
+  // H1: the Ask view is answer-only once a composed answer lands for the
+  // current ask generation. Manual Explore (no landed answer for this
+  // generation) keeps its full renders untouched.
+  const askAnswerVisible = Boolean(
+    (answer && answerRequest && (answerRequest.epoch ?? 0) === answerState.askEpoch) ||
+      (preliminary && answerRequest && preliminary.id === answerRequest.id),
+  )
   /**
    * Voice-out (plan C10, branch b — no Muse TTS exists on the Model
    * API roster, re-verified 2026-11-02): a landed answer terminal is
@@ -599,6 +611,7 @@ export default function App() {
         // (Lane A7): a summary never stands beside a new run.
         runSummary: null,
       })
+      setAskDataOpen(false)
       setModalState((state) => expireModalForNewQuestion(state))
     },
     [],
@@ -2516,7 +2529,8 @@ export default function App() {
               </div>
             )}
             {briefingPlaces.length > 0 &&
-              (mode === 'data' || executionEpoch === answerState.askEpoch) && (
+              (mode === 'data' || executionEpoch === answerState.askEpoch) &&
+              (!askAnswerVisible || askDataOpen) && (
               <div className="mx-auto mt-12 max-w-3xl border-t border-slate-200 pt-8">
                 <BriefingView
                   provider={HOUSE_PROVIDER}
@@ -2526,6 +2540,22 @@ export default function App() {
                   figures={briefingFigures}
                   resolveFigure={resolveBriefingFigure}
                 />
+              </div>
+            )}
+            {askAnswerVisible && (
+              <div className="mx-auto mt-6 max-w-3xl px-2">
+                <details
+                  className="rounded-md border border-slate-200 bg-slate-50 p-3"
+                  onToggle={(e) => setAskDataOpen(e.currentTarget.open)}
+                >
+                  <summary className="min-h-[44px] cursor-pointer text-sm font-medium text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900">
+                    {ASK_DATA_DISCLOSURE_LABEL}
+                  </summary>
+                  <p className="mt-1 text-sm text-slate-600">
+                    The supporting screen, comparison, and saved work for this answer. Closed by
+                    default so the answer stands alone; nothing underneath loads until opened.
+                  </p>
+                </details>
               </div>
             )}
             {mode === 'data' && searchPanel}
@@ -2620,7 +2650,7 @@ export default function App() {
                 after the last one. During a 43-chunk country-wide load this is
                 the difference between a usable table after a second and a blank
                 page for two minutes. */}
-            {mode === 'data' && q.sweep.length > 0 && (
+            {mode === 'data' && q.sweep.length > 0 && (!askAnswerVisible || askDataOpen) && (
               <>
                 <section aria-labelledby="screen-heading" className="mt-6">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -2803,7 +2833,8 @@ export default function App() {
                 renders must be the current ask's own execution output, not
                 an earlier run's. */}
             {q.selected.length > 0 &&
-              (mode === 'ask' ? executionEpoch === answerState.askEpoch : q.sweep.length === 0) && (
+              (mode === 'ask' ? executionEpoch === answerState.askEpoch : q.sweep.length === 0) &&
+              (!askAnswerVisible || askDataOpen) && (
               <Comparison
                 drilldowns={q.drilldowns}
                 onDeselect={q.deselect}

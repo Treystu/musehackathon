@@ -91,7 +91,7 @@ const PR_BOX = { x: 856, y: 392, w: 96, h: 96 }
 const MICRO_BOUNDS_AREA = 25
 
 const FAILURE_LINE =
-  'The map for this answer could not be loaded. Every figure is in the answer above and the screening table below.'
+  'The map for this answer could not be loaded. Every figure is in the answer above and in \'Explore the full results\'.'
 
 /**
  * The load's deadline (cure round 4, 2026-11-03): no step in the
@@ -860,7 +860,7 @@ export function ResultMap({
               {overflow.furtherCount > 0
                 ? `, and ${overflow.furtherCount} more ${overflow.furtherCount === 1 ? 'place' : 'places'}`
                 : ''}{' '}
-              — shown in the screening table below.
+              — open 'Explore the full results' to see them.
             </p>
           )}
           {dotLine && (

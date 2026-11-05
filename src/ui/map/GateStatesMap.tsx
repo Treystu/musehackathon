@@ -42,7 +42,7 @@ import { FairHousingNotice } from '../FairHousingNotice'
 import { HelpTip } from '../ai/HelpTip'
 
 const FAILURE_LINE =
-  'The map for this answer could not be loaded. Every figure is in the answer above and the screening table below.'
+  'The map for this answer could not be loaded. Every figure is in the answer above and in \'Explore the full results\'.'
 const LOAD_TIMEOUT_MS = 90_000
 const CLASSIFIED_FILL = '#d7e3f4'
 const OUTSIDE_FILL = '#f1f3f5'

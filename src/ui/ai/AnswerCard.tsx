@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type {
   AnswerFigure,
   AnswerPlace,
@@ -38,8 +39,12 @@ import { measureLabel } from './plain-labels'
  * from the metric registry the data views are generated from.
  */
 
-/** Places shown before the card defers to the screening table below. */
+/** Places shown before the card defers to the full-results disclosure. */
 export const ANSWER_CARD_PLACE_LIMIT = 10
+
+/** Collapsed-by-default disclosure labels (Hail-Mary H1, answer-only Ask view). */
+export const ANSWER_MAP_DISCLOSURE_LABEL = 'Show the map'
+export const ASK_DATA_DISCLOSURE_LABEL = 'Explore the full results'
 
 const count = new Intl.NumberFormat('en-US')
 
@@ -574,6 +579,17 @@ function orderedPlaces(answer: ComposedAnswer): AnswerPlace[] {
 }
 
 export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
+  // H1 answer-only Ask view (2026-11-05): the in-answer map mounts only
+  // behind a collapsed disclosure, so a composed answer shows the card
+  // with no map paths until the reader expands it. State-gated render
+  // (not CSS-hidden) keeps the DOM free of paths until expansion.
+  const [mapOpen, setMapOpen] = useState(false)
+  const mapRelevant =
+    answer.status === 'verified' &&
+    (Boolean(answer.geographyGate) ||
+      Boolean(answer.breadth) ||
+      resultMapRelevant(answer) ||
+      (!answer.breadth && !answer.geographyGate && qualifyingPlacesMapRelevant(answer)))
   const droppedLine = droppedCriteriaLine(answer)
   const unresolvedLine = unresolvedGeographiesLine(answer)
   const droppedClaims = droppedClaimsLine(answer)
@@ -718,8 +734,8 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
                     ? answer.radiusPlaceTotal
                     : answer.places.length) - ANSWER_CARD_PLACE_LIMIT,
                 )}{' '}
-                more places meet the stated criteria — all of them are in the screening table
-                below.
+                more places meet the stated criteria — open &apos;Explore the full
+                results&apos; to see them.
               </p>
             ))}
           {answer.generalClaims.length > 0 && (
@@ -855,29 +871,46 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
         for gate answers. Mutually exclusive with both maps below
         by the same construction as the breadth mount.
       */}
-      {answer.status === 'verified' && answer.geographyGate && (
-        <GateStatesMap answer={answer} />
-      )}
-      {answer.status === 'verified' && answer.breadth && (
-        <ProgressivePlacesMap
-          places={[]}
-          breadth={{
-            places: answer.breadth.standings,
-            labels: answer.breadth.labels,
-            criterionLabel: answer.breadth.criterionLabel,
-            geographyLabel: answer.breadth.geographyLabel,
-            assessedCount: answer.breadth.assessedCount,
-            displayTotal: answer.breadth.displayTotal,
-            terminal: true,
-            sources: answer.sources,
-          }}
-        />
-      )}
-      {answer.status === 'verified' && resultMapRelevant(answer) && <ResultMap answer={answer} />}
-      {answer.status === 'verified' && !answer.breadth && !answer.geographyGate && qualifyingPlacesMapRelevant(answer) && (
-        <QualifyingPlacesMap
-          places={orderedPlaces(answer).slice(0, ANSWER_CARD_PLACE_LIMIT)}
-        />
+      {mapRelevant && (
+        <details
+          className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3"
+          onToggle={(e) => setMapOpen(e.currentTarget.open)}
+        >
+          <summary className="min-h-[44px] cursor-pointer text-sm font-medium text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900">
+            {ANSWER_MAP_DISCLOSURE_LABEL}
+          </summary>
+          {mapOpen && (
+            <>
+              {answer.status === 'verified' && answer.geographyGate && (
+                <GateStatesMap answer={answer} />
+              )}
+              {answer.status === 'verified' && answer.breadth && (
+                <ProgressivePlacesMap
+                  places={[]}
+                  breadth={{
+                    places: answer.breadth.standings,
+                    labels: answer.breadth.labels,
+                    criterionLabel: answer.breadth.criterionLabel,
+                    geographyLabel: answer.breadth.geographyLabel,
+                    assessedCount: answer.breadth.assessedCount,
+                    displayTotal: answer.breadth.displayTotal,
+                    terminal: true,
+                    sources: answer.sources,
+                  }}
+                />
+              )}
+              {answer.status === 'verified' && resultMapRelevant(answer) && <ResultMap answer={answer} />}
+              {answer.status === 'verified' &&
+                !answer.breadth &&
+                !answer.geographyGate &&
+                qualifyingPlacesMapRelevant(answer) && (
+                  <QualifyingPlacesMap
+                    places={orderedPlaces(answer).slice(0, ANSWER_CARD_PLACE_LIMIT)}
+                  />
+                )}
+            </>
+          )}
+        </details>
       )}
     </section>
   )

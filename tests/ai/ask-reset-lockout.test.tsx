@@ -441,9 +441,20 @@ describe('new-ask reset (real App)', () => {
     ).toBe(true)
     // The execution's supporting blocks derive from the drilldowns
     // the execution opens; they land on their own fetches, just
-    // behind the card. The briefing block's rendered heading is
-    // 'Briefing pack' (its 'Selected places' title is pack
-    // metadata, not on-screen text).
+    // behind the card. H1 answer-only: they sit behind the collapsed
+    // 'Explore the full results' disclosure, so expand it first. The
+    // briefing block's rendered heading is 'Briefing pack' (its
+    // 'Selected places' title is pack metadata, not on-screen text).
+    expect(await waitFor(() => pageText().includes('Explore the full results'))).toBe(true)
+    await act(async () => {
+      const details = [...container.querySelectorAll('details')].find((d) =>
+        d.querySelector('summary')?.textContent?.includes('Explore the full results'),
+      ) as HTMLDetailsElement | undefined
+      expect(details).not.toBeUndefined()
+      details!.open = true
+      details!.dispatchEvent(new Event('toggle'))
+      await new Promise((r) => setTimeout(r, 20))
+    })
     expect(await waitFor(() => pageText().includes('Briefing pack'))).toBe(true)
     // The stat band retired with the first ask.
     expect(pageText()).not.toContain('ZIP codes on the live screen')
@@ -468,6 +479,21 @@ describe('new-ask reset (real App)', () => {
     expect(pageText()).not.toContain('Hilo, HI')
     expect(pageText()).not.toContain('Briefing pack')
     expect(pageText()).not.toContain('ZIP codes on the live screen')
+    // H1: the disclosure collapsed anew at Q2 start; expanding it must
+    // still show no prior briefing (reset, not just collapsed).
+    await act(async () => {
+      const details = [...container.querySelectorAll('details')].find((d) =>
+        d.querySelector('summary')?.textContent?.includes('Explore the full results'),
+      ) as HTMLDetailsElement | undefined
+      if (details) {
+        details.open = true
+        details.dispatchEvent(new Event('toggle'))
+        await new Promise((r) => setTimeout(r, 50))
+      }
+    })
+    await flush(120)
+    expect(pageText()).not.toContain('Briefing pack')
+    expect(pageText()).not.toContain('Hilo, HI')
     expect(askSubmitButton()).not.toBeNull()
   }, 90_000)
 

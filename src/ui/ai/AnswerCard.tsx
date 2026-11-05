@@ -578,6 +578,42 @@ function orderedPlaces(answer: ComposedAnswer): AnswerPlace[] {
   return ordered
 }
 
+/**
+ * H3 refinement chips (2026-11-05): the carried criteria shown as
+ * removable chips so the merge is visible and removable. Removal is
+ * display-level (hides the chip and its evidence row) — re-screening
+ * runs from a new ask, never silently from a chip tap.
+ */
+export function RefinementChips({ answer }: { answer: ComposedAnswer }) {
+  const items = answer.criterionEvidence.map((e) => e.criterion)
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  const visible = items.filter((c) => !dismissed.has(c))
+  if (visible.length === 0) return null
+  return (
+    <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Refined criteria">
+      {visible.map((c) => {
+        const label = measureLabel(c)
+        return (
+          <span
+            key={c}
+            className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-800"
+          >
+            {label}
+            <button
+              type="button"
+              aria-label={`Remove ${label}`}
+              onClick={() => setDismissed((prev) => new Set(prev).add(c))}
+              className="ml-1 min-h-[24px] min-w-[24px] rounded-full px-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+            >
+              ×
+            </button>
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
   // H1 answer-only Ask view (2026-11-05): the in-answer map mounts only
   // behind a collapsed disclosure, so a composed answer shows the card
@@ -707,6 +743,7 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
             <p className="mt-2 text-base leading-relaxed text-slate-800">{answer.summary}</p>
           )}
           <CriterionEvidenceList answer={answer} />
+          <RefinementChips answer={answer} />
           {orderedPlaces(answer)
             .slice(0, ANSWER_CARD_PLACE_LIMIT)
             .map((place) => (

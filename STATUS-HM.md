@@ -15,8 +15,9 @@ Cure: visible `Start over` in Ask surface (`START_OVER_LABEL`) calling `resetAsk
 Pins: `tests/ai/hail-mary-h2.test.tsx` (reset clears store; Start over visible + clears; input present after sweep terminal). Full suite + golden re-verified green before push.
 
 ## H3 — W1 chained refinement
-Status: QUEUED (after H2).
-Plan: fragment gate composing follow-up against standing screen; session-held geography/measure/criteria carry; stated radius routes to proximity machinery; refinement chips on answer card. Pins: Colorado → Walmart chain hermetically; fresh question starts fresh.
+Status: DONE (this push).
+Cure: `fragment-carry.ts` — standing screen from last answer request; `isFragmentFollowUp` lexical gate (standing + criteria-only signals, fresh names pass through); `mergeFragmentIntent` carries geography/measure/filters (union, no silent drops) before completions/handoff/radius/execution; slots filled with standing hints (existing contract). Stated radius routes via existing `detectRadiusFrame` on the merged intent. `RefinementChips` on AnswerCard show carried criteria (criterionEvidence) as removable chips (display-level removal; re-screen via new ask).
+Pins: `hail-mary-h3.test.tsx` (gate fresh vs fragment; merge carries; Colorado → Walmart chain with slots + superseded request; chips visible + removable). Suite neighbors 34/34 + golden 8/8 green; tsc clean.
 
 ## H4 — W2 uncatalogued criteria + bare-near distance
 Status: QUEUED.

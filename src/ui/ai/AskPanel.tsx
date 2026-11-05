@@ -75,6 +75,11 @@ import {
   type AnswerRequestOrigin,
   type PanelResearchState,
 } from './session-store'
+import {
+  isFragmentFollowUp,
+  mergeFragmentIntent,
+  standingScreenFromSession,
+} from './fragment-carry'
 
 /** Visible labeled reset (Hail-Mary H2): one action clears the session. */
 export const START_OVER_LABEL = 'Start over'
@@ -1056,6 +1061,19 @@ export function AskPanel({
       rescued = rescueNationalScreen(parsed, queryText)
       if (rescued) parsed = rescued
     }
+    // H3 fragment gate: a criteria-only follow-up composes against the
+    // standing screen instead of starting a fresh placeless parse. Runs
+    // before completions / handoff / radius / execution so every
+    // downstream seam sees the merged intent; a fresh full question
+    // (naming geography or with no standing) passes through untouched.
+    // Skipped when the rescue already completed (a deterministic
+    // national screen is not a fragment to merge).
+    if (!rescued) {
+      const standingForMerge = standingScreenFromSession(session)
+      if (standingForMerge && isFragmentFollowUp(queryText ?? '', standingForMerge)) {
+        parsed = withRunnability(mergeFragmentIntent(parsed, standingForMerge, queryText ?? ''))
+      }
+    }
     // Research-first handoff: a parse that settled into clarification
     // but is research-first servable (researchFirstHandoff above)
     // goes to the Answer Layer instead of the clarification panel.
@@ -1445,8 +1463,15 @@ export function AskPanel({
       }
       startResearch(queryText)
     }
+    // H3 session-held carry: the standing screen rides as slots so the
+    // parse sees the geography/measure context instead of a placeless
+    // fragment. Uses the existing IntentRequest contract (no shape change).
+    const standingForSlots = standingScreenFromSession(session)
     const request = {
-      slots: { geographyHints: [], metricHints: [] },
+      slots: {
+        geographyHints: standingForSlots ? [...standingForSlots.geographies] : [],
+        metricHints: standingForSlots ? [...standingForSlots.metricKeys] : [],
+      },
       queryText,
       locale: 'en' as const,
     }

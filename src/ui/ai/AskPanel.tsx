@@ -70,9 +70,26 @@ import { MicInput, type MicRecognizer, type MicRecorder } from './MicInput'
 import { StagedStatus } from './StagedStatus'
 import {
   AskSessionStore,
+  initialAnswerState,
+  initialPanelState,
   type AnswerRequestOrigin,
   type PanelResearchState,
 } from './session-store'
+
+/** Visible labeled reset (Hail-Mary H2): one action clears the session. */
+export const START_OVER_LABEL = 'Start over'
+
+/**
+ * One-action session reset (H2): clears the panel (screens/criteria
+ * input), the answer thread, and the staged run, so typing a new
+ * question is never the only reset. Screen selections owned by App
+ * clear through onStartOver; this covers the session store half.
+ */
+export function resetAskSession(session: AskSessionStore): void {
+  session.setPanel(initialPanelState())
+  session.setAnswerState(initialAnswerState())
+  session.clearStage()
+}
 import { pickAckOpener, researchAck } from './ack'
 import type { ExplanationState } from './ExplainBox'
 import type { FigureInput } from './FigureCard'
@@ -623,6 +640,7 @@ export function AskPanel({
   onStopRun,
   onGeneralRequest,
   onAskStart,
+  onStartOver,
   onVoiceModeChange,
   proxyError,
   clarificationCandidates,
@@ -713,6 +731,13 @@ export function AskPanel({
    * SAME ask, below) inherit it untouched.
    */
   onAskStart?: (queryText: string, origin: AnswerRequestOrigin) => void
+  /**
+   * App-owned screen clearing for Start over (H2): the session half
+   * clears inside the panel via resetAskSession; this covers the
+   * housing-query screens (selection, filters, scope) App owns.
+   * Absent (standalone mounts), the session reset still runs.
+   */
+  onStartOver?: () => void
   /**
    * Voice-mode activation for spoken answers (plan C10): called with
    * true only when a mic transcript is ACCEPTED (the question arrived
@@ -1653,7 +1678,17 @@ export function AskPanel({
           )}
         </div>
       </form>
-      <div className="mt-3 flex justify-center">
+      <div className="mt-3 flex items-center justify-center gap-3">
+        <button
+          type="button"
+          onClick={() => {
+            resetAskSession(session)
+            onStartOver?.()
+          }}
+          className="min-h-[44px] rounded-full border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+        >
+          {START_OVER_LABEL}
+        </button>
         <MicInput
           transcribe={(audio, mimeType) =>
             provider.transcribe({ audio, mimeType }, new AbortController().signal)

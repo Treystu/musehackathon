@@ -10,8 +10,9 @@ Pins: `tests/ai/hail-mary-h1.test.tsx` (labels, overflow copy, map collapsed no 
 Evidence: `npx vitest run` 202 files / 2176 tests green; golden replay exactIntent 91/91 safety 7/7; `npx tsc --noEmit` exit 0; emoji 0 / mojibake 0.
 
 ## H2 — W3 labeled reset + input persistence
-Status: NEXT.
-Plan: visible `Start over` in Ask surface clearing session state in one action; keep Ask input mounted after sweep (fix mount-condition unmount, not duplicate input). Pins: reset clears session store; input present after sweep terminal.
+Status: DONE (this push).
+Cure: visible `Start over` in Ask surface (`START_OVER_LABEL`) calling `resetAskSession` (panel + answer + stage) plus App `onStartOver` clearing screens (deselect all, filters, preliminary, mode ask, close data disclosure); AskPanel mount condition widened to `(mode === 'ask' || askAnswerVisible)` so the input survives the sweep mode-switch (fix at mount, no duplicate input).
+Pins: `tests/ai/hail-mary-h2.test.tsx` (reset clears store; Start over visible + clears; input present after sweep terminal). Full suite + golden re-verified green before push.
 
 ## H3 — W1 chained refinement
 Status: QUEUED (after H2).

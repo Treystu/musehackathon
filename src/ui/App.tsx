@@ -2231,7 +2231,7 @@ export default function App() {
                 ))}
               </div>
             </div>
-            {mode === 'ask' && (
+            {(mode === 'ask' || askAnswerVisible) && (
               <div className="hero-glow anim-rise anim-rise-1 mx-auto max-w-3xl px-2 pb-4 pt-2">
                 {/* The hero mark, kept small (owner phone review,
                     2026-11-02): at display size (56px) plus the display
@@ -2250,6 +2250,13 @@ export default function App() {
                   onStopRun={stopAnswerRun}
                   onGeneralRequest={handleGeneralRequest}
                   onAskStart={handleAskStart}
+                  onStartOver={() => {
+                    for (const zcta of q.selectedZctas) q.deselect(zcta)
+                    setFigureFilters({})
+                    setPreliminary(null)
+                    setMode('ask')
+                    setAskDataOpen(false)
+                  }}
                   onVoiceModeChange={setVoiceMode}
                   clarificationCandidates={{
                     geographies: [],

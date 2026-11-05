@@ -515,16 +515,64 @@ const RADIUS_PHRASE_RES: readonly RegExp[] = [
 ]
 
 /**
+ * The anchor name the reader's own words state after a radius
+ * phrase, when no intent geography names it (round 2, measured
+ * live 2026-11-04: in one of two genuine Spark parses of the
+ * Miami specimen the model's geography list dropped the anchor
+ * entirely — ["FL"] alone — while the reader's words still
+ * stated it verbatim after the phrase). The span runs to the
+ * first sentence punctuation; a name the place index does not
+ * know resolves to no frame at build time, so a non-place span
+ * ("the coast", "my house") fails safe to the shipped path.
+ * Null for a span that cannot be a place name: empty, over six
+ * words, carrying a digit, a state itself, county-like, or a ZIP.
+ */
+function radiusAnchorNameFromText(after: string): { name: string; spanLength: number } | null {
+  const spanMatch = /^[^?.;!(]+/.exec(after)
+  if (!spanMatch) return null
+  const rawSpan = spanMatch[0]
+  const leading = rawSpan.length - rawSpan.trimStart().length
+  const name = rawSpan.trim().replace(/\s{2,}/g, ' ')
+  if (name === '') return null
+  if (name.split(/\s+/).length > 6) return null
+  if (/\d/.test(name)) return null
+  if (/^\d{5}$/.test(name)) return null
+  if (COUNTY_LIKE_RE.test(geographyNamePart(name))) return null
+  if (isStateGeographyText(name)) return null
+  return { name, spanLength: leading + name.length }
+}
+
+/**
  * Detect the radius frame in a question, from the reader's words
  * and the parsed intent together. Pure text + intent, like
  * detectNearFrame, so the App can precheck before any load.
+ *
+ * Round 2 (2026-11-04, parent browser acceptance on the round-1
+ * build): the frame did not engage live for either acceptance
+ * question, while its pins — built on fabricated intents carrying
+ * both geographies and the measure — stayed green. The genuine
+ * Spark parses differ from the fabricated ones in two ways, and
+ * detection now meets both:
+ *   - The anchor can stand ALONE in the geography list (the
+ *     Orlando acceptance question: ["Orlando, FL"] in both real
+ *     samples). The round-1 gate demanded a second geography
+ *     beside the anchor; the discrimination from the near frame
+ *     is not the geography count but the reference signals, and
+ *     it now lives in radiusPreemptsNear at the call sites.
+ *   - The anchor can be ABSENT from the geography list while the
+ *     reader's words state it after the phrase (the Miami
+ *     specimen's second sample: ["FL"]). The text-stated name
+ *     becomes the spec's anchor; the place index resolves it at
+ *     build time or the frame does not engage.
+ * The intent-geography match is tried first in both cases, so
+ * every round-1 shape keeps its exact spec.
  */
 export function detectRadiusFrame(
   queryText: string | undefined,
   intent: ValidatedIntent,
 ): RadiusFrameSpec | null {
   if (!queryText || queryText.trim() === '') return null
-  if (intent.geographies.length < 2) return null
+  if (intent.geographies.length < 1) return null
   for (const pattern of RADIUS_PHRASE_RES) {
     const match = pattern.exec(queryText)
     if (!match) continue
@@ -550,8 +598,55 @@ export function detectRadiusFrame(
         ),
       }
     }
+    const fromText = radiusAnchorNameFromText(after)
+    if (fromText) {
+      return {
+        anchorGeography: fromText.name,
+        radiusMiles,
+        phraseText: queryText.slice(
+          match.index,
+          match.index + match[0].length + fromText.spanLength,
+        ),
+      }
+    }
   }
   return null
+}
+
+/**
+ * Whether the radius reading, not the near frame's reference
+ * reading, owns a question both detectors match (round 2). The
+ * near frame's semantics — the anchor as comparison reference,
+ * excluded from its own candidate set, its baseline the bound a
+ * candidate must beat — are the reader's when their words cast
+ * the anchor in that role: a likeness predicate, an explicit
+ * comparison ("compared to ...", "than <anchor>"), or the
+ * anchor named as the reference itself ("<anchor> itself", the
+ * Philadelphia specimen's parenthetical). A stated radius with
+ * none of those signals casts the anchor as a CENTRE: the places
+ * within the radius, the anchor's own areas among them, ranked
+ * by the question's measure — the radius frame's reading. A bare
+ * cost comparative ("cheaper") without "than <anchor>" is the
+ * sweep's own ranking word, not a reference signal: it does not
+ * hold the near frame. Callers consult this only when a radius
+ * spec also matched, so a question with no stated radius phrase
+ * is never re-read by it.
+ */
+export function radiusPreemptsNear(queryText: string, nearSpec: NearFrameSpec): boolean {
+  const anchorName = geographyNamePart(nearSpec.anchorGeography)
+  if (hasLikenessPredicate(queryText, anchorName)) return false
+  if (/\bcompared\s+(?:to|with)\b/i.test(queryText)) return false
+  if (
+    new RegExp(`\\bthan\\s+(?:the\\s+)?${escapeRegExp(anchorName)}\\b`, 'i').test(queryText)
+  ) {
+    return false
+  }
+  if (
+    new RegExp(`\\b${escapeRegExp(anchorName)}\\s+itself\\b`, 'i').test(queryText)
+  ) {
+    return false
+  }
+  return true
 }
 
 export interface RadiusFrameContext {

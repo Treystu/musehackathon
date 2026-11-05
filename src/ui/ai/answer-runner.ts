@@ -52,6 +52,7 @@ import {
   buildRadiusFrameContext,
   detectNearFrame,
   detectRadiusFrame,
+  radiusPreemptsNear,
   type NearFrameContext,
   type RadiusFrameContext,
 } from '../../core/ai/near-frame'
@@ -1118,7 +1119,15 @@ export async function composeAnswerForRequest(input: {
   let nearFrame: NearFrameContext | null = null
   if (input.placeIndex && input.centroids && input.centroids.length > 0) {
     const spec = detectNearFrame(input.queryText, input.intent)
-    if (spec) {
+    // Radius preemption (round 2): a stated radius with no
+    // anchor-reference signals in the reader's words is the
+    // radius frame's question even when the near detector also
+    // matches (the single-geography acceptance shape) — the
+    // near frame declines and the radius block below engages.
+    const radiusSpecHere = detectRadiusFrame(input.queryText, input.intent)
+    const nearDeclined =
+      !!spec && !!radiusSpecHere && radiusPreemptsNear(input.queryText, spec)
+    if (spec && !nearDeclined) {
       const costCriterion = researchCriteria.find((c) => c.id === 'cost_of_living')
       const baselineKey = costCriterion?.decomposedMetricKey ?? 'median_gross_rent'
       const decomposedKeys = researchCriteria

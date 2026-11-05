@@ -12,6 +12,7 @@ import {
   detectRadiusFrame,
   nearCandidatePrefixes,
   radiusCandidatePrefixes,
+  radiusPreemptsNear,
 } from '../core/ai/near-frame'
 import { loadCentroids } from '../core/map/projection'
 import type { ZctaPoint } from '../core/map/centroids'
@@ -266,6 +267,8 @@ export default function App() {
    */
   const [askCentroids, setAskCentroids] = useState<readonly ZctaPoint[] | null | undefined>(undefined)
   const centroidsLoadStarted = useRef(false)
+  /** The request id a failed centroid load was already retried for (round 2). */
+  const centroidsRetryId = useRef<number | null>(null)
   /**
    * The preliminary answer for the in-flight request (Phase 5
    * staging): the runner's screen composition, rendered while
@@ -959,19 +962,44 @@ export default function App() {
     // anchor's scope and the frame's candidate prefixes. A
     // centroid load failure engages nothing: the shipped path
     // stands, unchanged.
-    const frameSpec = placeIndex ? detectNearFrame(queryText, intent) : null
+    const nearSpec = placeIndex ? detectNearFrame(queryText, intent) : null
     // Radius frame precheck (the near frame's twin): a stated
     // radius beside a broader geography ("cheapest place in
     // Florida within 100 miles of Miami") draws its candidates
     // from the same centroid geography, so the load and the
-    // coverage union run on the same terms.
-    const radiusSpec =
-      !frameSpec && placeIndex ? detectRadiusFrame(queryText, intent) : null
+    // coverage union run on the same terms. Precedence (round
+    // 2): when both detectors match and the reader's words carry
+    // no anchor-reference signals, the radius reading owns the
+    // question (radiusPreemptsNear) and the near precheck stands
+    // down — the runner applies the same rule at compose time.
+    const radiusSpecRaw = placeIndex ? detectRadiusFrame(queryText, intent) : null
+    const radiusWins =
+      !!radiusSpecRaw && (!nearSpec || radiusPreemptsNear(queryText, nearSpec))
+    const frameSpec = radiusWins ? null : nearSpec
+    const radiusSpec = radiusWins ? radiusSpecRaw : null
     let coverageResolved = resolved
     if ((frameSpec || radiusSpec) && placeIndex) {
       if (askCentroids === undefined) {
         if (!centroidsLoadStarted.current) {
           centroidsLoadStarted.current = true
+          loadCentroids().then(
+            (points) => setAskCentroids(points),
+            () => setAskCentroids(null),
+          )
+        }
+        if (stillWaiting()) return
+      } else if (askCentroids === null) {
+        // A centroid load already failed this session (round 2):
+        // the one-shot start above leaves askCentroids null
+        // forever, and every frame question then composes
+        // unframed — the shipped path standing in for a question
+        // whose frame never had its geography. The module-level
+        // loader clears its own cache on failure, so one retry
+        // per request is a genuine re-fetch; a second failure
+        // leaves the shipped path standing, on the same bounded
+        // wait as the first load.
+        if (centroidsRetryId.current !== id) {
+          centroidsRetryId.current = id
           loadCentroids().then(
             (points) => setAskCentroids(points),
             () => setAskCentroids(null),

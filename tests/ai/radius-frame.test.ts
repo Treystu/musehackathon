@@ -5,7 +5,9 @@ import { PlaceIndex, type PlaceRecord, type PlaceSuggestion } from '../../src/co
 import type { ZctaPoint } from '../../src/core/map/centroids'
 import {
   buildRadiusFrameContext,
+  detectNearFrame,
   detectRadiusFrame,
+  radiusPreemptsNear,
   type RadiusFrameSpec,
 } from '../../src/core/ai/near-frame'
 import { composeAnswerForRequest, resolveAnswerGeographies } from '../../src/ui/ai/answer-runner'
@@ -92,7 +94,17 @@ describe('detectRadiusFrame', () => {
   })
 
   it('refuses the near frame class: a single geography is the reference shape', () => {
-    expect(detectRadiusFrame(SPECIMEN, intent(['Miami, FL']))).toBeNull()
+    // CHANGED (round 2, 2026-11-04): the detector itself now
+    // matches the single-geography shape — the genuine Spark
+    // parse of the Orlando acceptance question carries the
+    // anchor alone, and the round-1 count gate is what kept the
+    // frame from ever engaging for it. The discrimination from
+    // the near frame moved to radiusPreemptsNear at the call
+    // sites (pinned below): the detector matching is not the
+    // frame engaging.
+    const spec = detectRadiusFrame(SPECIMEN, intent(['Miami, FL']))
+    expect(spec?.radiusMiles).toBe(100)
+    expect(spec?.anchorGeography).toBe('Miami, FL')
   })
 
   it('refuses shapes with no stated radius, no anchor, or likeness', () => {
@@ -100,15 +112,24 @@ describe('detectRadiusFrame', () => {
       detectRadiusFrame("What's the cheapest place to live in Florida?", intent(['FL', 'Miami, FL'])),
     ).toBeNull()
     expect(
-      detectRadiusFrame(SPECIMEN, intent(['FL', 'Orlando, FL'])),
-    ).toBeNull()
-    expect(
       detectRadiusFrame(
         'What places in Florida are like Miami?',
         intent(['FL', 'Miami, FL']),
       ),
     ).toBeNull()
-    expect(detectRadiusFrame(SPECIMEN, intent(['FL']))).toBeNull()
+    // CHANGED (round 2): an intent naming a DIFFERENT place than
+    // the phrase (['FL', 'Orlando, FL'] against the Miami
+    // specimen) no longer refuses detection — the phrase's own
+    // named place is its anchor by grammar, and the reader's
+    // words govern; the index resolves the name at build time
+    // or the frame does not engage. And an intent carrying only
+    // the state (['FL']) anchors on the text-stated name — the
+    // genuine Spark sample pinned verbatim in the round-2 block
+    // below.
+    expect(
+      detectRadiusFrame(SPECIMEN, intent(['FL', 'Orlando, FL']))?.anchorGeography,
+    ).toBe('Miami')
+    expect(detectRadiusFrame(SPECIMEN, intent(['FL']))?.anchorGeography).toBe('Miami')
   })
 })
 
@@ -358,5 +379,318 @@ describe('the Florida radius specimen, cured', () => {
     expect(answer).not.toBeNull()
     const disclosures = answer?.geographyDisclosures ?? []
     expect(disclosures.some((line) => line.includes('fall inside the radius'))).toBe(false)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* Round 2 — the genuine Spark intent shapes                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Round 2 (2026-11-04): the round-1 build passed every pin above
+ * and did not engage in production for either acceptance
+ * question (parent browser acceptance, 13:34–13:50 HST). The
+ * pins were built on fabricated intents; the genuine Spark
+ * parses, captured from the real intent route (direct surface,
+ * two samples per question), differ in the decisive fields —
+ * every sample carries metricKeys: [] and clarificationNeeded:
+ * true (the run executes only after the reader's measure pick,
+ * which merges the measure and preserves the geographies), and
+ * the geography lists are not the fabricated pair:
+ *   Miami specimen — sample 1: ["FL", "Miami, FL"];
+ *                    sample 2: ["FL"] (the anchor dropped).
+ *   Orlando question — both samples: ["Orlando, FL"] alone,
+ *                    modes lookup and sweep_filter.
+ * The fixtures below are those captures, verbatim. Detection is
+ * asserted on the raw captures (the AskPanel seam, pre-pick);
+ * traversals run their post-pick forms (the measure pick merged:
+ * median_gross_rent, clarification cleared — resolveClarification's
+ * merge, which never drops a geography).
+ */
+const ORLANDO_QUESTION = "What's the cheapest place to live within 50 miles of Orlando?"
+
+const REAL_MIAMI_SAMPLE_1: ValidatedIntent = {
+  mode: 'sweep_filter',
+  geographies: ['FL', 'Miami, FL'],
+  metricKeys: [],
+  filters: [],
+  clarificationNeeded: true,
+  domain: 'data_with_gaps',
+}
+const REAL_MIAMI_SAMPLE_2: ValidatedIntent = {
+  mode: 'sweep_filter',
+  geographies: ['FL'],
+  metricKeys: [],
+  filters: [],
+  clarificationNeeded: true,
+  domain: 'data_with_gaps',
+}
+const REAL_ORLANDO_SAMPLE_1: ValidatedIntent = {
+  mode: 'lookup',
+  geographies: ['Orlando, FL'],
+  metricKeys: [],
+  filters: [],
+  clarificationNeeded: true,
+  domain: 'data_with_gaps',
+}
+const REAL_ORLANDO_SAMPLE_2: ValidatedIntent = {
+  mode: 'sweep_filter',
+  geographies: ['Orlando, FL'],
+  metricKeys: [],
+  filters: [],
+  clarificationNeeded: true,
+  domain: 'data_with_gaps',
+}
+
+/** A captured intent after the reader's measure pick has merged. */
+function postPick(captured: ValidatedIntent): ValidatedIntent {
+  return { ...captured, metricKeys: ['median_gross_rent'], clarificationNeeded: false }
+}
+
+describe('detectRadiusFrame — the genuine Spark shapes (round 2)', () => {
+  it('detects the Miami specimen on both genuine samples', () => {
+    const s1 = detectRadiusFrame(SPECIMEN, REAL_MIAMI_SAMPLE_1)
+    expect(s1?.radiusMiles).toBe(100)
+    expect(s1?.anchorGeography).toBe('Miami, FL')
+    // Sample 2 dropped the anchor from the geography list; the
+    // reader's words still state it after the phrase, and the
+    // spec anchors on the stated name (the index resolves it).
+    const s2 = detectRadiusFrame(SPECIMEN, REAL_MIAMI_SAMPLE_2)
+    expect(s2?.radiusMiles).toBe(100)
+    expect(s2?.anchorGeography).toBe('Miami')
+    expect(s2?.phraseText).toBe('within 100 miles of Miami')
+  })
+
+  it('detects the Orlando question on both genuine samples (anchor alone)', () => {
+    for (const sample of [REAL_ORLANDO_SAMPLE_1, REAL_ORLANDO_SAMPLE_2]) {
+      const spec = detectRadiusFrame(ORLANDO_QUESTION, sample)
+      expect(spec?.radiusMiles).toBe(50)
+      expect(spec?.anchorGeography).toBe('Orlando, FL')
+      expect(spec?.phraseText).toBe('within 50 miles of Orlando')
+    }
+  })
+})
+
+describe('radiusPreemptsNear — the reference-signal discrimination (round 2)', () => {
+  it('the Orlando acceptance shape preempts: a stated radius, no reference signals', () => {
+    const near = detectNearFrame(ORLANDO_QUESTION, REAL_ORLANDO_SAMPLE_2)
+    expect(near).not.toBeNull()
+    expect(radiusPreemptsNear(ORLANDO_QUESTION, near!)).toBe(true)
+  })
+
+  it('the Philadelphia specimen does not preempt: its parenthetical casts the anchor as reference', () => {
+    const philly =
+      'Where near Philadelphia has good schools and lower cost of living, within 20 miles (as compared to Philadelphia itself)?'
+    const phillyIntent: ValidatedIntent = {
+      mode: 'lookup',
+      geographies: ['Philadelphia, PA'],
+      metricKeys: ['median_gross_rent'],
+      filters: [],
+      clarificationNeeded: false,
+    }
+    const near = detectNearFrame(philly, phillyIntent)
+    expect(near).not.toBeNull()
+    expect(radiusPreemptsNear(philly, near!)).toBe(false)
+    // Double protection: the specimen's radius is stated without
+    // the of-form, so no radius phrase matches it at all.
+    expect(detectRadiusFrame(philly, phillyIntent)).toBeNull()
+  })
+
+  it('likeness and an explicit than-<anchor> comparison hold the near frame', () => {
+    const base: ValidatedIntent = {
+      mode: 'sweep_filter',
+      geographies: ['Philadelphia, PA'],
+      metricKeys: ['median_gross_rent'],
+      filters: [],
+      clarificationNeeded: false,
+    }
+    const likeness = 'What places similar to Philadelphia lie within 20 miles of Philadelphia?'
+    expect(radiusPreemptsNear(likeness, detectNearFrame(likeness, base)!)).toBe(false)
+    const compared = 'Where within 20 miles of Philadelphia is rent cheaper than Philadelphia?'
+    expect(radiusPreemptsNear(compared, detectNearFrame(compared, base)!)).toBe(false)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* Fabricated Orlando set (round-2 traversals)                         */
+/* ------------------------------------------------------------------ */
+
+const R2_PLACES: PlaceSuggestion[] = [
+  { displayName: 'Miami', censusName: 'Miami city', state: 'FL', isCity: true, zips: ['33101'] },
+  { displayName: 'Homestead', censusName: 'Homestead city', state: 'FL', isCity: true, zips: ['33030'] },
+  { displayName: 'Far North', censusName: 'Far North city', state: 'FL', isCity: true, zips: ['32666'] },
+  { displayName: 'Orlando', censusName: 'Orlando city', state: 'FL', isCity: true, zips: ['32801'] },
+  { displayName: 'Winter Park', censusName: 'Winter Park city', state: 'FL', isCity: true, zips: ['32789'] },
+  { displayName: 'Edge Fifty', censusName: 'Edge Fifty city', state: 'FL', isCity: true, zips: ['32899'] },
+  { displayName: 'Lakeland', censusName: 'Lakeland city', state: 'FL', isCity: true, zips: ['33801'] },
+  { displayName: 'Jacksonville', censusName: 'Jacksonville city', state: 'FL', isCity: true, zips: ['32202'] },
+]
+const R2_BY_ZIP = new Map<string, PlaceRecord>(
+  R2_PLACES.flatMap((place) =>
+    place.zips.map(
+      (zip) =>
+        [
+          zip,
+          {
+            zip,
+            censusName: place.censusName,
+            displayName: place.displayName,
+            state: place.state,
+            isCity: true,
+            incorporated: true,
+          },
+        ] as const,
+    ),
+  ),
+)
+const R2_INDEX = new PlaceIndex(R2_BY_ZIP, R2_PLACES)
+// Orlando (28.545, -81.378): Winter Park ~5 mi, Edge Fifty ~49 mi
+// (just inside the stated 50), Lakeland ~58 mi (just outside —
+// and the cheapest rent in the set), Jacksonville ~125 mi.
+const R2_CENTROIDS: ZctaPoint[] = [
+  { zcta: '33101', lon: -80.19, lat: 25.77 },
+  { zcta: '33030', lon: -80.48, lat: 25.47 },
+  { zcta: '32666', lon: -81.6, lat: 29.65 },
+  { zcta: '32801', lon: -81.378, lat: 28.545 },
+  { zcta: '32789', lon: -81.35, lat: 28.6 },
+  { zcta: '32899', lon: -81.378, lat: 29.26 },
+  { zcta: '33801', lon: -82.05, lat: 27.95 },
+  { zcta: '32202', lon: -81.66, lat: 30.33 },
+]
+const R2_RENTS: Record<string, number> = {
+  '33101': 1800,
+  '33030': 1100,
+  '32666': 519,
+  '32801': 1600,
+  '32789': 1400,
+  '32899': 800,
+  '33801': 500,
+  '32202': 900,
+}
+const R2_ROWS: AreaRow[] = Object.entries(R2_RENTS).map(([zcta, rent]) => ({
+  zcta,
+  name: `ZCTA5 ${zcta}`,
+  metrics: { median_gross_rent: rent, median_home_value: 300000, population: 5000 },
+  moes: { median_gross_rent: 50, median_home_value: 20000 },
+}))
+
+describe('the genuine shapes, traversed (round 2)', () => {
+  it('Miami sample 2 (anchor dropped by the parse) composes the same radius answer as sample 1', async () => {
+    let researchCalls = 0
+    const provider = createStubProvider({
+      async research() {
+        researchCalls++
+        return { prose: '', sources: [] }
+      },
+    })
+    const picked = postPick(REAL_MIAMI_SAMPLE_2)
+    const answer = await composeAnswerForRequest({
+      intent: picked,
+      queryText: SPECIMEN,
+      rows: R2_ROWS,
+      resolved: resolveAnswerGeographies(picked, R2_INDEX),
+      provider,
+      research: true,
+      placeIndex: R2_INDEX,
+      centroids: R2_CENTROIDS,
+    })
+    expect(answer).not.toBeNull()
+    expect(researchCalls).toBe(0)
+    const names = (answer?.places ?? []).map((p) => p.name)
+    // Cheapest in-radius leads; the cheapest-overall place
+    // outside the radius (Far North, $519) never appears.
+    expect(names).toEqual(['Homestead, FL', 'Miami, FL'])
+    expect(
+      (answer?.geographyDisclosures ?? []).some(
+        (line) => line.includes('within 100 miles of Miami, FL') && line.includes('fall inside the radius'),
+      ),
+    ).toBe(true)
+    const radius = (answer?.criterionEvidence ?? []).find(
+      (e) => e.criterion === 'Within 100 miles of Miami',
+    )
+    expect(radius?.status).toBe('met')
+  })
+
+  it('Orlando (sweep sample): cheapest in-radius leads, the anchor is inside its own radius, no research', async () => {
+    let researchCalls = 0
+    const provider = createStubProvider({
+      async research() {
+        researchCalls++
+        return { prose: '', sources: [] }
+      },
+    })
+    const picked = postPick(REAL_ORLANDO_SAMPLE_2)
+    const answer = await composeAnswerForRequest({
+      intent: picked,
+      queryText: ORLANDO_QUESTION,
+      rows: R2_ROWS,
+      resolved: resolveAnswerGeographies(picked, R2_INDEX),
+      provider,
+      research: true,
+      placeIndex: R2_INDEX,
+      centroids: R2_CENTROIDS,
+    })
+    expect(answer).not.toBeNull()
+    expect(researchCalls).toBe(0)
+    const names = (answer?.places ?? []).map((p) => p.name)
+    expect(names[0]).toBe('Edge Fifty, FL')
+    expect(names).toContain('Orlando, FL')
+    expect(names).toContain('Winter Park, FL')
+    // The cheapest rent in the whole set sits just OUTSIDE the
+    // radius (Lakeland, $500): excluded, not researched around.
+    expect(names).not.toContain('Lakeland, FL')
+    expect(names).not.toContain('Jacksonville, FL')
+    const disclosures = answer?.geographyDisclosures ?? []
+    expect(
+      disclosures.some(
+        (line) =>
+          line.includes('within 50 miles of Orlando, FL') &&
+          line.includes('3 places fall inside the radius') &&
+          line.includes('ZIP-area centroid'),
+      ),
+    ).toBe(true)
+    // The near frame's reference disclosure is NOT this answer's.
+    expect(disclosures.some((line) => line.includes('comparison reference'))).toBe(false)
+    const radius = (answer?.criterionEvidence ?? []).find(
+      (e) => e.criterion === 'Within 50 miles of Orlando',
+    )
+    expect(radius?.status).toBe('met')
+    const rendered = [
+      answer?.summary ?? '',
+      ...(answer?.places ?? []).flatMap((p) => p.claims.map((c) => c.text)),
+      ...(answer?.generalClaims ?? []).map((c) => c.text),
+    ].join('\n')
+    expect(rendered).not.toMatch(/miles (straight|driving)/i)
+    expect(rendered).not.toMatch(/not measured here/i)
+  })
+
+  it('Orlando (lookup sample): the same in-radius set and reading under the parse\'s other mode label', async () => {
+    let researchCalls = 0
+    const provider = createStubProvider({
+      async research() {
+        researchCalls++
+        return { prose: '', sources: [] }
+      },
+    })
+    const picked = postPick(REAL_ORLANDO_SAMPLE_1)
+    const answer = await composeAnswerForRequest({
+      intent: picked,
+      queryText: ORLANDO_QUESTION,
+      rows: R2_ROWS,
+      resolved: resolveAnswerGeographies(picked, R2_INDEX),
+      provider,
+      research: true,
+      placeIndex: R2_INDEX,
+      centroids: R2_CENTROIDS,
+    })
+    expect(answer).not.toBeNull()
+    expect(researchCalls).toBe(0)
+    const names = (answer?.places ?? []).map((p) => p.name)
+    expect(new Set(names)).toEqual(new Set(['Orlando, FL', 'Winter Park, FL', 'Edge Fifty, FL']))
+    expect(
+      (answer?.geographyDisclosures ?? []).some((line) =>
+        line.includes('within 50 miles of Orlando, FL'),
+      ),
+    ).toBe(true)
   })
 })

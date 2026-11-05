@@ -191,8 +191,11 @@ export function Methodology({
             third-party router rather than the Muse models API; the transport fix is pull request #449
             to the harness repository (Treystu/harness), open and not merged, and the run&rsquo;s
             verdicts are recorded on that pull request. One change has shipped to the assistant since
-            the panel ran — a stated radius in a question is now applied by the screen as geography
-            (below) instead of being researched — and the panel has not been re-run against it.
+            the panel first ran — a stated radius in a question is now applied by the screen as geography
+            (below) instead of being researched — and the panel was re-run on 2026-11-04 against the
+            build carrying that change (commit 728801b, the current production build), with the claim
+            excerpts re-derived from its source; the panel and its judge again rejected all seven defect
+            claims, at a total Meta Model API spend of $0.1423 for the re-run.
             Sovereign-Harness runs only at verification time; it does not drive, route, or check live
             requests. Changes to this
             layer are additionally scored before they ship by Jev, a typed judgement model, under the

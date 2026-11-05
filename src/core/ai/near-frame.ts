@@ -81,6 +81,67 @@ function isStateGeographyText(geography: string): boolean {
   return Object.values(STATE_NAME_BY_CODE).some((name) => name.toLowerCase() === lower)
 }
 
+/**
+ * The state code a bare state geography names, by code ("TX") or
+ * full name ("Texas"), or null — the runner's state reading
+ * (stateCodeForGeography) mirrored on this module's own import
+ * surface, so the detector and the runner read a co-named state
+ * identically. A place geography ("Houston, Texas") is not a
+ * bare state and reads null here; its suffix is read separately.
+ */
+function stateCodeOfGeography(geography: string): string | null {
+  const trimmed = geography.trim()
+  const code = trimmed.toUpperCase()
+  if (Object.prototype.hasOwnProperty.call(STATE_NAME_BY_CODE, code)) return code
+  const lower = trimmed.toLowerCase()
+  for (const [stateCode, name] of Object.entries(STATE_NAME_BY_CODE)) {
+    if (name.toLowerCase() === lower) return stateCode
+  }
+  return null
+}
+
+/** The first state any of the intent's geographies names, as a code. */
+function coNamedStateCode(geographies: readonly string[]): string | null {
+  for (const geography of geographies) {
+    const code = stateCodeOfGeography(geography)
+    if (code) return code
+  }
+  return null
+}
+
+/**
+ * The radius spec's anchor geography for a matched anchor: the
+ * anchor's name qualified by its state whenever a state is
+ * known — from the anchor's own suffix (a spelled-out suffix,
+ * "Houston, Texas", normalizes to its code) or, for a bare name,
+ * from the state the intent names beside it. The qualification
+ * is what makes the place index's resolution deterministic
+ * (round 3, measured 2026-11-04 against the shipped index):
+ * search scopes to a suffixed state before ranking, while a
+ * bare same-named place resolves in baked index order — bare
+ * "Houston" resolves to Houston, AK, and bare "Miami" to
+ * Miami, FL only by that order's luck, which is why the Miami
+ * specimen's anchor-dropped parse engaged live and the Houston
+ * question's could not. A suffix that names no state, and a
+ * bare name with no co-named state, keep the anchor verbatim —
+ * the shipped reading.
+ */
+function qualifiedAnchorGeography(
+  rawAnchor: string,
+  geographies: readonly string[],
+): string {
+  const trimmed = rawAnchor.trim()
+  const comma = trimmed.lastIndexOf(',')
+  const name = (comma >= 0 ? trimmed.slice(0, comma) : trimmed).trim()
+  const suffix = comma >= 0 ? trimmed.slice(comma + 1).trim() : ''
+  if (suffix) {
+    const code = stateCodeOfGeography(suffix)
+    return code ? `${name}, ${code}` : trimmed
+  }
+  const coNamed = coNamedStateCode(geographies)
+  return coNamed ? `${name}, ${coNamed}` : trimmed
+}
+
 export interface NearFrameSpec {
   /** The intent geography string that names the anchor, verbatim. */
   anchorGeography: string
@@ -566,6 +627,30 @@ function radiusAnchorNameFromText(after: string): { name: string; spanLength: nu
  *     build time or the frame does not engage.
  * The intent-geography match is tried first in both cases, so
  * every round-1 shape keeps its exact spec.
+ *
+ * Round 3 (2026-11-04, parent browser acceptance on the round-2
+ * build): Miami and Orlando engage live; the Houston question
+ * ("What's the cheapest place to live in Texas within 200 miles
+ * of Houston?") does not — it took the research path over the
+ * whole state. The genuine parses (three draws) split by shape:
+ * ["TX", "Houston, TX"] detects and builds, but ["TX"] — the
+ * anchor dropped, the Miami sample-2 shape — anchors on the
+ * text-stated name "Houston", and the place index resolves a
+ * bare same-named place in baked index order: Houston, AK is
+ * first of seven Houstons, so the runner's Texas intersection
+ * emptied the candidate set and the context build returned
+ * null. Miami's identical shape engaged only because Miami, FL
+ * happens to sort first among the Miamis. A spelled-out suffix
+ * ("Houston, Texas") failed the same way at the other end: the
+ * index's suffix reading knows only two-letter codes, so the
+ * name matched nothing at all. The cure is in the spec, at
+ * detection: the anchor geography is state-qualified whenever
+ * a state is known (qualifiedAnchorGeography) — from its own
+ * suffix, spelled-out suffixes normalized to their code, or
+ * from the co-named state geography — so an explicit radius
+ * phrase with a resolvable anchor engages identically on every
+ * parse shape. Specs whose anchors already carried a code
+ * suffix are byte-identical to rounds 1–2.
  */
 export function detectRadiusFrame(
   queryText: string | undefined,
@@ -590,7 +675,7 @@ export function detectRadiusFrame(
       const nextChar = after.charAt(anchorName.length)
       if (nextChar !== '' && /[A-Za-z]/.test(nextChar)) continue
       return {
-        anchorGeography: geography,
+        anchorGeography: qualifiedAnchorGeography(geography, intent.geographies),
         radiusMiles,
         phraseText: queryText.slice(
           match.index,
@@ -601,7 +686,7 @@ export function detectRadiusFrame(
     const fromText = radiusAnchorNameFromText(after)
     if (fromText) {
       return {
-        anchorGeography: fromText.name,
+        anchorGeography: qualifiedAnchorGeography(fromText.name, intent.geographies),
         radiusMiles,
         phraseText: queryText.slice(
           match.index,
@@ -657,6 +742,15 @@ export interface RadiusFrameContext {
   anchorZctas: ReadonlySet<string>
   /** Every ZIP area of every in-radius place, the anchor's included. */
   candidateZctas: ReadonlySet<string>
+  /**
+   * The candidate ZIP areas whose OWN centroid lies within the
+   * radius (round 3): membership is place-level — a place is
+   * inside when its nearest ZIP-area centroid is — so a
+   * qualifying place can carry ZIP areas that are themselves
+   * outside. The lead row of a radius-framed answer must come
+   * from this set (see the compose lead rule in answer.ts).
+   */
+  qualifyingZctas: ReadonlySet<string>
   candidatePrefixes: string[]
   /** How many places (index records) fall inside the radius. */
   candidatePlaceCount: number
@@ -709,11 +803,25 @@ export function buildRadiusFrameContext(input: {
     if (contributed) candidatePlaceCount++
   }
   if (candidateZctas.size === 0) return null
+  // The qualifying ZIP areas: candidates whose own centroid lies
+  // within the radius of an anchor centroid. Membership above is
+  // place-level (a place is inside when its NEAREST centroid
+  // is), so this set can be smaller than the candidate set —
+  // the anchor's own areas always qualify (distance zero).
+  const qualifyingZctas = new Set<string>()
+  for (const zip of candidateZctas) {
+    const point = centroidsByZip.get(zip)
+    if (!point) continue
+    if (anchorPoints.some((a) => haversineMiles(a, point) <= input.spec.radiusMiles)) {
+      qualifyingZctas.add(zip)
+    }
+  }
   return {
     anchorLabel: `${anchor.displayName}, ${anchor.state}`,
     anchorName: anchor.displayName,
     anchorZctas: new Set(anchor.zips),
     candidateZctas,
+    qualifyingZctas,
     candidatePrefixes: [...new Set([...candidateZctas].map((z) => z.slice(0, 2)))].sort(),
     candidatePlaceCount,
     radiusMiles: input.spec.radiusMiles,

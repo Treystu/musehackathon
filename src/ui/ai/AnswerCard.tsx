@@ -542,16 +542,35 @@ export function claimSourceVisibility(
  */
 function orderedPlaces(answer: ComposedAnswer): AnswerPlace[] {
   const criterion = answer.criteria[0]
-  if (!criterion) return answer.places
-  const direction = criterion.bound === 'atMost' ? 1 : -1
-  return [...answer.places].sort((a, b) => {
-    const av = a.figures.find((f) => f.key === criterion.metricKey)?.value
-    const bv = b.figures.find((f) => f.key === criterion.metricKey)?.value
-    if (av === undefined && bv === undefined) return 0
-    if (av === undefined) return 1
-    if (bv === undefined) return -1
-    return (av - bv) * direction
-  })
+  let ordered: AnswerPlace[]
+  if (!criterion) {
+    ordered = answer.places
+  } else {
+    const direction = criterion.bound === 'atMost' ? 1 : -1
+    ordered = [...answer.places].sort((a, b) => {
+      const av = a.figures.find((f) => f.key === criterion.metricKey)?.value
+      const bv = b.figures.find((f) => f.key === criterion.metricKey)?.value
+      if (av === undefined && bv === undefined) return 0
+      if (av === undefined) return 1
+      if (bv === undefined) return -1
+      return (av - bv) * direction
+    })
+  }
+  // Radius-framed answers front the qualifying ZIP areas (round
+  // 3): the figure sort alone would re-front a cheaper
+  // out-of-radius ZIP of a qualifying place, undoing the
+  // partition compose applied — the lead row shown must be a
+  // ZIP whose own centroid is inside the stated radius.
+  if (answer.radiusQualifyingZctas && ordered.length > 1) {
+    const qualifying = new Set(answer.radiusQualifyingZctas)
+    if (ordered.some((place) => !qualifying.has(place.zcta))) {
+      ordered = [
+        ...ordered.filter((place) => qualifying.has(place.zcta)),
+        ...ordered.filter((place) => !qualifying.has(place.zcta)),
+      ]
+    }
+  }
+  return ordered
 }
 
 export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
@@ -693,8 +712,14 @@ export function AnswerCard({ answer }: { answer: ComposedAnswer }) {
               </p>
             ) : (
               <p className="mt-3 text-base text-slate-600">
-                {count.format(answer.places.length - ANSWER_CARD_PLACE_LIMIT)} more places meet
-                the stated criteria — all of them are in the screening table below.
+                {count.format(
+                  (answer.radiusPlaceTotal !== undefined &&
+                  answer.radiusPlaceTotal > ANSWER_CARD_PLACE_LIMIT
+                    ? answer.radiusPlaceTotal
+                    : answer.places.length) - ANSWER_CARD_PLACE_LIMIT,
+                )}{' '}
+                more places meet the stated criteria — all of them are in the screening table
+                below.
               </p>
             ))}
           {answer.generalClaims.length > 0 && (

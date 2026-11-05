@@ -480,6 +480,28 @@ export interface ComposedAnswer {
    */
   placesMeetingAllCriteria?: number
   /**
+   * How many places the radius frame counted inside the stated
+   * radius (round 3, 2026-11-04): present only on a radius-framed
+   * answer, carried from the frame's own count — the count the
+   * answer's radius disclosure states. The card's overflow line
+   * reads its remainder from this total, not from the answer's
+   * place list: the list's entries are ZIP areas (one place in
+   * the frame's count can contribute several entries), so the
+   * shipped remainder contradicted the stated count on both
+   * live acceptance answers (120 places in radius beside
+   * "234 more"; 132 beside "124 more").
+   */
+  radiusPlaceTotal?: number
+  /**
+   * The radius frame's qualifying ZIP areas (round 3): the
+   * candidate ZIP areas whose own centroid lies inside the
+   * stated radius, as a sorted list. Present only on a
+   * radius-framed answer. The card's ordering reads it to keep
+   * qualifying rows fronted (see orderedPlaces), matching the
+   * partition compose applies to the ranked list.
+   */
+  radiusQualifyingZctas?: string[]
+  /**
    * Research-first candidates that RESOLVED to Census places
    * outside the geography the question asks about (Lane A10
    * FM-15): resolution is national, so a Michigan question's
@@ -5328,6 +5350,32 @@ export function composeAnswer(input: {
       consideredNotMeeting = notMeeting
     }
   }
+  // Radius-frame lead qualification (round 3, 2026-11-04 — the
+  // GPT audit lane's centroid verification, evidence packet
+  // A1-centroid-verification): membership is place-level — a
+  // place is inside when its NEAREST ZIP-area centroid lies
+  // within the radius, the disclosed basis — so a qualifying
+  // place can front a ZIP area whose own centroid lies outside.
+  // The live Miami answer led with Port St. Lucie 34945 at
+  // $747: that ZIP's centroid is 112.6 miles from the nearest
+  // Miami centroid, and the place qualified through its sibling
+  // 34984 (96.8 miles). The displayed ranking of a radius-framed
+  // answer therefore fronts the qualifying ZIP areas (each in
+  // ranked order), and a qualifying place's out-of-radius ZIP
+  // areas keep their membership behind them — the lead row of
+  // the answer, and the first row shown for any place, is a ZIP
+  // that is itself inside the radius, carrying its own figure.
+  // The card's ordering applies the same partition after its
+  // figure sort, so the rendered order is this order.
+  if (input.radiusFrame?.qualifyingZctas && rankedPlaces.length > 1) {
+    const qualifying = input.radiusFrame.qualifyingZctas
+    if (rankedPlaces.some((place) => !qualifying.has(place.zcta))) {
+      rankedPlaces = [
+        ...rankedPlaces.filter((place) => qualifying.has(place.zcta)),
+        ...rankedPlaces.filter((place) => !qualifying.has(place.zcta)),
+      ]
+    }
+  }
   // The meeting count (regression battery 2026-11-04): computed
   // over the FINAL place list, after the FM-4 partition, from the
   // same standings the breadth surfaces read — a place meets all
@@ -5383,6 +5431,10 @@ export function composeAnswer(input: {
     places: rankedPlaces,
     ...(consideredNotMeeting ? { consideredNotMeeting } : {}),
     ...(placesMeetingAllCriteria !== undefined ? { placesMeetingAllCriteria } : {}),
+    ...(input.radiusFrame ? { radiusPlaceTotal: input.radiusFrame.candidatePlaceCount } : {}),
+    ...(input.radiusFrame
+      ? { radiusQualifyingZctas: [...input.radiusFrame.qualifyingZctas].sort() }
+      : {}),
     generalClaims,
     sources,
     summary,

@@ -1070,7 +1070,10 @@ export function AskPanel({
     // national screen is not a fragment to merge).
     if (!rescued) {
       const standingForMerge = standingScreenFromSession(session)
-      if (standingForMerge && isFragmentFollowUp(queryText ?? '', standingForMerge)) {
+      if (
+        standingForMerge &&
+        isFragmentFollowUp(queryText ?? '', standingForMerge, parsed.geographies.length > 0)
+      ) {
         parsed = withRunnability(mergeFragmentIntent(parsed, standingForMerge, queryText ?? ''))
       }
     }

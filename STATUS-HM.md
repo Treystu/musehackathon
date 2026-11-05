@@ -17,7 +17,7 @@ Pins: `tests/ai/hail-mary-h2.test.tsx` (reset clears store; Start over visible +
 ## H3 — W1 chained refinement
 Status: DONE (this push).
 Cure: `fragment-carry.ts` — standing screen from last answer request; `isFragmentFollowUp` lexical gate (standing + criteria-only signals, fresh names pass through); `mergeFragmentIntent` carries geography/measure/filters (union, no silent drops) before completions/handoff/radius/execution; slots filled with standing hints (existing contract). Stated radius routes via existing `detectRadiusFrame` on the merged intent. `RefinementChips` on AnswerCard show carried criteria (criterionEvidence) as removable chips (display-level removal; re-screen via new ask).
-Pins: `hail-mary-h3.test.tsx` (gate fresh vs fragment; merge carries; Colorado → Walmart chain with slots + superseded request; chips visible + removable). Suite neighbors 34/34 + golden 8/8 green; tsc clean.
+Pins: `hail-mary-h3.test.tsx` (gate fresh vs fragment; merge carries; Colorado → Walmart chain with slots + superseded request; chips visible + removable). Gate correction 2026-11-05: removed the short-query length fallback after it merged a fresh schools/fast-food question into the standing Hilo screen (`ask-reset-lockout` real-App pin); gate now requires an explicit fragment signal plus no parsed geography. Suite neighbors 34/34 + golden 8/8 green; tsc clean.
 
 ## H4 — W2 uncatalogued criteria + bare-near distance
 Status: QUEUED.

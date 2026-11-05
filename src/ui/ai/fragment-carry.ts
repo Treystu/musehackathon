@@ -38,23 +38,27 @@ export function standingScreenFromSession(session: AskSessionStore): StandingScr
 const FRAGMENT_SIGNALS = ['also', 'and also', 'plus', 'near', 'within', 'miles of', 'walmart', 'target', 'costco']
 
 /**
- * Fragment gate: true when a standing screen exists and the follow-up
- * reads as criteria-only — it names none of the standing geography
- * and carries a fragment signal (also/near/within/POI) or is short
- * with no geography-like content. Deterministic and lexical; the
- * fresh-question path (naming a new place, or no standing) stays false.
+ * Fragment gate: true only when a standing screen exists, the parsed
+ * follow-up names no geography of its own, it names none of the
+ * standing geography, and it carries an explicit fragment signal
+ * (also/near/within/POI). Deterministic and lexical. There is
+ * deliberately no length-based fallback: a short fresh question
+ * with no signal (e.g. a criteria-only research question) must
+ * start fresh, never silently inherit the standing screen —
+ * measured 2026-11-05, when the length fallback merged a fresh
+ * schools/fast-food question into the previous Hilo screen.
  */
-export function isFragmentFollowUp(queryText: string, standing: StandingScreen | null): boolean {
+export function isFragmentFollowUp(
+  queryText: string,
+  standing: StandingScreen | null,
+  parsedHasGeography = false,
+): boolean {
   if (!standing) return false
+  if (parsedHasGeography) return false
   const lower = queryText.toLowerCase()
   const namesStanding = standing.geographies.some((g) => g.length > 0 && lower.includes(g.toLowerCase()))
   if (namesStanding) return false
-  const hasSignal = FRAGMENT_SIGNALS.some((s) => lower.includes(s))
-  if (hasSignal) return true
-  // Short criteria-only follow-ups without a place name (e.g. "under $1500")
-  // still refine when a screen stands; a fresh full question names a place.
-  if (queryText.trim().length < 80 && !lower.includes(' in ') && !lower.includes(',')) return true
-  return false
+  return FRAGMENT_SIGNALS.some((s) => lower.includes(s))
 }
 
 /** Merge a fragmentary parse against the standing screen (no silent drops). */

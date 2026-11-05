@@ -76,6 +76,17 @@ describe('H3 chained refinement', () => {
     expect(isFragmentFollowUp('also needs to be near a Walmart (within 10 miles)', standing)).toBe(true)
     expect(isFragmentFollowUp('What is the cheapest rent in Texas?', standing)).toBe(false)
     expect(isFragmentFollowUp('Cheapest rent in Colorado under $1200', standing)).toBe(false)
+    // Regression: a fresh criteria-only question with no fragment signal
+    // starts fresh even when short (measured 2026-11-05: the length
+    // fallback merged a schools/fast-food question into a Hilo screen).
+    expect(
+      isFragmentFollowUp(
+        'Which area has the best schools and the fewest fast food restaurants?',
+        standing,
+      ),
+    ).toBe(false)
+    // A follow-up naming a new place of its own is not a fragment.
+    expect(isFragmentFollowUp('near Denver within 10 miles', standing, true)).toBe(false)
   })
 
   it('fragment merge carries geography, measure, and filters; fresh starts fresh', () => {
@@ -158,6 +169,12 @@ describe('H3 chained refinement', () => {
       standingScreenFromSession(store),
     )
     expect(freshGate).toBe(false)
+    expect(
+      isFragmentFollowUp(
+        'Which area has the best schools and the fewest fast food restaurants?',
+        standingScreenFromSession(store),
+      ),
+    ).toBe(false)
     expect(answerReq).not.toBeNull()
   })
 
